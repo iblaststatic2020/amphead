@@ -44,6 +44,29 @@ const VERDICT_COLOR = {
 
 const toDb = (peak) => (peak <= 0.000001 ? -60 : Math.max(-60, 20 * Math.log10(peak)))
 
+// A dB number is a claim about a level, so the chip only shows one when the rig is actually live.
+// With REAPER closed the meter reads zero and -60 dB looks like a real, quiet rig instead of no
+// rig at all, so the chip says the state in words the same way the face does.
+const CHIP_WORD = {
+  READY: 'quiet',
+  STANDBY: 'standby',
+  'REAPER NOT RUNNING': 'reaper off',
+  'NO REAPER INSTALL': 'no reaper',
+  'REAPER BUSY': 'reaper busy',
+  'BRIDGE GONE': 'bridge gone',
+  'TWO REAPER': 'two reapers',
+  'RIG TAB CLOSED': 'no rig tab',
+  'DEVICE CLOSED': 'device closed',
+  'DEVICE UNPLUGGED': 'unplugged',
+  MUTED: 'muted',
+  'NO INPUT': 'no input',
+  'NO CHAIN': 'no chain',
+  'NO SIGNAL': 'no signal',
+  CLIPPING: 'clipping',
+  'REOPENED DEVICE': 'device reopened',
+  CONNECTING: 'connecting'
+}
+
 // The host exposes the amp's knobs with an "Amplifier " prefix and its own gain knobs without one,
 // so "Amplifier Input Gain" and "Input Gain" are two different knobs and must never look alike.
 // Grouping them under AMP and HOST makes that readable; the prefix can then be dropped inside the
@@ -792,6 +815,10 @@ export default {
           })
           const peak = Math.max((meter.data && meter.data.l) || 0, (meter.data && meter.data.r) || 0)
           const verdict = (state.data && state.data.verdict) || 'CONNECTING'
+          // A number only when there is something to number: with no rig, the meter reads zero and
+          // "0 dB" or "-60 dB" would read as a quiet rig rather than no rig. The words carry it.
+          const live = !!(meter.data && meter.data.live)
+          const text = live ? `${toDb(peak).toFixed(0)} dB` : CHIP_WORD[verdict] || verdict.toLowerCase()
           return jsxs('span', {
             className: 'flex items-center gap-1 px-1.5 text-[0.6875rem] tabular-nums',
             title: (state.data && state.data.reason) || verdict,
@@ -801,8 +828,8 @@ export default {
                 style: { background: VERDICT_COLOR[verdict] || 'var(--ui-text-quaternary)' }
               }),
               jsx('span', {
-                style: meter.data && meter.data.live ? ACCENT : MUTED,
-                children: `${toDb(peak).toFixed(0)} dB`
+                style: live ? ACCENT : MUTED,
+                children: text
               })
             ]
           })

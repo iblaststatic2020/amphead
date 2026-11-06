@@ -46,6 +46,27 @@ class TestFaceMatchesVerdicts(unittest.TestCase):
         for marker in ("ROUTES_AREA", "SIDEBAR_NAV_AREA", "PALETTE_AREA", "area: 'panes'", "'statusBar.right'"):
             self.assertIn(marker, source, f"the face lost its {marker}")
 
+    def test_the_chip_speaks_words_when_there_is_no_rig(self):
+        """-60 dB with REAPER closed reads as a quiet rig, not as no rig, so words carry it."""
+        source = face_source()
+        chip = source[source.index("id: 'amp-chip'"):]
+        self.assertIn("const live = !!(meter.data && meter.data.live)", chip)
+        self.assertIn("CHIP_WORD[verdict]", chip)
+        self.assertRegex(chip, r"live \? `\$\{toDb\(peak\)\.toFixed\(0\)\} dB`",
+                         "the dB number must sit behind the live check, never print unconditionally")
+
+    def test_every_verdict_word_has_a_chip_word(self):
+        source = face_source()
+        start = source.index("const CHIP_WORD = {")
+        table = source[start:source.index("}", start)]
+        words = [
+            value
+            for name, value in vars(verdicts).items()
+            if name.isupper() and isinstance(value, str) and value == value.upper()
+        ]
+        missing = [w for w in words if not re.search(rf"^\s*['\"]?{re.escape(w)}['\"]?:", table, re.M)]
+        self.assertEqual([], missing, f"the chip has no word for: {missing}")
+
     def test_the_amp_and_host_knob_sets_stay_apart(self):
         """The amp's knobs and the host's knobs collide by name, so the split must stay explicit."""
         source = face_source()

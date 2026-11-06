@@ -55,6 +55,9 @@ export const state = () => {
 }
 
 export const meter = () => {
+  // A forced broken verdict means no rig, so the meter must read like no rig: zeros, not live.
+  const forced = new URLSearchParams(location.search).get('verdict')
+  if (forced) return { l: 0, r: 0, clip: false, live: false }
   const p = peak()
   return { l: p, r: p * (0.9 + Math.random() * 0.1), clip: p > 0.9, live }
 }

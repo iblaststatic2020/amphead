@@ -17,9 +17,11 @@ plugin.register({
 
 const pane = entries.find((entry) => entry.id === 'amp-face')
 const page = entries.find((entry) => entry.id === 'page')
+const chip = entries.find((entry) => entry.id === 'amp-chip')
 if (!pane || !page) throw new Error(`harness expected a pane and a page, got ${entries.map((e) => e.id).join(', ')}`)
 
 createRoot(document.getElementById('pane')).render(createElement(pane.render))
 createRoot(document.getElementById('page')).render(createElement(page.render))
+if (chip) createRoot(document.getElementById('chip')).render(createElement(chip.render))
 
 window.__amphead = { entries, plugin }
