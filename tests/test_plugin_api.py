@@ -48,6 +48,9 @@ STATE = ROUTER.routes[("GET", "/state")]
 METER = ROUTER.routes[("GET", "/meter")]
 LIVE = ROUTER.routes[("POST", "/live")]
 PANIC = ROUTER.routes[("POST", "/panic")]
+TWEAK = ROUTER.routes[("POST", "/tweak")]
+PRESET = ROUTER.routes[("POST", "/preset")]
+FOCUS = ROUTER.routes[("POST", "/focus")]
 
 
 def _live(**over):
@@ -153,6 +156,44 @@ class TestPanicRoute(unittest.TestCase):
         self.assertFalse(payload["ok"])
 
 
+class TestFocusRoute(unittest.TestCase):
+    """A click that focuses a plugin in a hidden chain window would be a click with no effect."""
+
+    def test_a_hidden_reaper_is_told_in_words_and_nothing_is_focused(self):
+        with mock.patch.object(API.launch, "ui_visible", return_value=False), \
+             mock.patch.object(API.bridge, "fx_focus") as focus:
+            payload = asyncio.run(FOCUS({"fx": 0}))
+        focus.assert_not_called()
+        self.assertFalse(payload["ok"])
+        self.assertIn("not showing", payload["output"])
+
+    def test_a_visible_reaper_gets_the_focus_call(self):
+        with mock.patch.object(API.launch, "ui_visible", return_value=True), \
+             mock.patch.object(API.bridge, "fx_focus",
+                               return_value={"fx": "VST3: NAM Universal"}) as focus:
+            payload = asyncio.run(FOCUS({"fx": 0}))
+        focus.assert_called_once_with(1, 0)
+        self.assertTrue(payload["ok"])
+        self.assertIn("NAM Universal", payload["output"])
+
+    def test_a_refused_focus_is_not_ok(self):
+        with mock.patch.object(API.launch, "ui_visible", return_value=True), \
+             mock.patch.object(API.bridge, "fx_focus", side_effect=API.bridge.ReaperError("no fx 7")):
+            self.assertFalse(asyncio.run(FOCUS({"fx": 7}))["ok"])
+
+
+class TestUiVisible(unittest.TestCase):
+    def test_window_answers_are_read_from_powershell(self):
+        from amphead import launch
+        launch._UI_CACHE = None
+        with mock.patch.object(launch, "_powershell", return_value="visible"):
+            self.assertTrue(launch.ui_visible())
+        launch._UI_CACHE = None
+        with mock.patch.object(launch, "_powershell", return_value="hidden"):
+            self.assertFalse(launch.ui_visible())
+        launch._UI_CACHE = None
+
+
 class TestPretty(unittest.TestCase):
     def test_host_decimals_are_trimmed(self):
         self.assertEqual(API._pretty("0.0000000"), "0")
@@ -161,6 +202,92 @@ class TestPretty(unittest.TestCase):
 
     def test_words_pass_through(self):
         self.assertEqual(API._pretty("On"), "On")
+
+
+class TestParkedMaster(unittest.TestCase):
+    """Armed and fed but parked is silent, so the face must not call it READY."""
+
+    def test_a_parked_master_is_not_ready(self):
+        word, reason = API._verdict(_live(), {"armed": True}, 0.3, False, -60.0)
+        self.assertEqual(word, "STANDBY")
+        self.assertIn("parked", reason)
+
+    def test_no_master_reading_keeps_the_old_answer(self):
+        self.assertEqual(API._verdict(_live(), {"armed": True}, 0.3, False)[0], "READY")
+
+    def test_state_reads_the_master_before_judging(self):
+        with mock.patch.object(API.launch, "state", return_value=_live()), \
+             mock.patch.object(API, "_track", return_value={"armed": True, "monitor": True}), \
+             mock.patch.object(API.bridge, "meter",
+                               return_value={"l": 0.3, "r": 0.3, "clip": False}), \
+             mock.patch.object(API.bridge, "master", return_value={"db": -60.0}), \
+             mock.patch.object(API, "_chain", return_value=[{"name": "NAM", "enabled": True}]), \
+             mock.patch.object(API, "_knobs", return_value=[]):
+            payload = asyncio.run(STATE())
+        self.assertEqual(payload["verdict"], "STANDBY")
+        self.assertEqual(payload["master_db"], -60.0)
+
+
+class TestKnobs(unittest.TestCase):
+    def test_knobs_carry_index_and_normalized_value(self):
+        params = [
+            {"i": 2, "name": "Input Gain", "fmt": "-12.6787491", "norm": 0.490573, "raw": 0.49},
+            {"i": 5, "name": "Amplifier Bass", "fmt": "4.4000001", "norm": 0.44, "raw": 4.4},
+            {"i": 9, "name": "Pedal Bypass", "fmt": "Off", "norm": 0.0, "raw": 0.0},
+        ]
+        with mock.patch.object(API.bridge, "fx_params", return_value=params):
+            knobs = API._knobs(1)
+        self.assertEqual([k["name"] for k in knobs], ["Amplifier Bass", "Input Gain"])
+        self.assertEqual([k["index"] for k in knobs], [5, 2])
+        self.assertEqual(knobs[0]["norm"], 0.44)
+        self.assertEqual(knobs[0]["value"], "4.4")
+
+    def test_a_failed_read_is_an_empty_list_not_a_crash(self):
+        with mock.patch.object(API.bridge, "fx_params", side_effect=API.bridge.ReaperError("no fx")):
+            self.assertEqual(API._knobs(1), [])
+
+
+class TestTweakRoute(unittest.TestCase):
+    def test_a_slider_write_goes_through_the_chat_handler(self):
+        said = "Amplifier Bass [#5] -> 0.25 | reads_back=0.25 | one undo point"
+        with mock.patch("amphead.tools.handle_set", return_value=said) as handler:
+            payload = asyncio.run(TWEAK({"param": 5, "value": 0.25, "mode": "norm"}))
+        args = handler.call_args.args[0]
+        self.assertEqual((args["param"], args["value"], args["mode"]), (5, 0.25, "norm"))
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["output"], said)
+
+    def test_a_write_with_no_knob_named_is_refused_before_the_host(self):
+        with mock.patch("amphead.tools.handle_set") as handler:
+            payload = asyncio.run(TWEAK({"value": 0.3}))
+        handler.assert_not_called()
+        self.assertFalse(payload["ok"])
+        self.assertIn("NO PARAM", payload["output"])
+
+    def test_a_refused_write_is_reported_as_not_ok(self):
+        with mock.patch("amphead.tools.handle_set", return_value="REFUSED: that knob does not exist"):
+            self.assertFalse(asyncio.run(TWEAK({"param": 5, "value": 0.3}))["ok"])
+
+
+class TestPresetRoute(unittest.TestCase):
+    def test_preset_applies_through_the_tone_handler(self):
+        said = "preset=crunch | changed=9 | already there=1 | 1.11s | one undo point"
+        with mock.patch("amphead.tools.handle_tone", return_value=said) as handler:
+            payload = asyncio.run(PRESET({"query": "make it crunchier"}))
+        self.assertTrue(payload["ok"])
+        self.assertEqual(handler.call_args.args[0]["query"], "make it crunchier")
+        self.assertTrue(handler.call_args.args[0]["apply"])
+
+    def test_a_preset_that_matches_nothing_is_not_ok(self):
+        with mock.patch("amphead.tools.handle_tone",
+                        return_value="NO MATCH: no sound in the library answers to ..."):
+            self.assertFalse(asyncio.run(PRESET({"query": "wobble"}))["ok"])
+
+    def test_an_empty_preset_request_never_reaches_the_host(self):
+        with mock.patch("amphead.tools.handle_tone") as handler:
+            payload = asyncio.run(PRESET({"query": "  "}))
+        handler.assert_not_called()
+        self.assertFalse(payload["ok"])
 
 
 if __name__ == "__main__":

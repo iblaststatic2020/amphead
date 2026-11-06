@@ -19,3 +19,4 @@ dist/
 .reaper_out/
 request.*.json
 resp_*.json
+desktop/probe/

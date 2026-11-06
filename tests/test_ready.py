@@ -107,6 +107,7 @@ class TestReadyTool(unittest.TestCase):
         with mock.patch.object(tools.launch, "state", return_value=live()), \
              mock.patch.object(tools.bridge, "track_info", return_value=track()), \
              mock.patch.object(tools.bridge, "fx_list", return_value=CHAIN), \
+             mock.patch.object(tools.bridge, "master", return_value={"db": -18.0}), \
              mock.patch.object(tools.bridge, "meter", return_value=read(0.2)) as meter:
             out = tools.handle_ready({"settle_ms": 0})
         self.assertIn("verdict=READY", out)
@@ -120,10 +121,21 @@ class TestReadyTool(unittest.TestCase):
         with mock.patch.object(tools.launch, "state", return_value=live()), \
              mock.patch.object(tools.bridge, "track_info", return_value=track()), \
              mock.patch.object(tools.bridge, "fx_list", return_value=CHAIN), \
+             mock.patch.object(tools.bridge, "master", return_value={"db": -18.0}), \
              mock.patch.object(tools.bridge, "meter", side_effect=samples) as meter:
             out = tools.handle_ready({"settle_ms": 500})
         self.assertIn("verdict=READY", out)
         self.assertEqual(meter.call_count, 3)
+
+    def test_an_armed_rig_with_the_master_parked_is_not_called_ready(self):
+        with mock.patch.object(tools.launch, "state", return_value=live()), \
+             mock.patch.object(tools.bridge, "track_info", return_value=track()), \
+             mock.patch.object(tools.bridge, "fx_list", return_value=CHAIN), \
+             mock.patch.object(tools.bridge, "master", return_value={"db": -60.0}), \
+             mock.patch.object(tools.bridge, "meter", return_value=read(0.2)):
+            out = tools.handle_ready({"settle_ms": 0})
+        self.assertIn("verdict=STANDBY", out)
+        self.assertIn("master is parked", out)
 
     def test_a_quiet_rig_with_no_reaper_device_is_not_called_ready(self):
         with mock.patch.object(tools.launch, "state", return_value=live(closed=True)), \

@@ -220,12 +220,31 @@ The pane is the interface. It is a desktop plugin half that ships in this packag
 | input meter | live peak in dB with a latching clip light |
 | LIVE switch | one button: arm and monitor at -18 dB, or disarm and park the master at -60 dB |
 | chain | the real plugin list on the guitar track, in order, marked on or bypassed |
-| amp | the amp's own knob names with the values the host reports |
-| tones | one button per archetype, so "blink182" is also a click |
+| amp | eight knobs as sliders, sitting where the host says they sit, with the host's own read-back beside each one |
+| tones | `clean`, `crunch`, `lead`, and a free-text box that takes "make it crunchier" |
 | latency, master, project | the numbers REAPER would show, on screen while REAPER is minimized |
 
 Routes: `GET /api/plugins/amphead/state`, `GET /api/plugins/amphead/meter` (150 ms poll),
-`POST /live`, `POST /preset`.
+`POST /live`, `POST /panic`, `POST /tweak`, `POST /preset`, `POST /focus`. The pane polls `/state`
+at 1.5 s and `/meter` at 150 ms; the status bar chip polls `/meter` at 400 ms and `/state` at 4 s.
+
+The face is not a second opinion. `/state` runs the same `verdict.judge` the `amphead_ready` tool
+runs, and every write route calls the same handler chat calls (`tools.handle_set`,
+`tools.handle_tone`), so a slider drag and the sentence "more gain" cannot do different things.
+
+Dragging a slider holds the value your finger chose until you let go, then writes through `/tweak`
+as a normalized value and shows the plugin's own read-back when the state poll comes back. If the
+bridge cannot report a normalized value, the row shows the number instead of a slider, because a
+slider sitting in the wrong place is worse than no slider.
+
+A chain row brings that plugin forward in REAPER (`FX_FOCUS`, plus last-touched so the chain window
+scrolls to it) but only while REAPER's window is really on screen. When it is minimized or on the
+hidden desktop the row is not clickable and answers in place: "un-minimize REAPER first". Restoring
+a window the player put away is a UI decision they did not ask for.
+
+An armed rig whose master is parked at -60 dB says `STANDBY`, not `READY`. A rig that would be
+silent is not ready to play, and that rule lives in the judge, so the tool, the pane and the status
+bar chip always agree.
 
 The app loads `%LOCALAPPDATA%\hermes\desktop-plugins\amphead\plugin.js` and refreshes that copy from
 `plugins/amphead/desktop/plugin.js` on its own 5 s poll, so saving the source hot-reloads the UI.
@@ -307,8 +326,9 @@ sound.
 ## Status
 
 Working and verified against REAPER 7.77: the bridge, the launch and standby rules, the arm safety
-floor, tone application, the live switch, the readiness verdict, panic, and the amp face
-backend. 169 unit tests, `hermes plugins validate` passes.
+floor, tone application, the live switch, the readiness verdict, panic, the amp face backend, the
+pane with its sliders and status-bar chip, and deep links that only fire while REAPER is on screen.
+302 unit tests, `hermes plugins validate` passes.
 
 Verified in a fresh Hermes session: `amphead_live` reported `live=True | armed=True | monitor=True |
 master_db=-20.0 | input=1 | clips_at=11.61`, and `amphead_status` read back `device=open`,
@@ -332,7 +352,10 @@ amphead/namstate.py   decode and rewrite NAM state chunks
 amphead/tones.py      natural language to preset, with knob moves
 amphead/presets.py    preset files: knobs by name, one undo group, read back
 amphead/snapshots.py  whole-rig snapshots and the diff between two
+amphead/verdict.py    the one judge the tool, the pane and the chip all call
 amphead/tools.py      the plugin tools Hermes calls
+dashboard/plugin_api.py  the routes the pane reads and writes
+desktop/plugin.js     the amp face: pane, sidebar row, palette entry, status bar chip
 reaper/bridge.lua     the script that runs inside REAPER
 tests/                unit tests, no host required
 ```

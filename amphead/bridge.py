@@ -381,6 +381,11 @@ def master(**kwargs) -> dict:
     return call("MASTER_VOL", **kwargs)
 
 
+def fx_focus(track: int = 1, fx: int = 0, **kwargs) -> dict:
+    """Bring one plugin to the front of REAPER's chain window. The caller owns the visibility rule."""
+    return call("FX_FOCUS", track=track, fx=fx, **kwargs)
+
+
 def disarm(track: int = 1, **kwargs) -> dict:
     """Take the track out of record-arm and input monitoring, no questions asked."""
     payload = call("DISARM", track=track, **kwargs)

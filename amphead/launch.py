@@ -139,6 +139,39 @@ def minimize_window(max_wait: float = 20.0) -> bool:
     return out.strip().endswith("minimized")
 
 
+_VISIBLE_PS = r"""
+Add-Type -Name W2 -Namespace U2 -MemberDefinition '
+  [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr h);
+  [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);'
+$p = Get-Process reaper -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1
+if (-not $p) { 'hidden' ; exit 0 }
+if ([U2.W2]::IsWindowVisible($p.MainWindowHandle) -and -not [U2.W2]::IsIconic($p.MainWindowHandle)) { 'visible' } else { 'hidden' }
+"""
+
+
+_UI_CACHE: tuple[float, bool] | None = None
+
+
+def ui_visible() -> bool:
+    """True only when REAPER has a window on screen: a minimized or closed window cannot be focused.
+
+    The pane uses this to decide whether a chain-row click may reach FX_FOCUS at all, because
+    focusing a plugin in a hidden chain window would be a click with no visible effect.
+    """
+    global _UI_CACHE
+    if sys.platform != "win32":
+        return False
+    now = time.monotonic()
+    if _UI_CACHE and now - _UI_CACHE[0] < 1.5:
+        return _UI_CACHE[1]
+    try:
+        answer = _powershell(_VISIBLE_PS, timeout=15.0).strip().endswith("visible")
+    except NoReaperInstall:
+        answer = False
+    _UI_CACHE = (now, answer)
+    return answer
+
+
 def ensure_running(
     minimized: bool = True,
     hidden_desktop: bool = False,

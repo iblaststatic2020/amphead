@@ -38,9 +38,13 @@ def _device(state: dict) -> dict:
 
 
 def _knobs(track: int) -> list[dict]:
-    """The controls worth showing, in the amp's own words and values."""
+    """The controls worth showing, with the numbers a slider needs as well as the words a player reads.
+
+    `index` is what /tweak writes, because two parameters can share a name and a slider must not
+    guess which twin it belongs to.
+    """
     try:
-        params = bridge.fx_params(track, 0)
+        params = bridge.fx_params(track, 0, keep=4096)
     except bridge.ReaperError:
         return []
     picked = []
@@ -50,7 +54,13 @@ def _knobs(track: int) -> list[dict]:
         if "pedal" in low or "instigator" in low:
             continue
         if any(word in low for word in WANTED):
-            picked.append({"name": name, "value": _pretty(str(param.get("fmt") or ""))})
+            picked.append({"index": int(param["i"]), "name": name,
+                           "value": _pretty(str(param.get("fmt") or "")),
+                           "norm": round(float(param.get("norm") or 0.0), 4),
+                           "raw": param.get("raw")})
+    # The amp's own tone controls come first: they are what the player came for, and the face
+    # shows only eight rows.
+    picked.sort(key=lambda k: 0 if "amplifier" in k["name"].lower() else 1)
     return picked[:8]
 
 
@@ -72,9 +82,13 @@ def _chain(track: int) -> list[dict] | None:
         return None
 
 
-def _verdict(state: dict, track: dict, peak: float, clip: bool) -> tuple[str, str]:
+def _verdict(state: dict, track: dict, peak: float, clip: bool,
+             master_db: float | None = None) -> tuple[str, str]:
     """The pane and the amphead_ready tool answer from the same judge, never from two copies."""
-    out = verdict.judge(state, track, {"l": peak, "r": peak, "clip": clip})
+    reading = {"l": peak, "r": peak, "clip": clip}
+    if master_db is not None:
+        reading["master_db"] = master_db
+    out = verdict.judge(state, track, reading)
     return out["verdict"], out["reason"]
 
 
@@ -86,7 +100,14 @@ def _track(track_no: int) -> dict:
 
 
 def _presets() -> list[dict]:
-    return [{"key": arch.key, "title": arch.title} for arch in tones.ARCHETYPES]
+    """The three presets the rig carries, which is what a button in the pane can apply in one move.
+
+    The capture library in tones.py answers "make it sound like blink182" and swaps the amp itself;
+    it is reachable through chat and /preset with those words, not as a row of buttons.
+    """
+    from amphead import presets as bank
+
+    return [{"key": row["name"], "title": row.get("about") or row["name"]} for row in bank.catalog()]
 
 
 @router.get("/state")
@@ -109,8 +130,6 @@ async def state() -> dict[str, Any]:
             peak, clip = 0.0, False
 
     chain = _chain(track_no) if live.get("bridge") == "live" else None
-    judged = verdict.judge(live, track, {"l": peak, "r": peak, "clip": clip}, chain)
-    word, reason = judged["verdict"], judged["reason"]
     master = None
     if live.get("bridge") == "live":
         try:
@@ -118,12 +137,20 @@ async def state() -> dict[str, Any]:
         except bridge.ReaperError:
             master = None
 
+    reading = {"l": peak, "r": peak, "clip": clip}
+    if master is not None:
+        reading["master_db"] = master
+    judged = verdict.judge(live, track, reading, chain)
+    word, reason = judged["verdict"], judged["reason"]
+
     return {
         "verdict": word,
         "reason": reason,
         "project": live.get("project") or "unnamed",
         "device": _device(live),
         "master_db": master,
+        # Whether REAPER's window is on screen decides if a chain-row click may focus a plugin.
+        "ui": "visible" if live.get("bridge") == "live" and launch.ui_visible() else "hidden",
         "armed": bool(track.get("armed")),
         "monitor": bool(track.get("monitor")),
         "problems": judged["problems"],
@@ -166,6 +193,43 @@ async def panic(body: dict) -> dict[str, Any]:
     return {"output": out, "ok": not out.startswith("NOT PANICKED"), "restore": restore}
 
 
+@router.post("/tweak")
+async def tweak(body: dict) -> dict[str, Any]:
+    """One knob, written the same way chat writes it: resolved by name, read back, one undo group."""
+    from amphead import tools
+
+    param = body.get("param")
+    if param is None or param == "":
+        return {"output": "NO PARAM: say which knob to turn", "ok": False}
+    if body.get("value") is None:
+        return {"output": "NO VALUE: say what to set it to", "ok": False}
+    out = tools.handle_set({
+        "track": body.get("track", 1),
+        "fx": body.get("fx", 0),
+        "param": param,
+        "value": body.get("value"),
+        "mode": body.get("mode", "norm"),
+    })
+    return {"output": out, "ok": not out.startswith(("NOT SET", "REFUSED"))}
+
+
+@router.post("/focus")
+async def focus(body: dict) -> dict[str, Any]:
+    """Bring one plugin to the front, but only while REAPER's window is actually showing."""
+    fx = body.get("fx", 0)
+    track = int(body.get("track") or 1)
+    if not launch.ui_visible():
+        return {"output": "REAPER's window is not showing, so there is no chain window to bring "
+                          "forward. Un-minimize REAPER and click again.",
+                "ok": False, "focused": False}
+    try:
+        done = bridge.fx_focus(track, int(fx))
+    except bridge.ReaperError as exc:
+        return {"output": f"the bridge refused the focus: {exc}", "ok": False, "focused": False}
+    return {"output": f"brought {done.get('fx') or 'the plugin'} to the front of the chain",
+            "ok": True, "focused": True, "fx": done.get("fx")}
+
+
 @router.post("/preset")
 async def preset(body: dict) -> dict[str, Any]:
     from amphead import tools
@@ -174,4 +238,9 @@ async def preset(body: dict) -> dict[str, Any]:
     if not query:
         return {"output": "NO QUERY: name a sound to load", "ok": False}
     out = tools.handle_tone({"query": query, "apply": True})
-    return {"output": out, "ok": not out.startswith("not applied")}
+    # The tool answers with a sentence, and a failure begins with one of these words on the first
+    # line. Matching the whole text keeps a working apply whose diff happens to mention "not
+    # applied" from being reported as a failure.
+    first = out.splitlines()[0].upper() if out else ""
+    ok = not first.startswith(("NOT APPLIED", "NO MATCH", "NO QUERY", "NOT SET", "REFUSED"))
+    return {"output": out, "ok": ok}

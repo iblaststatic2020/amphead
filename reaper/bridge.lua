@@ -527,6 +527,20 @@ COMMANDS.FX_WAKE = function(args)
   return ok_json({ { "before", tostring(before) }, { "after", tostring(after) }, { "woke", "true" } })
 end
 
+-- Bring one FX to the front in REAPER's chain window and mark it as the last touched FX, which
+-- is what makes the chain window scroll to it. Only meaningful while REAPER's window is showing:
+-- the caller checks that before calling, because a hidden chain window cannot be focused.
+COMMANDS.FX_FOCUS = function(args)
+  local tr = track_at(args.track)
+  if not tr then return err("no track " .. tostring(args.track)) end
+  local fx = tonumber(args.fx) or 0
+  if fx < 0 or fx >= reaper.TrackFX_GetCount(tr) then return err("no fx " .. tostring(fx)) end
+  local touched = pcall(function() reaper.SetLastTouchedFX(tr, 0, fx) end)
+  reaper.TrackFX_Show(tr, fx, 1)
+  local _, name = reaper.TrackFX_GetFXName(tr, fx, "")
+  return ok_json({ { "fx", jstr(name) }, { "touched", bool(touched) } })
+end
+
 -- Read-only: the raw state of one FX, so the caller can see what a plugin actually stores.
 -- Plugin state is the only place a NAM model path can live, because none of these plugins
 -- expose the capture as a parameter.

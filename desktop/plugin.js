@@ -64,6 +64,89 @@ function Meter({ peak, clip }) {
   })
 }
 
+// A slider is the amp's knob, not a copy of it: it starts at the normalized value the host reported,
+// stays where the finger put it while dragging (the 1.5 s state poll must not fight the drag), and
+// only then writes through /tweak, which resolves the knob by index and reads it back. A host that
+// cannot report a normalized value gets the number row instead of a slider that would lie about
+// where the knob sits.
+function Knob({ knob, busy, onCommit }) {
+  const [value, setValue] = useState(typeof knob.norm === 'number' ? knob.norm : null)
+  const [dragging, setDragging] = useState(false)
+  useEffect(() => {
+    if (!dragging && typeof knob.norm === 'number') setValue(knob.norm)
+  }, [knob.norm, dragging])
+
+  if (value === null) {
+    return jsx(Row, { label: knob.name, children: knob.value })
+  }
+
+  const commit = () => {
+    setDragging(false)
+    onCommit(knob, value)
+  }
+
+  return jsxs('div', {
+    className: 'flex flex-col gap-1',
+    children: [
+      jsxs('div', {
+        className: 'flex items-baseline justify-between gap-3',
+        children: [
+          jsx('span', { className: 'text-[0.6875rem] leading-tight', style: MUTED, children: knob.name }),
+          jsx('span', {
+            className: 'text-xs tabular-nums',
+            style: dragging ? MUTED : SECOND,
+            children: dragging ? '...' : knob.value
+          })
+        ]
+      }),
+      jsx('input', {
+        type: 'range',
+        min: 0,
+        max: 1,
+        step: 0.001,
+        value,
+        disabled: busy,
+        'aria-label': knob.name,
+        onPointerDown: () => setDragging(true),
+        onPointerUp: commit,
+        onKeyUp: commit,
+        onChange: (event) => setValue(Number(event.target.value)),
+        className: 'w-full',
+        style: { accentColor: 'var(--ui-accent)' }
+      })
+    ]
+  })
+}
+
+
+// Clicking a chain row is only useful while REAPER is on screen, so the row says what it will do
+// before it is clicked: with REAPER hidden the click answers in place instead of doing nothing.
+function ChainRow({ fx, index, ui, onFocus }) {
+  const [note, setNote] = useState('')
+  const clickable = ui === 'visible'
+  return jsxs('button', {
+    type: 'button',
+    onClick: async () => {
+      if (!clickable) {
+        setNote('un-minimize REAPER first, then this click brings the plugin forward')
+        return
+      }
+      const said = await onFocus(index)
+      setNote(said || '')
+    },
+    className: 'flex w-full items-baseline justify-between gap-3 bg-transparent px-0 py-0.5 text-left',
+    style: { cursor: clickable ? 'pointer' : 'default' },
+    children: [
+      jsx('span', { className: 'text-[0.6875rem] leading-tight', style: MUTED, children: `${index + 1}. ${fx.enabled ? 'on' : 'bypassed'}` }),
+      jsxs('span', { className: 'flex flex-col items-end', children: [
+        jsx('span', { className: 'text-xs', style: clickable ? SECOND : MUTED, children: fx.name }),
+        note ? jsx('span', { className: 'text-[0.625rem]', style: MUTED, children: note }) : null
+      ] })
+    ]
+  })
+}
+
+
 function AmpFace({ rest }) {
   const client = useQueryClient()
   const state = useQuery({ queryKey: ['amphead', 'state'], queryFn: () => rest('/state'), refetchInterval: 1500 })
@@ -94,6 +177,7 @@ function AmpFace({ rest }) {
       setSaid(String(out && out.output ? out.output : 'done').split('\n')[0])
       client.invalidateQueries({ queryKey: ['amphead'] })
       if (out && out.ok === false) host.notify({ kind: 'warning', message: String(out.output).split('\n')[0] })
+      return out
     } catch (err) {
       const line = `failed: ${err && err.message ? err.message : err}`
       setSaid(line)
@@ -136,7 +220,7 @@ function AmpFace({ rest }) {
         className: 'w-full rounded-md px-3 py-2 text-xs font-medium disabled:opacity-50',
         style: armed
           ? { background: 'var(--ui-stroke-secondary)', color: 'var(--ui-text)' }
-          : { background: 'var(--ui-accent)', color: 'var(--ui-accent-foreground, #fff)' },
+          : { background: 'var(--ui-accent)', color: 'var(--ui-accent-foreground, var(--ui-text))' },
         children: busy ? 'working' : liveLabel
       }),
 
@@ -147,7 +231,7 @@ function AmpFace({ rest }) {
         className: 'w-full rounded-md px-3 py-1.5 text-xs font-semibold disabled:opacity-50',
         style: silenced
           ? { background: 'var(--ui-stroke-secondary)', color: 'var(--ui-text)' }
-          : { background: '#8f1d20', color: '#fff' },
+          : { background: 'var(--ui-danger, var(--ui-stroke-secondary))', color: 'var(--ui-accent-foreground, var(--ui-text))' },
         children: busy
           ? 'working'
           : silenced
@@ -162,10 +246,15 @@ function AmpFace({ rest }) {
           (s.chain || []).length === 0
             ? jsx('div', { className: 'text-xs', style: MUTED, children: 'no plugins loaded on the guitar track' })
             : (s.chain || []).map((fx, i) =>
-                jsx(Row, {
+                jsx(ChainRow, {
                   key: `${i}-${fx.name}`,
-                  label: `${i + 1}. ${fx.enabled ? 'on' : 'bypassed'}`,
-                  children: fx.name
+                  fx,
+                  index: i,
+                  ui: s.ui,
+                  onFocus: async (which) => {
+                    const answer = await act('/focus', { fx: which })
+                    return answer && answer.output
+                  }
                 }))
         ]
       }),
@@ -176,7 +265,13 @@ function AmpFace({ rest }) {
           jsx('div', { className: 'text-[0.6875rem] uppercase tracking-wide', style: MUTED, children: 'amp' }),
           (s.knobs || []).length === 0
             ? jsx('div', { className: 'text-xs', style: MUTED, children: 'no amp loaded yet' })
-            : (s.knobs || []).map((k) => jsx(Row, { key: k.name, label: k.name, children: k.value }))
+            : (s.knobs || []).map((k) =>
+                jsx(Knob, {
+                  key: k.index ?? k.name,
+                  knob: k,
+                  busy,
+                  onCommit: (knob, value) => act('/tweak', { param: knob.index, value, mode: 'norm' })
+                }))
         ]
       }),
 
@@ -278,13 +373,26 @@ export default {
       area: 'statusBar.right',
       order: 120,
       render: () => {
+        // The chip is the "is the amp alive" glance from any pane: a verdict dot plus the input level,
+        // both from the same routes the page reads, so it cannot disagree with them.
         function Chip() {
-          const meter = useQuery({ queryKey: ['amphead', 'chip'], queryFn: () => ctx.rest('/meter'), refetchInterval: 400 })
+          const meter = useQuery({ queryKey: ['amphead', 'chip-meter'], queryFn: () => ctx.rest('/meter'), refetchInterval: 400 })
+          const state = useQuery({ queryKey: ['amphead', 'chip-state'], queryFn: () => ctx.rest('/state'), refetchInterval: 4000 })
           const peak = Math.max((meter.data && meter.data.l) || 0, (meter.data && meter.data.r) || 0)
-          return jsx('span', {
-            className: 'px-1.5 text-[0.6875rem] tabular-nums',
-            style: meter.data && meter.data.live ? ACCENT : MUTED,
-            children: `${toDb(peak).toFixed(0)} dB`
+          const verdict = (state.data && state.data.verdict) || 'CONNECTING'
+          return jsxs('span', {
+            className: 'flex items-center gap-1 px-1.5 text-[0.6875rem] tabular-nums',
+            title: (state.data && state.data.reason) || verdict,
+            children: [
+              jsx('span', {
+                className: 'inline-block h-1.5 w-1.5 rounded-full',
+                style: { background: VERDICT_COLOR[verdict] || 'var(--ui-text-quaternary)' }
+              }),
+              jsx('span', {
+                style: meter.data && meter.data.live ? ACCENT : MUTED,
+                children: `${toDb(peak).toFixed(0)} dB`
+              })
+            ]
           })
         }
         return jsx(Chip, {})

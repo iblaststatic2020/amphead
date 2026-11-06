@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
+PARKED_DB = -59.0  # the floor setup and PANIC park the master at
 FLOOR = 0.001            # -60 dB, the same floor the rig boots and parks at
 LATENCY_LIMIT_MS = 40.0  # beyond this, playing feels late even when the meter is moving
 
@@ -104,6 +105,15 @@ def judge(state: dict, track: dict, reading: dict,
         return {"verdict": NO_SIGNAL,
                 "reason": "armed and monitoring, but nothing is arriving on this input",
                 "problems": problems + ["the meter never rose above -60 dB"]}
+
+    master_db = reading.get("master_db")
+    if master_db is not None and float(master_db) <= PARKED_DB:
+        # Signal is arriving and the chain is live, but the master is parked: the player would
+        # hear nothing, so this is not "ready". It is the same STANDBY the snapshot boots into.
+        return {"verdict": STANDBY,
+                "reason": f"the track is armed and the input is arriving, but the master is parked "
+                          f"at {float(master_db):.0f} dB. Flip LIVE to hear it.",
+                "problems": problems + ["the master is parked at the silent floor"]}
 
     reason = f"armed, monitoring, {device['out_ms']} ms out"
     if chain is not None:

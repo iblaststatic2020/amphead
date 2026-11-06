@@ -439,6 +439,13 @@ def handle_ready(args: dict[str, Any], **_kw) -> str:
                 reading = {"l": max(float(reading.get("l") or 0.0), float(sample.get("l") or 0.0)),
                            "r": max(float(reading.get("r") or 0.0), float(sample.get("r") or 0.0)),
                            "clip": bool(reading.get("clip") or sample.get("clip"))}
+                # The master belongs in the verdict: an armed rig parked at -60 dB is silent.
+                try:
+                    master_db = bridge.master().get("db")
+                except bridge.ReaperError:
+                    master_db = None
+                if master_db is not None:
+                    reading["master_db"] = master_db
                 loud = max(reading["l"], reading["r"]) > verdict.FLOOR
                 if loud or reading["clip"] or time.monotonic() >= deadline:
                     break
