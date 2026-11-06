@@ -14,3 +14,4 @@ provides_tools:
   - amphead_set
   - amphead_build
   - amphead_preset
+  - amphead_ab

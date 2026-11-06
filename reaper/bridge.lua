@@ -494,9 +494,15 @@ COMMANDS.FX_PARAMS = function(args)
   for i = 0, math.min(n, keep) - 1 do
     local _, nm = reaper.TrackFX_GetParamName(tr, fx, i, "")
     local _, fmt = reaper.TrackFX_GetFormattedParamValue(tr, fx, i, "")
+    -- norm and raw ride along so a snapshot can record every knob in one sweep instead of one
+    -- FX_INFO round trip per parameter.
+    local norm = reaper.TrackFX_GetParamNormalized(tr, fx, i)
+    local raw = reaper.TrackFX_GetParam(tr, fx, i)
     items[#items + 1] = "{" .. jstr("i") .. ":" .. i ..
       "," .. jstr("name") .. ":" .. jstr(nm) ..
-      "," .. jstr("fmt") .. ":" .. jstr(fmt) .. "}"
+      "," .. jstr("fmt") .. ":" .. jstr(fmt) ..
+      "," .. jstr("norm") .. ":" .. string.format("%.6f", norm == norm and norm or 0) ..
+      "," .. jstr("raw") .. ":" .. string.format("%.6f", raw == raw and raw or 0) .. "}"
   end
   return ok_json({
     { "count", tostring(n) },

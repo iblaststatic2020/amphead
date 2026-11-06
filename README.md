@@ -160,6 +160,39 @@ by gain, and the tests hold them to that order. A preset that names a plugin mis
 not a failure of the whole call: the plugins that are there still get applied, and the missing one is
 named in the summary. If nothing on the preset is present, nothing is written at all.
 
+## A/B, and proving undo really undid it
+
+`amphead_ab` writes the whole rig down and then argues from the record. A snapshot is the chain in
+real order, every knob in raw, normalized and formatted form, and the track level. Taking one is two
+read-only calls per plugin, so it costs nothing and cannot add an undo point.
+
+```
+amphead_ab label="before"
+  snapshot=before | plugins=1 | knobs=36 | db=-6.0 | ...\snapshots\20261106-074836-before.json
+
+amphead_preset name="lead"
+amphead_ab label="after"
+amphead_ab action="compare" label="before" other="after"
+  ab | before -> after | differences=11
+  VST3: NAM Universal (WaveMind) | Amplifier Input Gain: 0.0000000 -> 9.5999985
+  VST3: NAM Universal (WaveMind) | Pedal Active: Off -> On
+  ...
+
+undo once, snapshot "undone", compare "before" against it:
+  ab | before -> undone | differences=0 | identical: nothing moved
+```
+
+That last line is the point: undo either put every knob back or the tool says which one it missed.
+
+Two things the real plugin taught this. It exposes two parameters both called `Bypass`, so knobs are
+compared by index and a duplicated name is printed with its index (`Bypass [#0]`) rather than matched
+by name and compared against the wrong twin. And the bridge's `FX_PARAMS` sweep stops at 64
+parameters by default while NAM Universal has 36 knobs and other plugins have hundreds, so a snapshot
+asks for the lot and the sweep now carries raw and normalized values, not just formatted ones.
+
+`amphead_ab action="list"` shows what is on disk; labels resolve to the newest snapshot with that
+name, and an unknown label is refused by name instead of comparing against whatever came first.
+
 ## The amp face (Hermes side)
 
 The pane is the interface. It is a desktop plugin half that ships in this package
@@ -281,6 +314,8 @@ amphead/bridge.py     file-queue client: call, liveness, guards, batch
 amphead/launch.py     find, start, stop, and health of the host
 amphead/namstate.py   decode and rewrite NAM state chunks
 amphead/tones.py      natural language to preset, with knob moves
+amphead/presets.py    preset files: knobs by name, one undo group, read back
+amphead/snapshots.py  whole-rig snapshots and the diff between two
 amphead/tools.py      the plugin tools Hermes calls
 reaper/bridge.lua     the script that runs inside REAPER
 tests/                unit tests, no host required

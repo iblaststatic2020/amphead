@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import math
+import copy
 import threading
 import time
 from pathlib import Path
@@ -464,11 +465,17 @@ class FakeReaper:
             if not (0 <= fx < len(tr["fx"])):
                 return _err("no fx")
             params = tr["fx"][fx]["params"]
+            # The real bridge sweeps at most `keep` parameters (64 by default) because a plugin can
+            # expose hundreds; a snapshot asks for the lot.
+            keep = int(args.get("keep") or 64)
             return _ok(
                 count=len(params),
                 fx=fx,
                 fx_name=tr["fx"][fx]["name"],
-                params=[{"i": i, "name": p["name"], "fmt": p["fmt"]} for i, p in enumerate(params)],
+                params=[{"i": i, "name": p["name"], "fmt": p["fmt"],
+                         "norm": round((p["raw"] - p["min"]) / (p["max"] - p["min"]), 6),
+                         "raw": round(p["raw"], 6)}
+                        for i, p in enumerate(params[:keep])],
             )
         if cmd == "FX_INFO":
             tr = self._track(args)
@@ -620,9 +627,16 @@ class FakeReaper:
             if self.tx_open:
                 return _err("transaction open, close it first")
             popped = self.undo_stack.pop() if self.undo_stack else None
+            if popped and "tracks" in popped:
+                self.tracks = popped["tracks"]
+                self.master_vol = popped["master"]
             return _ok(undone=True, label=(popped or {}).get("label", ""))
         if cmd == "BATCH":
             ops = args.get("ops", "")
+            # The checkpoint has to be taken before the ops run, or undo restores the state the
+            # batch just wrote and the test passes for the wrong reason.
+            checkpoint = {"label": args.get("label", ""),
+                          "tracks": copy.deepcopy(self.tracks), "master": self.master_vol}
             self.tx_open = True
             results, failed_at = [], None
             for i, chunk in enumerate([c for c in ops.split(";") if c], start=1):
@@ -644,8 +658,10 @@ class FakeReaper:
                     break
             self.tx_open = False
             if failed_at is None:
-                # One BATCH is one undo point; this is what lets a test prove the grouping.
-                self.undo_stack.append({"label": args.get("label", "")})
+                # One BATCH is one undo point; this is what lets a test prove the grouping. The
+                # checkpoint is what makes undo a real restore instead of a counter, so a test can
+                # prove that undo put every knob back rather than merely that it claimed to.
+                self.undo_stack.append(checkpoint)
             return {
                 "ok": failed_at is None,
                 "proto": PROTO,

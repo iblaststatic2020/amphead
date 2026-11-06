@@ -657,6 +657,58 @@ def handle_preset(args: dict[str, Any], **_kw) -> str:
     return head + "\n" + "\n".join(lines)
 
 
+AB_SCHEMA = _schema(
+    "amphead_ab",
+    "A/B the rig honestly. snapshot writes down the whole chain and every knob in raw, normalized "
+    "and formatted form (read-only: no undo point). compare prints exactly what differs between two "
+    "snapshots in the plugin's own units, and says 'identical' when nothing moved. Take a snapshot, "
+    "apply a preset or a tweak, snapshot again, and compare; undo and compare again to prove undo "
+    "put everything back.",
+    {"action": {"type": "string", "enum": ["snapshot", "compare", "list"],
+                "description": "snapshot (default), compare, or list what is on disk."},
+     "label": {"type": "string",
+               "description": "Snapshot name. For compare, the earlier snapshot; default 'a'."},
+     "other": {"type": "string",
+               "description": "For compare: the later snapshot name (default 'a' vs 'b')."},
+     "track": {"type": "integer", "description": "Track index, 1 based (default 1).",
+               "minimum": 1}},
+    [],
+)
+
+
+def handle_ab(args: dict[str, Any], **_kw) -> str:
+    """Take a snapshot, or show what really differs between two."""
+    from . import snapshots
+
+    action = str(args.get("action") or "snapshot").strip().lower()
+    track = int(args.get("track") or 1)
+    label = str(args.get("label") or "").strip()
+
+    if action in {"list", "ls"}:
+        rows = snapshots.catalog()
+        if not rows:
+            return f"NO SNAPSHOTS: {snapshots.snapshots_dir()} is empty"
+        return "\n".join(
+            f"{row['label']} | {row['at']} | plugins={row['plugins']} | knobs={row['knobs']} | "
+            f"db={row['db']:.1f}" for row in rows)
+
+    if action == "compare":
+        left = label or "a"
+        right = str(args.get("other") or "b").strip()
+        try:
+            return snapshots.summary(left, right)
+        except LookupError as exc:
+            return f"NOT COMPARED: {exc}"
+
+    try:
+        snap = snapshots.capture(label or "a", track=track)
+    except bridge.NoReaper:
+        return "NOT SNAPSHOT: REAPER is not running, call amphead_setup first"
+    except bridge.ReaperError as exc:
+        return f"NOT SNAPSHOT: {exc}"
+    return snap.sentence() + f"\nnext: amphead_ab action=compare label={snap.label} other=<later>"
+
+
 def run_call(cmd: str, **kwargs) -> dict:
     """Small indirection so tests can stub the wire without a live host."""
     return bridge.call(cmd, **kwargs)
@@ -674,4 +726,5 @@ TOOLS = (
     ("amphead_set", SET_SCHEMA, handle_set, "🎚️"),
     ("amphead_build", BUILD_SCHEMA, handle_build, "🏗️"),
     ("amphead_preset", PRESET_SCHEMA, handle_preset, "🎸"),
+    ("amphead_ab", AB_SCHEMA, handle_ab, "🔀"),
 )
