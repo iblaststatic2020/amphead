@@ -169,7 +169,7 @@ Detailed step plan: [PHASE1.md](PHASE1.md) — seven steps, each with its own ve
 
 ### Phase 2 — Fri Nov 6 afternoon. Ready check, tweak, two presets, panic
 
-**Task 2.1** `rig_ready`: check REAPER alive, tab is a rig tab, track armed, monitor on, input set, chain non-empty, no FX bypassed by surprise, meter above floor for 500 ms, latency under threshold. Returns verdict word plus problems. Verify: five tests, one per failure verdict, using `fake_reaper` scenarios.
+**Task 2.1** `rig_ready`: check REAPER alive, tab is a rig tab, track armed, monitor on, input set, chain non-empty, no FX bypassed by surprise, meter above floor for 500 ms, latency under threshold. Returns verdict word plus problems. **Done 2026-11-06** as `amphead_ready`, kept the `amphead_` prefix every other tool uses. The rules live in `amphead/verdict.py` and the pane's `/state` calls the same judge, so the face and the tool cannot disagree. Words: READY, STANDBY, NO INPUT, NO CHAIN, NO SIGNAL, CLIPPING, DEVICE CLOSED, REAPER NOT RUNNING, REAPER BUSY. It listens for 600 ms by default before calling an input silent. 24 tests, including six over the real wire against `fake_reaper` (which now models an arriving signal instead of a permanently quiet meter). Live: `verdict=STANDBY | input=1 | chain=1 | out_ms=11.61` on the idle rig.
 
 **Task 2.2** `presets.py` + `presets/clean.json`, `crunch.json`, `lead.json`: semantic targets (`drive: 0.72`) resolved at apply time against the live param map. Verify: applying `crunch` on the live rig changes the expected params, one undo group, diff printed.
 

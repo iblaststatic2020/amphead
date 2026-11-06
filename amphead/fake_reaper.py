@@ -62,6 +62,9 @@ class FakeReaper:
         self.device_closed = False
         self.undo_stack: list[dict] = []
         self.requests: list[str] = []
+        # 0.0 means a quiet input. Set it to a real amplitude to model signal arriving, so the
+        # verdict can be exercised over the wire instead of only through mocks.
+        self.signal = 0.0
 
         self.tracks: list[dict] = [
             {
@@ -250,9 +253,9 @@ class FakeReaper:
             return _ok(
                 track=int(args.get("track", 1)),
                 name=tr["name"],
-                l=0.0,
-                r=0.0,
-                master=0.0,
+                l=self.signal,
+                r=self.signal,
+                master=self.signal,
                 clip=False,
                 armed=tr["armed"],
                 monitor=tr["monitor"],

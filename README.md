@@ -81,6 +81,31 @@ reports the input REAPER actually holds (`input=3 | input_changed=False`). Name 
 you want the tool to move it: `input="1"` for mono input 1, `input="1+2"` for a stereo pair,
 `input="none"` to clear it.
 
+## Is it playable?
+
+`amphead_ready` is the one call that answers that, and the pane paints the same word because both
+read from `amphead/verdict.py`.
+
+```
+amphead_ready
+amphead_ready settle_ms=1500
+```
+
+It checks the whole path in order: REAPER alive, audio device open, track armed, input selected,
+chain loaded, chain passing audio, signal actually arriving, latency short enough to play. The
+answer is one word plus the problems behind it:
+
+```
+verdict=READY | reason=armed, monitoring, 11.61 ms out, 1 plugin live | problems=none
+track=1 | armed=True | monitor=True | input=1 | chain=1 | live_fx=1 | peak_db=-14.0 | out_ms=11.61
+```
+
+The words are `READY`, `STANDBY` (not armed), `NO INPUT` (armed but pointed at nothing), `NO CHAIN`
+(nothing loaded, or everything bypassed, which is what panic leaves behind), `NO SIGNAL` (armed and
+monitoring but the meter never moved), `CLIPPING`, `DEVICE CLOSED`, `REAPER NOT RUNNING` and
+`REAPER BUSY`. It listens for 600 ms by default before it calls an input silent, so one quiet frame
+cannot report a live rig as dead. Nothing in it writes.
+
 ## Panic
 
 `amphead_panic` is the dead man's switch, and it is the one button the pane paints red.
@@ -110,7 +135,8 @@ sound.
 ## Status
 
 Working and verified against REAPER 7.77: the bridge, the launch and standby rules, the arm safety
-floor, tone application, the live switch, panic, and the amp face backend. 142 unit tests, `hermes plugins validate` passes.
+floor, tone application, the live switch, the readiness verdict, panic, and the amp face
+backend. 169 unit tests, `hermes plugins validate` passes.
 
 Verified in a fresh Hermes session: `amphead_live` reported `live=True | armed=True | monitor=True |
 master_db=-20.0 | input=1 | clips_at=11.61`, and `amphead_status` read back `device=open`,

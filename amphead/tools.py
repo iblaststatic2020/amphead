@@ -10,7 +10,10 @@ import os
 from pathlib import Path
 from typing import Any
 
-from . import bridge, launch
+import math
+import time
+
+from . import bridge, launch, verdict
 from .rigfile import write_template
 
 TOOLSET = "amphead"
@@ -131,6 +134,13 @@ def check_reaper_available() -> bool:
         return True
     except launch.NoReaperInstall:
         return False
+
+
+def _db_level(amplitude: float) -> str:
+    """A player reads dB, not a raw amplitude like 0.014."""
+    if amplitude <= 0:
+        return "-inf"
+    return f"{20 * math.log10(amplitude):.1f}"
 
 
 def _whole(value: Any) -> Any:
@@ -362,6 +372,68 @@ def handle_live(args: dict[str, Any], **_kw) -> str:
                  ("clips_at", device.get("output_latency_ms"))])
 
 
+READY_SCHEMA = _schema(
+    "amphead_ready",
+    "Judge the whole rig in one call and answer with a single verdict word plus the reasons: is "
+    "REAPER alive, is the rig tab there, is the audio device open, is the track armed and "
+    "monitoring, is its input selected, is the chain loaded and passing audio, is signal actually "
+    "arriving, and is the round trip short enough to play. Read-only; never arms, never writes.",
+    {"track": {"type": "integer", "description": "Track index, 1 based (default 1).",
+               "minimum": 1},
+     "settle_ms": {"type": "integer",
+                   "description": "How long to listen for signal before calling it silent "
+                                  "(default 600, so one quiet frame cannot report a live rig dead).",
+                   "minimum": 0, "maximum": 3000}},
+)
+
+
+def handle_ready(args: dict[str, Any], **_kw) -> str:
+    """The rig as a single truth: a word a player can read and the problems behind it."""
+    track = int(args.get("track") or 1)
+    settle = int(args.get("settle_ms", 600))
+    try:
+        state = launch.state()
+    except launch.NoReaperInstall:
+        return ("verdict=NO REAPER INSTALL | reason=REAPER is not installed on this machine | "
+                "problems=REAPER is missing")
+
+    chain: list[dict] = []
+    info: dict = {}
+    reading: dict = {}
+    if state.get("bridge") == "live":
+        try:
+            info = bridge.track_info(track=track)
+            chain = [{"name": str(fx.get("name")), "enabled": bool(fx.get("enabled", True))}
+                     for fx in bridge.fx_list(track=track)]
+            # Listen for a moment: a single frame of silence is not the same as a dead input.
+            deadline = time.monotonic() + max(0, settle) / 1000.0
+            while True:
+                sample = bridge.meter(track=track)
+                reading = {"l": max(float(reading.get("l") or 0.0), float(sample.get("l") or 0.0)),
+                           "r": max(float(reading.get("r") or 0.0), float(sample.get("r") or 0.0)),
+                           "clip": bool(reading.get("clip") or sample.get("clip"))}
+                loud = max(reading["l"], reading["r"]) > verdict.FLOOR
+                if loud or reading["clip"] or time.monotonic() >= deadline:
+                    break
+                time.sleep(0.05)
+        except bridge.NoReaper:
+            state = {"bridge": "none", "reason": "REAPER stopped answering"}
+        except bridge.ReaperError as exc:
+            return f"verdict=REAPER BUSY | reason={exc} | problems=the bridge refused the read"
+
+    out = verdict.judge(state, info, reading, chain)
+    fields = [("verdict", out["verdict"]), ("reason", out["reason"]),
+              ("problems", "; ".join(out["problems"]) or "none")]
+    if state.get("bridge") == "live":
+        fields += [("track", track), ("armed", bool(info.get("armed"))),
+                   ("monitor", bool(info.get("monitor"))),
+                   ("input", _whole(info.get("recinput"))),
+                   ("chain", len(chain)), ("live_fx", len([f for f in chain if f["enabled"]])),
+                   ("peak_db", _db_level(max(reading.get("l") or 0.0, reading.get("r") or 0.0))),
+                   ("out_ms", (state.get("device") or {}).get("latency_out_ms") or 0.0)]
+    return _fmt(fields)
+
+
 def handle_panic(args: dict[str, Any], **_kw) -> str:
     """The dead man's switch: silence first, then prove it with read-backs, never assume it."""
     track = int(args.get("track") or 1)
@@ -444,4 +516,5 @@ TOOLS = (
     ("amphead_tone", TONE_SCHEMA, handle_tone, "🎚️"),
     ("amphead_live", LIVE_SCHEMA, handle_live, "🔊"),
     ("amphead_panic", PANIC_SCHEMA, handle_panic, "⏹️"),
+    ("amphead_ready", READY_SCHEMA, handle_ready, "✅"),
 )

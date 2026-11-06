@@ -10,3 +10,4 @@ provides_tools:
   - amphead_tone
   - amphead_live
   - amphead_panic
+  - amphead_ready

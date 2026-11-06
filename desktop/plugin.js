@@ -14,6 +14,8 @@ const VERDICT_COLOR = {
   READY: 'var(--ui-accent)',
   STANDBY: 'var(--ui-text-secondary)',
   'NO SIGNAL': 'var(--ui-warning, var(--ui-text-secondary))',
+  'NO INPUT': 'var(--ui-warning, var(--ui-text-secondary))',
+  'NO CHAIN': 'var(--ui-warning, var(--ui-text-secondary))',
   CLIPPING: 'var(--ui-danger, var(--ui-text))',
   'DEVICE CLOSED': 'var(--ui-danger, var(--ui-text))',
   'REAPER NOT RUNNING': 'var(--ui-danger, var(--ui-text))',
