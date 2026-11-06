@@ -13,7 +13,7 @@ from typing import Any
 import math
 import time
 
-from . import bridge, launch, verdict
+from . import bridge, install_bridge, launch, verdict
 from .rigfile import write_template
 
 TOOLSET = "amphead"
@@ -218,7 +218,20 @@ def handle_setup(args: dict[str, Any], **_kw) -> str:
     tempo = float(args.get("tempo") or 120.0)
     hide = bool(args.get("hide"))
     try:
+        # Setup owns the install as well as the rig: a pane on a machine whose resource folder
+        # was rebuilt, or whose REAPER updated and dropped the startup script, should repair
+        # itself rather than tell the player to run a command line.
+        installed = install_bridge.install()
+    except install_bridge.InstallError as exc:
+        return f"INSTALL FAILED: {exc}"
+    try:
         running = launch.ensure_running(hidden_desktop=hide)
+        if not launch.bridge_alive():
+            return _fmt([
+                ("installed", f"{installed.bridge_path} ({installed.startup_action})"),
+                ("state", "BRIDGE NOT ANSWERING"),
+                ("fix", "quit REAPER and run setup again: __startup.lua only runs at launch"),
+            ])
         if not path.is_file():
             path.parent.mkdir(parents=True, exist_ok=True)
             write_template(path, tempo=tempo)

@@ -117,8 +117,19 @@ class TestSetup(unittest.TestCase):
         self.rig = Path(self.tmp.name) / "amphead.rpp"
         self._env = mock.patch.dict(os.environ, {"AMPHEAD_RIG": str(self.rig)})
         self._env.start()
+        # Setup repairs the install, which must never touch the real REAPER resource folder
+        # from a test.
+        self._inst = mock.patch.object(
+            tools.install_bridge, "install",
+            return_value=mock.Mock(bridge_path=Path("C:/res/Scripts/hermes_bridge/bridge.lua"),
+                                   startup_action="adopted", warnings=[]))
+        self._inst.start()
+        self._alive = mock.patch.object(tools.launch, "bridge_alive", return_value=True)
+        self._alive.start()
 
     def tearDown(self):
+        self._alive.stop()
+        self._inst.stop()
         self._env.stop()
         self.tmp.cleanup()
 
@@ -157,6 +168,44 @@ class TestSetup(unittest.TestCase):
         self.assertEqual(writes["MASTER_VOL"]["db"], -60.0)
         self.assertEqual(writes["MASTER_VOL"]["expect"], self.rig.as_posix(),
                          "every write must name the tab it targets")
+
+    def test_setup_repairs_the_install_before_it_touches_the_rig(self) -> None:
+        """A pane on a rebuilt resource folder has to fix itself; telling the player to run
+        a command line is how a plugin loses a musician."""
+        order: list[str] = []
+        self._inst.stop()
+        self._inst = mock.patch.object(
+            tools.install_bridge, "install",
+            side_effect=lambda: (order.append("install"), mock.Mock(
+                bridge_path=Path("C:/res/bridge.lua"), startup_action="created", warnings=[]))[1])
+        self._inst.start()
+
+        with mock.patch.object(tools.launch, "find_reaper", return_value=Path("C:/reaper.exe")), \
+             mock.patch.object(tools.launch, "ensure_running",
+                               side_effect=lambda **kw: order.append("launch") or {"ui": "minimized"}), \
+             mock.patch.object(tools.bridge, "open_rig",
+                               return_value={"path": self.rig.as_posix()}), \
+             mock.patch.object(tools.bridge, "call", return_value={"db": -60.0}), \
+             mock.patch.object(tools.bridge, "tabs_list", return_value=[]):
+            tools.handle_setup({})
+
+        self.assertEqual(order[:2], ["install", "launch"],
+                         "the bridge has to exist before REAPER is asked to run it")
+
+    def test_a_bridge_that_does_not_answer_is_reported_with_the_fix(self) -> None:
+        self._alive.stop()
+        self._alive = mock.patch.object(tools.launch, "bridge_alive", return_value=False)
+        self._alive.start()
+
+        with mock.patch.object(tools.launch, "find_reaper", return_value=Path("C:/reaper.exe")), \
+             mock.patch.object(tools.launch, "ensure_running", return_value={"ui": "minimized"}), \
+             mock.patch.object(tools.bridge, "call", side_effect=AssertionError(
+                 "nothing else may be attempted when the bridge is deaf")):
+            out = tools.handle_setup({})
+
+        self.assertIn("BRIDGE NOT ANSWERING", out)
+        self.assertIn("quit REAPER", out)
+        self.assertNotIn("state=STANDBY", out, "a deaf bridge is not standby")
 
     def test_setup_reports_a_guard_refusal_instead_of_claiming_success(self):
         with mock.patch.object(tools.launch, "find_reaper", return_value=Path("C:/reaper.exe")), \

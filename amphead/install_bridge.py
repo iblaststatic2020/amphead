@@ -61,7 +61,7 @@ class InstallResult:
     bridge_path: Path
     bridge_bytes: int
     startup_path: Path
-    startup_action: str          # created | updated | appended | unchanged
+    startup_action: str          # created | updated | appended | adopted | unchanged | no block
     backup: Path | None = None
     warnings: list[str] = field(default_factory=list)
 
