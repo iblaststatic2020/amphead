@@ -207,6 +207,61 @@ class TestShippedPresets(PresetCase):
         self.assertEqual(self.undo_depth() - before, 1)
 
 
+class TestIntent(unittest.TestCase):
+    """Plain words have to reach a preset without a keyword list the player has to learn."""
+
+    def test_crunchier_means_crunch(self):
+        self.assertEqual(presets.intent("make it crunchier")[0], "crunch")
+
+    def test_cleaner_means_clean(self):
+        self.assertEqual(presets.intent("a bit cleaner please")[0], "clean")
+
+    def test_lead_words_mean_lead(self):
+        for query in ("give me a lead", "more gain", "singing it", "I want to shred"):
+            self.assertEqual(presets.intent(query)[0], "lead", query)
+
+    def test_a_request_that_names_no_sound_is_not_guessed(self):
+        self.assertIsNone(presets.intent("an amp that sounds like blink182"))
+        self.assertIsNone(presets.intent("something darker"))
+        self.assertIsNone(presets.intent(""))
+
+    def test_the_cue_has_to_start_the_word_not_sit_inside_it(self):
+        """'cleaner' is a real word a player says; 'unclean' is not the same request."""
+        self.assertIsNone(presets.intent("leave the room unclean"))
+
+
+class TestToneIntent(PresetCase):
+    nam = True
+
+    def setUp(self):
+        super().setUp()
+        from amphead import tools
+        self.tools = tools
+        self.handler = dict((name, fn) for name, _s, fn, _e in tools.TOOLS)["amphead_tone"]
+
+    def test_free_text_applies_the_matching_preset_in_one_undo_group(self):
+        before = self.undo_depth()
+        text = self.handler({"query": "make it crunchier"})
+        self.assertIn("preset=crunch", text)
+        self.assertIn("one undo point", text)
+        self.assertIn("| Amplifier Input Gain:", text)
+        self.assertEqual(self.undo_depth() - before, 1)
+
+    def test_dry_run_reports_the_choice_and_writes_nothing(self):
+        before = self.undo_depth()
+        text = self.handler({"query": "make it crunchier", "apply": False})
+        self.assertIn("crunch", text)
+        self.assertIn("dry run", text)
+        self.assertEqual(self.undo_depth(), before)
+
+    def test_a_request_the_presets_do_not_cover_still_falls_through(self):
+        """'blink182' is not one of our presets; the capture library answers it, or says why not."""
+        text = self.handler({"query": "an amp that sounds like blink182", "apply": False})
+        self.assertNotIn("preset=crunch", text)
+        self.assertTrue(text.startswith(("archetype", "NO MATCH", "NOT APPLIED: the preset library")),
+                        text)
+
+
 class TestPresetTool(PresetCase):
     nam = True
 

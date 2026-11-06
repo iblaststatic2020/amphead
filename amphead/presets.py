@@ -38,8 +38,12 @@ class Change:
     note: str = ""
 
     def line(self) -> str:
-        arrow = "->" if self.ok else "=(no change)"
-        text = f"{self.fx} | {self.param}: {self.before} {arrow} {self.after}"
+        if not self.ok:
+            text = f"{self.fx} | {self.param}: {self.before} =(no change) {self.after}"
+        elif abs(self.norm_after - self.norm_before) <= 1e-4:
+            return f"{self.fx} | {self.param}: {self.before} (already there)"
+        else:
+            text = f"{self.fx} | {self.param}: {self.before} -> {self.after}"
         return f"{text} ({self.note})" if self.note else text
 
 
@@ -73,6 +77,32 @@ class Applied:
                 f"{f' | refused={len(self.refused)}' if self.refused else ''}"
                 f"{f' | not on this rig={len(self.missing)}' if self.missing else ''}"
                 f" | {self.seconds:.2f}s | one undo point")
+
+
+# Words a player uses when they mean one of the presets. Multi-word cues are checked first, and a
+# single-word cue is allowed to be the stem of the word said ("crunchier", "cleaner"), because those
+# are the words people actually use. Order matters: the first cue that matches wins.
+CUES: tuple[tuple[str, tuple[str, ...], str], ...] = (
+    ("lead", ("lead", "solo", "singing", "sustain", "shred", "more gain", "gainier", "hotter",
+              "push it", "max gain"), "asked for a lead voice or more gain"),
+    ("crunch", ("crunch", "crunchy", "dirty", "distortion", "distorted", "overdriven", "rock",
+                "punk", "grit", "gritty", "angry"), "asked for crunch or drive"),
+    ("clean", ("clean", "sparkle", "jazz", "ambient", "soft", "quieter", "gentle"), "asked for clean"),
+)
+
+
+def intent(text: str) -> tuple[str, str] | None:
+    """The preset a plain-language request means, or None. Never guesses when nothing matches."""
+    words = [w for w in re.sub(r"[^a-z0-9 ]+", " ", str(text).lower()).split() if w]
+    joined = " ".join(words)
+    for name, cues, reason in CUES:
+        for cue in cues:
+            if " " in cue:
+                if cue in joined:
+                    return name, reason
+            elif any(word == cue or (len(cue) >= 4 and word.startswith(cue)) for word in words):
+                return name, reason
+    return None
 
 
 def path_for(name: str) -> Path:

@@ -76,10 +76,11 @@ TEARDOWN_SCHEMA = _schema(
 
 TONE_SCHEMA = _schema(
     "amphead_tone",
-    "Turn a plain-language tone request (\"an amp that sounds like blink182\", \"jazz clean\", "
-    "\"drop C metal\") into a saved NAM preset, report which capture and IR it uses and how the "
-    "knobs sit, and load it into the rig's NAM Universal. Returns the archetype, the .nam capture "
-    "path, the preset file and the knob values read back from the plugin after the write.",
+    "Turn a plain-language tone request into sound on the rig. A request the rig's own presets "
+    "answer (\"make it crunchier\", \"cleaner\") applies that preset in one undo group and reports "
+    "every knob that moved in the plugin's units; a request for a different amp "
+    "(\"an amp that sounds like blink182\", \"drop C metal\") loads a saved NAM preset from the "
+    "capture library instead, since amp choice lives in the plugin's state chunk and not on a knob.",
     {"query": {"type": "string",
                "description": "What the player asked for, in their own words."},
      "apply": {"type": "boolean",
@@ -270,12 +271,41 @@ def handle_tone(args: dict[str, Any], **_kw) -> str:
     apply = args.get("apply")
     apply = True if apply is None else bool(apply)
 
+    # A request that names a sound the rig's own presets already carry is answered by applying that
+    # preset: one undo group, every knob read back, a diff in the plugin's units. The library path
+    # below changes the capture itself and only runs when the preset does not fit this rig.
+    from . import presets
+
+    hit = presets.intent(query)
+    if hit:
+        name, reason = hit
+        if not apply:
+            return _fmt([("preset", name), ("why", reason), ("apply", "false (dry run)")])
+        try:
+            applied = presets.apply(name)
+        except bridge.ReaperError:
+            applied = None
+        except (LookupError, ValueError):
+            applied = None
+        if applied is not None and applied.changes:
+            head = applied.sentence()
+            if applied.refused:
+                head += " | refused: " + ", ".join(c.param for c in applied.refused)
+            return "\n".join([f"why: {reason}", head] + [c.line() for c in applied.changes])
+        # Everything the preset names is missing: fall through to the capture library, which can
+        # load a whole amp rather than turn knobs that are not there.
+        if applied is not None and not applied.missing:
+            return f"why: {reason}\nNOT APPLIED: {name} touched no knob on this rig"
+
     arch, ranked = tones.best(query)
     if arch is None:
         options = "; ".join(a.key for _, a in ranked[:4])
         return f"NO MATCH for {query!r} | closest={options}"
 
-    root = tones.root_of(arch)
+    try:
+        root = tones.root_of(arch)
+    except (OSError, KeyError) as exc:
+        return f"NOT APPLIED: the preset library is not readable ({exc})"
     lines = [
         _fmt([("archetype", arch.key), ("preset", arch.preset), ("capture", root["amp"]),
               ("ir", root["ir"])]),

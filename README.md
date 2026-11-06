@@ -20,10 +20,26 @@ read back and verified instead of assumed.
 
 ## Tone requests
 
-The NAM Universal plugin keeps the loaded amp inside its state chunk, not on a parameter, so amp choice
-is a saved preset rather than a knob. `amphead/tones.py` holds eight archetypes (pop punk, modern metal,
-hard rock, lead, clean, edge of breakup, stoner fuzz, bass), each pointing at a preset in the library
-plus the knob deltas that push it toward the request.
+Two paths, and the tool picks the cheaper one. If what you asked for is a sound the rig's own presets
+already carry, `amphead_tone` applies that preset: one undo group, every knob read back, a diff in the
+plugin's own units.
+
+```
+amphead_tone query="make it crunchier"
+  why: asked for crunch or drive
+  preset=crunch | changed=9 | already there=1 | 1.06s | one undo point
+  VST3: NAM Universal (WaveMind) | Pedal Input Gain: 0 -> 5.76
+  VST3: NAM Universal (WaveMind) | Amplifier Input Gain: -3.84 -> 5.76
+  ...
+```
+
+That mapping is a small cue table, not a list of magic words: "crunchier" and "cleaner" match on their
+stems, "more gain" is checked before "gain", and a request that names no sound ("something darker") is
+not guessed at. Those fall through to the second path, because amp choice is not a knob: NAM Universal
+keeps the loaded amp inside its state chunk, so a different amp is a different saved preset.
+`amphead/tones.py` holds eight archetypes (pop punk, modern metal, hard rock, lead, clean, edge of
+breakup, stoner fuzz, bass), each pointing at a preset in the library plus the knob deltas that push it
+toward the request.
 
 ```
 python -m amphead.tones --list
