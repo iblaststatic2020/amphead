@@ -211,7 +211,7 @@ class TestReadyOverTheWire(unittest.TestCase):
 
     def test_a_bridge_that_stops_answering_is_reported_as_busy(self):
         # The process still looks alive, so the honest word is BUSY, not "not running".
-        self.fake.stop()
+        self.fake.stall()
         self.assertIn("verdict=REAPER BUSY", tools.handle_ready({"settle_ms": 0}))
 
 

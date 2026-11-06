@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -18,6 +20,8 @@ from unittest import mock
 
 from amphead import bridge
 from amphead.fake_reaper import FakeReaper
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]   # so the child can import amphead
 
 
 class ClientCase(unittest.TestCase):
@@ -64,25 +68,43 @@ class TestLock(ClientCase):
             self.assertEqual(payload["proto"], 2)
         self.assertEqual(len(self.fake.requests), 4, "every request reached the bridge exactly once")
 
-    def test_a_stale_lock_from_a_dead_client_is_reclaimed(self):
+    def test_a_lock_file_left_by_a_dead_client_does_not_block(self):
+        """A lock file is not itself a lock. Left behind by a crashed client it must not
+        stop anyone: the kernel knows whether a holder exists, the file does not."""
         lock = self.root / "request.lock"
-        lock.write_text("99999", encoding="utf-8")
+        lock.write_text("99999:deadbeef", encoding="utf-8")
         old = time.time() - 60
         os.utime(lock, (old, old))
         payload = self.call("PING")
         self.assertTrue(payload["ok"])
-        self.assertFalse(lock.exists(), "reclaimed lock must be released after the call")
+        self.assertEqual(len(self.fake.requests), 1)
 
-    def test_a_live_holder_is_not_evicted(self):
-        """A slow command longer than the stale window must keep its slot by refreshing it."""
-        with mock.patch.object(bridge, "LOCK_STALE", 0.3):
-            payload = self.call("PING", timeout=10.0)
+    def test_a_slow_command_keeps_its_slot(self):
+        """A command that runs long must not lose the slot to the next caller, however
+        long it takes: exclusion is held by the kernel until the call returns."""
+        self.fake.latency = 0.5
+        payload = self.call("PING", timeout=10.0)
         self.assertTrue(payload["ok"])
         self.assertEqual(len(self.fake.requests), 1)
 
     def test_waiter_gives_up_instead_of_hanging_forever(self):
-        lock = self.root / "request.lock"
-        lock.write_text(str(os.getpid()), encoding="utf-8")   # fresh lock, held forever
+        """A genuinely held lock makes a second caller wait, then give up with a timeout
+        instead of hanging. The holder has to be another process holding the real lock."""
+        script = (
+            "import time\n"
+            "from pathlib import Path\n"
+            "from amphead import bridge\n"
+            f"l = bridge._Lock(Path(r'{self.root / 'request.lock'}'), timeout=5.0)\n"
+            "l.__enter__()\n"
+            "time.sleep(30)\n"
+        )
+        holder = subprocess.Popen([sys.executable, "-c", script], cwd=str(PROJECT_ROOT))
+        self.addCleanup(holder.wait)
+        self.addCleanup(holder.kill)
+        deadline = time.monotonic() + 5.0
+        while not (self.root / "request.lock").exists() and time.monotonic() < deadline:
+            time.sleep(0.02)
+        time.sleep(0.2)                     # let the child take the lock
         with mock.patch.object(bridge, "LOCK_TIMEOUT", 0.2):
             with self.assertRaises(bridge.BridgeTimeout):
                 self.call("PING")

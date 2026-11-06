@@ -26,7 +26,6 @@ from urllib.parse import quote, unquote
 PROTO = 2
 DEFAULT_TIMEOUT = 2.0
 LOCK_TIMEOUT = 10.0      # how long to wait for the slot
-LOCK_STALE = 5.0         # a lock older than this is from a dead client
 HEARTBEAT_MAX_AGE = 5.0
 
 
@@ -83,22 +82,47 @@ def _alive_age(base: Path) -> float | None:
         return None
 
 
+def _try_lock(fd: int) -> bool:
+    """Ask the kernel for an exclusive lock on the open file, without waiting."""
+    try:
+        if os.name == "nt":
+            import msvcrt
+
+            os.lseek(fd, 0, os.SEEK_SET)
+            msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return True
+    except OSError:
+        return False
+
+
 class _Lock:
     """Exclusive lock on the single request slot.
 
     ``request.txt`` is one global file. Two sessions calling at once would otherwise
     overwrite each other's requests and both see a timeout.
+
+    This is a kernel file lock, not a "create the file, delete it when done" flag. The
+    create/delete protocol is a check-then-act race: the release-side delete can land after
+    the next holder has already created the file, so two callers share the slot and one of
+    them waits out a timeout for an answer written for the other. The kernel also releases
+    the lock when a process dies, so a crash cannot leave a lock that nobody owns.
+    The file stays on disk empty and unlocked between calls, which is why uninstall can
+    still remove it.
     """
 
-    def __init__(self, path: Path, timeout: float = LOCK_TIMEOUT, stale: float = LOCK_STALE):
+    def __init__(self, path: Path, timeout: float = LOCK_TIMEOUT, stale: float | None = None):
         self.path = path
         self.timeout = timeout
-        self.stale = stale
+        self.stale = stale      # accepted for old callers; a kernel lock needs no staleness rule
         self.fd: int | None = None
 
     def touch(self) -> None:
-        """Refresh the lock's mtime. A holder that is waiting on a slow command must keep
-        proving it is alive, otherwise its own lock ages out and a second client walks in."""
+        """Refresh the lock file's mtime. No longer load-bearing (the kernel holds the
+        lock), kept so a holder's heartbeat stays visible in the directory listing."""
         try:
             os.utime(self.path, None)
         except OSError:
@@ -107,34 +131,23 @@ class _Lock:
     def __enter__(self) -> "_Lock":
         deadline = time.monotonic() + self.timeout
         while True:
-            try:
-                self.fd = os.open(self.path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-                os.write(self.fd, str(os.getpid()).encode())
+            fd = os.open(self.path, os.O_CREAT | os.O_RDWR, 0o600)
+            if _try_lock(fd):
+                self.fd = fd
                 return self
-            except FileExistsError:
-                try:
-                    age = time.time() - self.path.stat().st_mtime
-                except OSError:
-                    age = 0.0
-                if age > self.stale:
-                    try:
-                        self.path.unlink()          # stale lock from a dead client
-                    except OSError:
-                        pass
-                if time.monotonic() > deadline:
-                    raise BridgeTimeout(f"could not acquire bridge lock {self.path}")
-                time.sleep(0.01)
+            os.close(fd)
+            if time.monotonic() > deadline:
+                raise BridgeTimeout(f"could not acquire bridge lock {self.path}")
+            time.sleep(0.01)
 
     def __exit__(self, *exc: object) -> None:
-        if self.fd is not None:
-            try:
-                os.close(self.fd)
-            except OSError:
-                pass
+        if self.fd is None:
+            return
         try:
-            self.path.unlink()
+            os.close(self.fd)           # closing the handle releases the kernel lock
         except OSError:
             pass
+        self.fd = None
 
 
 def _process_running() -> bool:
@@ -225,7 +238,7 @@ def call(
     line = "|".join(parts)
     resp = out / f"resp_{rid}.json"
 
-    with _Lock(base / "request.lock", timeout=LOCK_TIMEOUT, stale=LOCK_STALE) as lock:
+    with _Lock(base / "request.lock", timeout=LOCK_TIMEOUT) as lock:
         tmp = base / f".req_{rid}.tmp"
         tmp.write_text(line, encoding="utf-8")
         try:

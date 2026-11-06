@@ -156,16 +156,37 @@ class FakeReaper:
     # -- lifecycle ---------------------------------------------------------
 
     def start(self) -> "FakeReaper":
+        # A fake REAPER must also claim reaper.exe is alive, otherwise every verdict these
+        # tests make depends on whether the developer happens to have REAPER open. That
+        # ambient dependency is what let a "REAPER BUSY" test pass on one machine and read
+        # NOT RUNNING on another.
         if self.mode == "closed":
             return self
+        from unittest import mock
+
+        from . import bridge
+
+        self._proc_patch = mock.patch.object(bridge, "_process_running", return_value=True)
+        self._proc_patch.start()
         self._thread = threading.Thread(target=self._loop, daemon=True)
         self._thread.start()
         return self
+
+    def stall(self) -> None:
+        """Stop answering but keep looking alive: the modal-dialog case, where the honest
+        verdict is BUSY rather than "not running"."""
+        self._stop.set()
+        if self._thread:
+            self._thread.join(timeout=2.0)
 
     def stop(self) -> None:
         self._stop.set()
         if self._thread:
             self._thread.join(timeout=2.0)
+        patch = getattr(self, "_proc_patch", None)
+        if patch is not None:
+            patch.stop()
+            self._proc_patch = None
 
     def __enter__(self) -> "FakeReaper":
         return self.start()
