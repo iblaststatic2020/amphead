@@ -133,6 +133,15 @@ def check_reaper_available() -> bool:
         return False
 
 
+def _whole(value: Any) -> Any:
+    """REAPER reports I_RECINPUT as a float, and input=1.0 reads like a bug next to input=1."""
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return value
+    return int(number) if number.is_integer() else value
+
+
 def _fmt(fields: list[tuple[str, Any]]) -> str:
     return " | ".join(f"{k}={v}" for k, v in fields)
 
@@ -348,7 +357,7 @@ def handle_live(args: dict[str, Any], **_kw) -> str:
 
     return _fmt([("live", True), ("track", track), ("armed", armed.get("armed")),
                  ("monitor", armed.get("monitor")), ("master_db", level.get("db")),
-                 ("input", now.get("recinput", spec if retarget else "unchanged")),
+                 ("input", _whole(now.get("recinput", spec if retarget else "unchanged"))),
                  ("input_changed", retarget),
                  ("clips_at", device.get("output_latency_ms"))])
 
