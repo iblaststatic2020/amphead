@@ -60,6 +60,30 @@ Before any write the chain is re-read and the name is confirmed against its inde
 shift the moment something is added or removed. Writing to index 2 because it used to be the amp is
 exactly the kind of wrong that sounds plausible.
 
+## Building a rig from nothing
+
+```
+amphead_build amp="NAM Universal"
+  built=True | rig=...\amphead\rig\rig.rpp | track=1 Gtr | amp=VST3: NAM Universal (WaveMind) at fx 0
+             | chain=1 | db=-6 | armed=False | monitor=False | input=untouched (default 0) | seconds=1.31
+             | next=the player flips Live
+```
+
+The tab is opened from a minimal `rig.rpp` that the plugin writes itself, because a path on disk is
+the only identity every later write can be guarded against. Then the whole build is one batch: add the
+track, load the amp, set the input if one was asked for, set the starting level, and arm only if
+`arm=true`. The track index is worked out before the batch runs (current count plus one), so the build
+costs one round trip and still checks the index REAPER reports back.
+
+Two rules keep it from surprising the player. It never arms on its own: `arm=true` exists, but the
+default leaves the rig in standby, because going live is the switch the user flips. And it never
+deletes FX it did not add; a project that arrives with a chain gets those plugins named in the result
+and left exactly where they are. `teardown` will only close a tab whose path is the rig's, and only
+deletes the file after REAPER confirms the close.
+
+Live on this machine: 1.31 s unarmed, 1.21 s armed, chain and `I_RECARM`/`I_RECMON` read back from
+REAPER, existing tabs untouched.
+
 ## Turning a knob, and proving it moved
 
 `amphead/rig.py` writes one parameter at a time and does not take the plugin's word for it:

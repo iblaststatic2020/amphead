@@ -554,6 +554,63 @@ def handle_set(args: dict[str, Any], **_kw) -> str:
     ])
 
 
+BUILD_SCHEMA = _schema(
+    "amphead_build",
+    "Build the practice rig in its own tab on disk, then prove what landed: a named track, the amp "
+    "on it, the level, optionally an input and arming, in one batch. FX that came with the project "
+    "are reported and left alone. Arming is opt-in, because going live is the player's decision, not "
+    "a side effect of building.",
+    {"amp": {"type": "string",
+             "description": "Plugin name to load, as REAPER knows it (default 'NAM Universal')."},
+     "input": {"type": ["string", "integer"],
+               "description": "Recording input: 1..N for a mono channel, '1+2' for a stereo pair, "
+                              "'none' for no input. Omit to leave the input decision alone."},
+     "track_name": {"type": "string", "description": "Name for the new track (default Gtr)."},
+     "start_db": {"type": "number", "description": "Starting track level in dB (default -6)."},
+     "arm": {"type": "boolean",
+             "description": "Arm and monitor the track. Off by default: the Live switch is the "
+                            "player's. When on, the master is parked at -60 dB first."},
+     "force": {"type": "boolean", "description": "Overwrite an existing rig.rpp."}},
+    [],
+)
+
+
+def handle_build(args: dict[str, Any], **_kw) -> str:
+    """Build the rig, and answer with the facts that prove it, not with a promise."""
+    from . import rig
+
+    try:
+        built = rig.build_rig(
+            amp=str(args.get("amp") or rig.DEFAULT_AMP),
+            input=args.get("input"),
+            track_name=str(args.get("track_name") or rig.DEFAULT_TRACK),
+            start_db=float(args["start_db"]) if args.get("start_db") is not None else rig.START_DB,
+            arm=bool(args.get("arm")),
+            force=bool(args.get("force")),
+        )
+    except bridge.NoReaper:
+        return "NOT BUILT: REAPER is not running, call amphead_setup first"
+    except rig.RigRefused as exc:
+        return f"NOT BUILT: {exc}"
+    except bridge.ReaperError as exc:
+        return f"NOT BUILT: {exc}"
+    except (TypeError, ValueError) as exc:
+        return f"NOT BUILT: {exc}"
+
+    facts = [
+        ("built", True), ("rig", built.path), ("track", f"{built.track} {built.track_name}"),
+        ("amp", f"{built.amp} at fx {built.amp_index}"), ("chain", len(built.chain)),
+        ("db", built.db), ("armed", built.armed), ("monitor", built.monitor),
+        ("input", built.input if built.input is not None else "untouched (default 0)"),
+        ("seconds", built.seconds),
+    ]
+    if built.pre_fx:
+        facts.append(("already there", ", ".join(built.pre_fx) + " (kept, not deleted)"))
+    facts.append(("next", "the player flips Live" if not built.armed
+                  else "armed; master parked at -60 dB until the player raises it"))
+    return _fmt(facts)
+
+
 def run_call(cmd: str, **kwargs) -> dict:
     """Small indirection so tests can stub the wire without a live host."""
     return bridge.call(cmd, **kwargs)
@@ -569,4 +626,5 @@ TOOLS = (
     ("amphead_panic", PANIC_SCHEMA, handle_panic, "⏹️"),
     ("amphead_ready", READY_SCHEMA, handle_ready, "✅"),
     ("amphead_set", SET_SCHEMA, handle_set, "🎚️"),
+    ("amphead_build", BUILD_SCHEMA, handle_build, "🏗️"),
 )

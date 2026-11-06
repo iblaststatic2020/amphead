@@ -18,7 +18,7 @@ from pathlib import Path
 import time
 from typing import Any
 
-from . import bridge, resolver
+from . import bridge, resolver, rigfile
 
 TOLERANCE = 0.005
 
@@ -239,3 +239,266 @@ def set_param(fx: int | str, param: int | str, value: float, *, track: int = 1,
     why = attempts[-1]["reason"] if attempts else "no attempt was made"
     raise WriteRefused(last or {},
                        f"{param_name} on {fx_name} refused the write: {shown}; {why}")
+
+# --- Rig identity: a tab that has a path on disk, so every write can be guarded ------------
+
+DEFAULT_AMP = "NAM Universal"
+DEFAULT_TRACK = "Gtr"
+START_DB = -6.0
+
+
+@dataclass
+class Built:
+    """A rig tab that exists, and the facts that prove what is on it."""
+
+    path: str
+    track: int
+    track_name: str
+    amp: str
+    amp_index: int
+    chain: list[str]
+    pre_fx: list[str]
+    input: int | None
+    db: float
+    armed: bool
+    monitor: bool
+    snapshot: str
+    seconds: float
+    created_file: bool
+
+    def sentence(self) -> str:
+        bits = [
+            f"rig={self.path}",
+            f"track={self.track} {self.track_name}",
+            f"amp={self.amp} at fx {self.amp_index}",
+            f"chain={len(self.chain)}",
+            f"db={self.db:g}",
+            f"armed={self.armed}",
+            f"monitor={self.monitor}",
+            f"in={self.input if self.input is not None else 'untouched'}",
+            f"{self.seconds:.2f}s",
+        ]
+        return " | ".join(bits)
+
+
+class RigRefused(bridge.CommandFailed):
+    """The rig could not be built as asked, and nothing is left half-built."""
+
+
+def data_dir() -> Path:
+    env = os.environ.get("AMPHEAD_HOME")
+    if env:
+        return Path(env)
+    base = os.environ.get("LOCALAPPDATA") or (Path.home() / "AppData" / "Local")
+    return Path(base) / "hermes" / "amphead"
+
+
+def rig_path() -> Path:
+    return data_dir() / "rig" / "rig.rpp"
+
+
+def _snapshot(tag: str, facts: dict[str, Any]) -> str:
+    """Write what the tab looked like, so a later diff can say what changed."""
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    target = data_dir() / "snapshots" / f"{stamp}-{tag}.json"
+    record = {"at": time.strftime("%Y-%m-%dT%H:%M:%S"), "tag": tag, **facts}
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(json.dumps(record, indent=2), encoding="utf-8")
+    except OSError:
+        return ""
+    return str(target)
+
+
+def _pre_state(path: str) -> tuple[dict[str, Any], list[str], int]:
+    """Read the tab before touching it: its tabs, its track names, and the FX already on track 1.
+
+    Returns the track count too, because the track this build will create is the next one, and
+    naming it up front is what lets the whole build be a single BATCH.
+    """
+    facts: dict[str, Any] = {"path": path, "tabs": [], "tracks": [], "pre_fx": []}
+    try:
+        facts["tabs"] = bridge.tabs_list()
+    except (bridge.NoReaper, bridge.CommandFailed):
+        pass
+    names: list[str] = []
+    try:
+        names = bridge.track_names(expect=path)
+    except (bridge.NoReaper, bridge.CommandFailed):
+        names = []
+    facts["tracks"] = names
+    pre_fx: list[str] = []
+    try:
+        chain = bridge.fx_list(track=1, expect=path)
+        pre_fx = [f.get("name", "") for f in chain]
+        facts["pre_fx"] = pre_fx
+    except (bridge.NoReaper, bridge.CommandFailed):
+        pass
+    return facts, pre_fx, len(names)
+
+
+def build_rig(
+    amp: str = DEFAULT_AMP,
+    input: str | int | None = None,
+    track_name: str = DEFAULT_TRACK,
+    start_db: float = START_DB,
+    path: str | Path | None = None,
+    arm: bool = False,
+    force: bool = False,
+    timeout: float = 20.0,
+) -> Built:
+    """Build the practice rig in its own tab, and prove each step landed.
+
+    Order matters. The tab is created from a project file on disk first, because that is the only
+    silent way to give a tab a path, and a path is what every later write is guarded against.
+    Then one BATCH does the building: track, amp, input, level, and optionally arming. Arming is
+    opt-in because the moments a track goes live belong to the player.
+
+    FX that came with the project file are reported and left alone: a build never deletes
+    something it did not add.
+    """
+    started = time.time()
+    target = Path(path) if path else rig_path()
+    created_file = False
+    if target.exists() and not force:
+        raise RigRefused({}, f"rig already exists at {target}; pass force=True to overwrite it")
+    rigfile.write_template(target)
+    created_file = True
+
+    bridge.open_rig(str(target), new="0", timeout=timeout)
+    # The tab now reports this path; from here on that path is the guard on every write.
+    expect = str(target)
+
+    pre_facts, pre_fx, tracks_before = _pre_state(expect)
+    snap = _snapshot("pre-build", pre_facts)
+
+    ops: list[tuple[str, dict]] = [("TRACK_ADD", {"name": track_name})]
+    # The new track lands at the end, so its index is known before the batch runs.
+    built_track = tracks_before + 1
+    ops.append(("FX_ADD", {"track": built_track, "name": amp}))
+    spec = None
+    if input is not None and str(input) not in ("0", "none", ""):
+        try:
+            dev = int(bridge.call("DEVINFO").get("inputs", 2))
+        except (bridge.NoReaper, bridge.CommandFailed):
+            dev = 2
+        spec = bridge.input_encoding(input, dev)
+        ops.append(("SET_INPUT", {"track": built_track, "input": spec}))
+    ops.append(("TRACK_VOL", {"track": built_track, "db": f"{start_db:g}"}))
+    if arm:
+        ops.append(("ARM", {"track": built_track, "monitor": "1", "confirm": "1"}))
+
+    try:
+        payload = bridge.batch(ops, label="Hermes: build rig", timeout=timeout,
+                               **bridge.guard(expect=expect))
+    except bridge.CommandFailed as exc:
+        # BATCH stops at the first failure and says which op it was; a half-built rig is never
+        # reported as built, and the tab it started stays put for inspection.
+        results = exc.payload.get("results") or []
+        failed = exc.payload.get("failed_at")
+        raise RigRefused(exc.payload, f"build stopped at op {failed} "
+                                      f"({_op_name(results, failed)}): "
+                                      f"{_op_error(results, failed)}") from exc
+    results = payload.get("results") or []
+
+    add = _resp(results, 1)
+    reported = int(float(add.get("index", built_track) or built_track))
+    if reported != built_track:
+        raise RigRefused(payload, f"the track landed at {reported}, expected {built_track}")
+    fx = _resp(results, 2)
+    amp_index = int(float(fx["fx"])) if fx.get("fx") is not None else -1
+    if amp_index < 0:
+        raise RigRefused(payload, f"the amp went in but REAPER did not report its index: {fx}")
+
+    chain = [f.get("name", "") for f in bridge.fx_list(track=built_track, expect=expect)]
+    info = bridge.track_info(built_track, expect=expect)
+    armed = bool(info.get("armed"))
+    monitor = bool(info.get("monitor"))
+    db = round(float(info.get("db", start_db) or start_db), 2)
+    if arm and not (armed and monitor):
+        raise RigRefused(info, f"track {built_track} was asked to arm and reads "
+                               f"armed={armed} monitor={monitor}")
+    held = info.get("recinput")
+    recinput = int(float(held)) if held not in (None, "") else None
+    if spec is None:
+        # No input was asked for, so nothing about the input is this build's to report.
+        recinput = None
+    elif recinput != spec:
+        raise RigRefused(info, f"input {spec} did not stick: REAPER reads back {recinput}")
+
+    built = Built(
+        path=expect,
+        track=built_track,
+        track_name=str(add.get("name") or track_name),
+        amp=str(fx.get("name") or amp),
+        amp_index=amp_index,
+        chain=chain,
+        pre_fx=pre_fx,
+        input=recinput,
+        db=db,
+        armed=armed,
+        monitor=monitor,
+        snapshot=snap,
+        seconds=round(time.time() - started, 2),
+        created_file=created_file,
+    )
+    _append_log(None, {"op": "build_rig", **built.__dict__, "found_fx": pre_fx})
+    return built
+
+
+def _op_error(results: list[dict], index: Any) -> str:
+    """The failing op's own words, plus the fields that say which name was asked for."""
+    for row in results:
+        if row.get("i") == index:
+            resp = row.get("resp") or {}
+            extra = ", ".join(f"{k}={v}" for k, v in resp.items()
+                              if k not in {"ok", "error"} and v not in ("", None))
+            why = resp.get("error") or "failed"
+            return f"{why} ({extra})" if extra else why
+    return "failed"
+
+
+def _op_name(results: list[dict], index: Any) -> str:
+    for row in results:
+        if row.get("i") == index:
+            return str(row.get("cmd"))
+    return "?"
+
+
+def _resp(results: list[dict], index: int) -> dict:
+    for row in results:
+        if row.get("i") == index:
+            return row.get("resp") or {}
+    return {}
+
+
+def _same_path(a: str, b: str) -> bool:
+    """Compare two project paths the way REAPER means them: case-insensitive, separators folded."""
+    return os.path.normcase(os.path.normpath(a)) == os.path.normcase(os.path.normpath(b))
+
+
+def teardown(path: str | Path | None = None, delete: bool = True, **kwargs: Any) -> dict:
+    """Close the rig tab, and delete the file only when it is the rig's own file.
+
+    The path check comes first, so a tab holding a song cannot be closed by passing a path that
+    is not the rig's, and the file is only removed after REAPER has confirmed the tab closed.
+    """
+    target = Path(path) if path else rig_path()
+    expect = str(target)
+    active = bridge.active_project()
+    if active is None:
+        raise RigRefused({}, "no active project: REAPER may not be running")
+    if _same_path(active, expect) is False:
+        raise RigRefused({"active": active},
+                         f"the active tab is {active}, not the rig ({expect}); refusing to close it")
+    closed = bridge.call("PROJ_TAB_CLOSE", expect=expect, force="1", timeout=kwargs.get("timeout", 15.0))
+    removed = False
+    if delete and target.exists():
+        try:
+            target.unlink()
+            removed = True
+        except OSError:
+            removed = False
+    left = bridge.tabs_list()
+    return {"closed": bool(closed.get("closed")), "path": expect, "file_removed": removed,
+            "tabs": [t.get("path") or t.get("project") or "" for t in left]}

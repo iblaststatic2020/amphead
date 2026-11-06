@@ -12,3 +12,4 @@ provides_tools:
   - amphead_panic
   - amphead_ready
   - amphead_set
+  - amphead_build

@@ -300,6 +300,8 @@ class FakeReaper:
                 fx_count=len(tr["fx"]),
                 chain=[{"i": i, "name": f["name"], "bypassed": not f["enabled"]} for i, f in enumerate(tr["fx"])],
             )
+        if cmd == "TRACKS":
+            return _ok(count=len(self.tracks), names=[t["name"] for t in self.tracks])
         if cmd == "TRACK_ADD":
             g = self._guard(args)
             if g:

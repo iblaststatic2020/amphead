@@ -334,6 +334,11 @@ def _nested(payload: dict, field: str) -> list:
     return value
 
 
+def track_names(**kwargs) -> list[str]:
+    """Just the names, in track order. Used to know where a new track will land."""
+    return _nested(call("TRACKS", **kwargs), "names")
+
+
 def fx_list(track: int = 1, **kwargs) -> list:
     """The chain as a list of ``{i, name, enabled}`` in real order."""
     return _nested(call("FX_LIST", track=track, **kwargs), "fx")
