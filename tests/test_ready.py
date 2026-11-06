@@ -147,15 +147,111 @@ class TestReadyTool(unittest.TestCase):
 
     def test_a_bridge_that_stops_answering_mid_call_is_not_a_panic(self):
         with mock.patch.object(tools.launch, "state", return_value=live()), \
+             mock.patch.object(tools.bridge, "liveness",
+                               return_value=("not-running", "REAPER is not running")), \
              mock.patch.object(tools.bridge, "track_info", side_effect=tools.bridge.NoReaper):
             out = tools.handle_ready({"settle_ms": 0})
         self.assertIn("verdict=REAPER NOT RUNNING", out)
+
+    def test_a_bridge_that_vanished_mid_call_is_bridge_gone(self):
+        # REAPER is still up, so the honest word is that the script went away, not that REAPER did.
+        with mock.patch.object(tools.launch, "state", return_value=live()), \
+             mock.patch.object(tools.bridge, "liveness",
+                               return_value=("not-loaded", "REAPER is running but the bridge is not loaded")), \
+             mock.patch.object(tools.bridge, "track_info", side_effect=tools.bridge.NoReaper):
+            out = tools.handle_ready({"settle_ms": 0})
+        self.assertIn("verdict=BRIDGE GONE", out)
+
+    def test_a_read_that_fails_on_an_empty_project_is_not_a_busy_reaper(self):
+        # The bridge is answering, but the tab in front of REAPER has no track 1: not the rig.
+        empty = live()
+        empty["rig_tab"] = False
+        with mock.patch.object(tools.launch, "state", return_value=empty), \
+             mock.patch.object(tools.bridge, "track_info",
+                               side_effect=tools.bridge.ReaperError("no track 1")):
+            out = tools.handle_ready({"settle_ms": 0})
+        self.assertIn("verdict=RIG TAB CLOSED", out)
 
     def test_ready_is_registered_and_read_only(self):
         names = [name for name, _schema, _fn, _emoji in tools.TOOLS]
         self.assertIn("amphead_ready", names)
         schema = dict((name, schema) for name, schema, _f, _e in tools.TOOLS)["amphead_ready"]
         self.assertEqual(schema["parameters"]["properties"]["settle_ms"]["maximum"], 3000)
+
+
+class TestErrorWords(unittest.TestCase):
+    """Each error state names the broken thing, because the symptom is shared by several of them."""
+
+    def test_a_bridge_that_is_not_loaded_is_bridge_gone(self):
+        out = verdict.judge({"bridge": "gone", "reason": "REAPER is up but the bridge script is not loaded"},
+                            track(), read(0.2), CHAIN)
+        self.assertEqual(out["verdict"], "BRIDGE GONE")
+        self.assertIn("not loaded", out["reason"])
+
+    def test_two_copies_of_reaper_are_named_and_counted(self):
+        state = live()
+        state["instances"] = 2
+        out = verdict.judge(state, track(), read(0.2), CHAIN)
+        self.assertEqual(out["verdict"], "TWO REAPER")
+        self.assertIn("2 copies", out["reason"])
+        self.assertIn("2 reaper.exe", out["problems"][0])
+
+    def test_another_project_in_front_of_reaper_is_a_closed_rig_tab(self):
+        state = live()
+        state["rig_tab"] = False
+        out = verdict.judge(state, track(), read(0.2), CHAIN)
+        self.assertEqual(out["verdict"], "RIG TAB CLOSED")
+        self.assertIn("not the amp rig", out["reason"])
+
+    def test_two_reaper_beats_the_rig_tab_because_nothing_can_be_trusted(self):
+        state = live()
+        state["rig_tab"] = False
+        state["instances"] = 3
+        self.assertEqual(verdict.judge(state, track(), read(0.2), CHAIN)["verdict"], "TWO REAPER")
+
+    def test_a_matching_rig_tab_and_a_single_instance_are_ignored(self):
+        state = live()
+        state["rig_tab"] = True
+        state["instances"] = 1
+        self.assertEqual(verdict.judge(state, track(), read(0.2), CHAIN)["verdict"], "READY")
+
+    def test_a_device_with_no_inputs_is_unplugged_not_quiet(self):
+        state = live()
+        state["device"]["inputs"] = 0
+        out = verdict.judge(state, track(), read(0.0), CHAIN)
+        self.assertEqual(out["verdict"], "DEVICE UNPLUGGED")
+        self.assertIn("0 inputs", out["problems"][0])
+
+    def test_an_unchecked_input_count_is_not_read_as_unplugged(self):
+        # DEVLIST and the pane do not always ask; unknown must not become an accusation.
+        self.assertEqual(verdict.judge(live(), track(), read(0.0), CHAIN)["verdict"], "NO SIGNAL")
+
+    def test_a_muted_track_is_named_before_no_signal(self):
+        muted = track()
+        muted["mute"] = True
+        out = verdict.judge(live(), muted, read(0.0), CHAIN)
+        self.assertEqual(out["verdict"], "MUTED")
+        self.assertIn("muted", out["reason"])
+
+    def test_a_reopened_device_is_not_reported_as_no_signal(self):
+        state = live()
+        state["device"]["reopened"] = True
+        out = verdict.judge(state, track(), read(0.0), CHAIN)
+        self.assertEqual(out["verdict"], "REOPENED DEVICE")
+        self.assertIn("reopened it", out["reason"])
+
+    def test_a_reopened_device_that_is_playing_says_playable(self):
+        state = live()
+        state["device"]["reopened"] = True
+        out = verdict.judge(state, track(), read(0.2), CHAIN)
+        self.assertEqual(out["verdict"], "REOPENED DEVICE")
+        self.assertIn("playable", out["reason"])
+
+    def test_a_closed_device_outranks_a_reopened_note(self):
+        state = live(closed=True)
+        state["device"]["reopened"] = True
+        self.assertEqual(verdict.judge(state, track(), read(0.0), CHAIN)["verdict"],
+                         "DEVICE CLOSED")
 
 
 class TestReadyOverTheWire(unittest.TestCase):
@@ -213,6 +309,13 @@ class TestReadyOverTheWire(unittest.TestCase):
         # The process still looks alive, so the honest word is BUSY, not "not running".
         self.fake.stall()
         self.assertIn("verdict=REAPER BUSY", tools.handle_ready({"settle_ms": 0}))
+
+
+    def test_a_bridge_that_is_not_loaded_is_reported_as_bridge_gone(self):
+        # The pane must not read a missing bridge script as REAPER NOT RUNNING.
+        with mock.patch.object(tools.launch, "state", return_value={
+                "bridge": "gone", "reason": "REAPER is up but the bridge script is not loaded"}):
+            self.assertIn("verdict=BRIDGE GONE", tools.handle_ready({"settle_ms": 0}))
 
 
 if __name__ == "__main__":

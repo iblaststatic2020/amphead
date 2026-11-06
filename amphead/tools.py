@@ -464,8 +464,20 @@ def handle_ready(args: dict[str, Any], **_kw) -> str:
                     break
                 time.sleep(0.05)
         except bridge.NoReaper:
-            state = {"bridge": "none", "reason": "REAPER stopped answering"}
+            # Nothing answered mid-read. Ask the client which silence this is: a quit, a dialog,
+            # or a bridge that is not loaded at all. Guessing here is how the pane ends up saying
+            # REAPER NOT RUNNING to somebody staring at an open REAPER.
+            kind, sentence = bridge.liveness()
+            state = {"bridge": {"not-loaded": "gone", "not-running": "not-running"}.get(kind, "down"),
+                     "reason": sentence}
         except bridge.ReaperError as exc:
+            # A read can fail two ways: the wire is wedged (BUSY), or the project in front of
+            # REAPER has no track 1 because it is not the rig. state() already decided which one.
+            if state.get("rig_tab") is False:
+                return _fmt([("verdict", verdict.RIG_TAB_CLOSED),
+                             ("reason", f"the project in front of REAPER has no track {track} "
+                                        f"({exc}). Run setup to bring the rig tab forward."),
+                             ("problems", "the active project is not the rig")])
             return f"verdict=REAPER BUSY | reason={exc} | problems=the bridge refused the read"
 
     out = verdict.judge(state, info, reading, chain)

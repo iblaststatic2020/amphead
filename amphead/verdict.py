@@ -18,9 +18,15 @@ LATENCY_LIMIT_MS = 40.0  # beyond this, playing feels late even when the meter i
 REAPER_NOT_RUNNING = "REAPER NOT RUNNING"
 REAPER_BUSY = "REAPER BUSY"
 NO_REAPER_INSTALL = "NO REAPER INSTALL"
+BRIDGE_GONE = "BRIDGE GONE"
+TWO_REAPER = "TWO REAPER"
+RIG_TAB_CLOSED = "RIG TAB CLOSED"
 DEVICE_CLOSED = "DEVICE CLOSED"
+DEVICE_UNPLUGGED = "DEVICE UNPLUGGED"
+DEVICE_REOPENED = "REOPENED DEVICE"
 NO_INPUT = "NO INPUT"
 NO_CHAIN = "NO CHAIN"
+MUTED = "MUTED"
 STANDBY = "STANDBY"
 NO_SIGNAL = "NO SIGNAL"
 CLIPPING = "CLIPPING"
@@ -34,6 +40,11 @@ def _device(state: dict) -> dict:
         "rate": device.get("rate") or "",
         "out_ms": float(device.get("latency_out_ms") or 0.0),
         "closed": bool(device.get("closed")),
+        # None means nobody looked, which is not the same as zero inputs on a live device.
+        "inputs": device.get("inputs"),
+        # True when this session reopened a device that came up closed (a killed REAPER leaves
+        # ASIO wedged). It is a note about what just happened, not an error.
+        "reopened": bool(device.get("reopened")),
     }
 
 
@@ -52,13 +63,42 @@ def judge(state: dict, track: dict, reading: dict,
 
     chain=None means the caller did not look at the chain, so the chain rules are skipped rather
     than guessed at. recinput missing means the same about the input.
+
+    Facts the caller may add to `state`, each of which switches on one rule:
+      bridge      "live" | "down" | "not-running" | "gone" | "no-install"
+      instances   how many reaper.exe processes are alive (0 = not checked)
+      rig_tab     False when the project in front of REAPER is not the rig
+
+    Each word names the broken thing rather than the symptom. NO SIGNAL is what a muted track, a
+    closed device and an empty input all look like, and a pane that says NO SIGNAL for all three
+    teaches the player to ignore it.
     """
     problems: list[str] = []
 
     if state.get("bridge") != "live":
-        word = REAPER_BUSY if state.get("bridge") == "down" else REAPER_NOT_RUNNING
+        word = {
+            "no-install": NO_REAPER_INSTALL,
+            "gone": BRIDGE_GONE,
+            "down": REAPER_BUSY,
+        }.get(str(state.get("bridge")), REAPER_NOT_RUNNING)
         return {"verdict": word, "reason": str(state.get("reason") or "the bridge has not answered"),
                 "problems": problems}
+
+    # Two copies of REAPER both service the same request file, so an answer can come from the
+    # instance the player is not looking at. Nothing downstream can be trusted until that is one.
+    if int(state.get("instances") or 0) > 1:
+        count = int(state["instances"])
+        return {"verdict": TWO_REAPER,
+                "reason": f"{count} copies of REAPER are running and they share one bridge folder, "
+                          "so an answer comes from whichever one grabs the request. Quit them all "
+                          "and run setup.",
+                "problems": [f"{count} reaper.exe processes"]}
+
+    if state.get("rig_tab") is False:
+        return {"verdict": RIG_TAB_CLOSED,
+                "reason": "the project open in REAPER is not the amp rig, so these controls would "
+                          "drive somebody else's song. Run setup to bring the rig tab forward.",
+                "problems": ["the active project is not the rig"]}
 
     device = _device(state)
     if device["closed"]:
@@ -66,9 +106,21 @@ def judge(state: dict, track: dict, reading: dict,
                 "reason": "REAPER has no audio device open. Flip LIVE and it opens one for you.",
                 "problems": ["the audio device is closed"]}
 
+    if device["inputs"] is not None and int(device["inputs"]) == 0:
+        return {"verdict": DEVICE_UNPLUGGED,
+                "reason": "the audio device has no inputs, so nothing can arrive: check the "
+                          "interface is connected and powered.",
+                "problems": ["the device reports 0 inputs"]}
+
     if not track.get("armed"):
         return {"verdict": STANDBY, "reason": "the track is not armed, flip LIVE to play",
                 "problems": ["the track is not armed"]}
+
+    if track.get("mute"):
+        return {"verdict": MUTED,
+                "reason": "the track is muted in REAPER, so nothing reaches the master. Unmute it "
+                          "in the mixer, or flip LIVE to be sure the rig is what you hear.",
+                "problems": ["the track is muted"]}
 
     if "recinput" in track and int(float(track.get("recinput") or 0)) == 0:
         return {"verdict": NO_INPUT,
@@ -102,6 +154,14 @@ def judge(state: dict, track: dict, reading: dict,
         problems.append(f"latency {device['out_ms']} ms is above {LATENCY_LIMIT_MS} ms")
 
     if peak <= FLOOR:
+        if device["reopened"]:
+            # Silence right after a restart is the device, not the cable. Say which, so the next
+            # ten seconds are not spent wiggling a jack that was never the problem.
+            return {"verdict": DEVICE_REOPENED,
+                    "reason": "the audio device came up closed after REAPER restarted and AmpHead "
+                              "reopened it. If it is still quiet, strum once: the meter sits at "
+                              "-60 dB until something arrives.",
+                    "problems": problems + ["the device had to be reopened after a restart"]}
         return {"verdict": NO_SIGNAL,
                 "reason": "armed and monitoring, but nothing is arriving on this input",
                 "problems": problems + ["the meter never rose above -60 dB"]}
@@ -119,6 +179,11 @@ def judge(state: dict, track: dict, reading: dict,
     if chain is not None:
         count = len(live_fx)
         reason += f", {count} plugin{'s' if count != 1 else ''} live"
+    if device["reopened"]:
+        return {"verdict": DEVICE_REOPENED,
+                "reason": "playable, and the audio device had to be reopened after the restart: "
+                          + reason,
+                "problems": problems + ["the device had to be reopened after a restart"]}
     return {"verdict": READY, "reason": reason, "problems": problems}
 
 

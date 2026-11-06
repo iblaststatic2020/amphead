@@ -2,6 +2,8 @@
 
 import os
 import sys
+import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -66,6 +68,79 @@ class LivenessTests(unittest.TestCase):
         self.assertEqual(state["project"], "(unnamed)")
         self.assertEqual(state["device"]["buffer"], "512")
         self.assertEqual(state["device"]["latency_total_ms"], 578.0)
+
+
+    def test_state_names_a_missing_bridge_script_instead_of_a_dead_reaper(self):
+        with mock.patch.object(bridge, "devinfo", side_effect=bridge.NoReaper("no answer")), \
+             mock.patch.object(launch, "_running", return_value=True), \
+             mock.patch.object(bridge, "liveness",
+                               return_value=("not-loaded", "REAPER is running but the bridge is not")), \
+             mock.patch.object(launch, "instances", return_value=1):
+            state = launch.state()
+        self.assertEqual(state["bridge"], "gone")
+        self.assertIn("Run setup", state["reason"])
+
+    def test_state_says_not_running_only_when_the_process_is_gone(self):
+        with mock.patch.object(bridge, "devinfo", side_effect=bridge.NoReaper("no answer")), \
+             mock.patch.object(launch, "_running", return_value=False):
+            state = launch.state()
+        self.assertEqual(state["bridge"], "not-running")
+        self.assertEqual(state["instances"], 0)
+
+    def test_state_says_busy_when_reaper_is_up_and_nothing_answers(self):
+        with mock.patch.object(bridge, "devinfo", side_effect=bridge.NoReaper("a dialog has it")), \
+             mock.patch.object(launch, "_running", return_value=True), \
+             mock.patch.object(bridge, "liveness", return_value=("blocked", "a dialog has the thread")), \
+             mock.patch.object(launch, "instances", return_value=1):
+            state = launch.state()
+        self.assertEqual(state["bridge"], "down")
+        self.assertIn("dialog", state["reason"])
+
+    def test_state_counts_reaper_copies_and_checks_the_rig_is_in_front(self):
+        rig = Path(tempfile.mkdtemp()) / "amphead.rpp"
+        with mock.patch.object(bridge, "devinfo", return_value={"device_closed": False}), \
+             mock.patch.object(bridge, "status", return_value={
+                 "project": "somebody-elses-song", "path": "C:/Music/other song.rpp", "tracks": 12}), \
+             mock.patch.object(launch, "_rig_path", return_value=rig), \
+             mock.patch.object(launch, "instances", return_value=2):
+            state = launch.state()
+        self.assertEqual(state["instances"], 2)
+        self.assertFalse(state["rig_tab"])
+
+    def test_the_rig_in_front_of_reaper_is_recognised_through_path_case_and_slashes(self):
+        rig = Path(tempfile.mkdtemp()) / "AmpHead.rpp"
+        with mock.patch.object(bridge, "devinfo", return_value={"device_closed": False}), \
+             mock.patch.object(bridge, "status", return_value={
+                 "project": "amphead", "path": str(rig).replace("\\", "/").upper(), "tracks": 1}), \
+             mock.patch.object(launch, "_rig_path", return_value=rig), \
+             mock.patch.object(launch, "instances", return_value=1):
+            self.assertTrue(launch.state()["rig_tab"])
+
+    def test_an_unnamed_project_in_front_of_reaper_is_not_the_rig(self):
+        # `reaper.exe -new` leaves an empty project in front of the same process; nothing in it is
+        # the rig, so the pane must not treat "no path" as "could not look".
+        rig = Path(tempfile.mkdtemp()) / "amphead.rpp"
+        with mock.patch.object(bridge, "devinfo", return_value={"device_closed": False}), \
+             mock.patch.object(bridge, "status", return_value={"project": "", "path": "", "tracks": 0}), \
+             mock.patch.object(launch, "_rig_path", return_value=rig), \
+             mock.patch.object(launch, "instances", return_value=1):
+            self.assertFalse(launch.state()["rig_tab"])
+
+    def test_a_closed_device_is_reopened_once_and_reported_as_reopened(self):
+        closed = {"ok": True, "device_closed": True}
+        open_ = {"ok": True, "device_closed": False, "mode": "ASIO", "output_latency_ms": 11.6}
+        with mock.patch.object(bridge, "devinfo", side_effect=[closed, open_, closed]), \
+             mock.patch.object(bridge, "dev_reopen") as reopened, \
+             mock.patch.object(bridge, "status", return_value={"project": "amphead", "tracks": 1}), \
+             mock.patch.object(launch, "instances", return_value=1), \
+             mock.patch.object(launch, "_rig_path", return_value=None):
+            first = launch.state()
+            # A poller must not spawn a repair every two seconds: the cooldown holds it off.
+            launch._REOPEN_AT = time.monotonic()
+            second = launch.state()
+        self.assertTrue(first["device"]["reopened"])
+        self.assertFalse(second["device"]["reopened"])
+        reopened.assert_called_once()
 
 
 if __name__ == "__main__":

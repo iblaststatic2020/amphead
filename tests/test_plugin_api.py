@@ -87,6 +87,36 @@ class TestVerdict(unittest.TestCase):
         self.assertEqual(API._verdict({"bridge": "down"}, {}, 0.0, False)[0], "REAPER BUSY")
         self.assertEqual(API._verdict({"bridge": "missing"}, {}, 0.0, False)[0], "REAPER NOT RUNNING")
 
+    def test_a_missing_bridge_script_reaches_the_pane_as_bridge_gone(self):
+        word, reason = API._verdict({"bridge": "gone", "reason": "the bridge script is not loaded"},
+                                    {}, 0.0, False)
+        self.assertEqual(word, "BRIDGE GONE")
+        self.assertIn("not loaded", reason)
+
+    def test_two_reaper_reaches_the_pane_as_two_reaper(self):
+        state = _live()
+        state["instances"] = 2
+        self.assertEqual(API._verdict(state, {"armed": True}, 0.2, False)[0], "TWO REAPER")
+
+    def test_someone_elses_project_reaches_the_pane_as_rig_tab_closed(self):
+        state = _live()
+        state["rig_tab"] = False
+        self.assertEqual(API._verdict(state, {"armed": True}, 0.2, False)[0], "RIG TAB CLOSED")
+
+    def test_a_muted_track_reaches_the_pane_as_muted(self):
+        word, reason = API._verdict(_live(), {"armed": True, "monitor": True, "mute": True}, 0.0, False)
+        self.assertEqual(word, "MUTED")
+        self.assertIn("unmute", reason.lower())
+
+    def test_a_device_with_no_inputs_reaches_the_pane_as_unplugged(self):
+        state = _live(device={"closed": False, "inputs": 0, "latency_out_ms": 11.6})
+        self.assertEqual(API._verdict(state, {"armed": True}, 0.0, False)[0], "DEVICE UNPLUGGED")
+
+    def test_a_device_that_had_to_be_reopened_reaches_the_pane_as_reopened(self):
+        state = _live(device={"closed": False, "reopened": True, "latency_out_ms": 11.6})
+        self.assertEqual(API._verdict(state, {"armed": True, "monitor": True}, 0.0, False)[0],
+                         "REOPENED DEVICE")
+
 
 class TestState(unittest.TestCase):
     def test_state_payload_has_the_five_pane_rows(self):

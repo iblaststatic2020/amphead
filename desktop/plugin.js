@@ -20,7 +20,13 @@ const VERDICT_COLOR = {
   'DEVICE CLOSED': 'var(--ui-danger, var(--ui-text))',
   'REAPER NOT RUNNING': 'var(--ui-danger, var(--ui-text))',
   'REAPER BUSY': 'var(--ui-danger, var(--ui-text))',
-  'NO REAPER INSTALL': 'var(--ui-danger, var(--ui-text))'
+  'NO REAPER INSTALL': 'var(--ui-danger, var(--ui-text))',
+  'BRIDGE GONE': 'var(--ui-danger, var(--ui-text))',
+  'TWO REAPER': 'var(--ui-danger, var(--ui-text))',
+  'RIG TAB CLOSED': 'var(--ui-danger, var(--ui-text))',
+  'DEVICE UNPLUGGED': 'var(--ui-danger, var(--ui-text))',
+  MUTED: 'var(--ui-warning, var(--ui-text-secondary))',
+  'REOPENED DEVICE': 'var(--ui-warning, var(--ui-text-secondary))'
 }
 
 const toDb = (peak) => (peak <= 0.000001 ? -60 : Math.max(-60, 20 * Math.log10(peak)))

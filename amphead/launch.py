@@ -92,9 +92,13 @@ def start(minimized: bool = True, hidden_desktop: bool = False) -> int | None:
         return None
 
 
-def ensure_audio(timeout: float = 20.0) -> dict:
-    """Open the audio device if it is closed. ASIO stays locked after a killed REAPER."""
-    info = bridge.devinfo(timeout=3.0)
+def ensure_audio(timeout: float = 20.0, info: dict | None = None) -> dict:
+    """Open the audio device if it is closed. ASIO stays locked after a killed REAPER.
+
+    ``info`` lets a caller that has already read DEVINFO hand it over instead of paying for a
+    second round trip on every poll.
+    """
+    info = bridge.devinfo(timeout=3.0) if info is None else info
     if not info.get("device_closed"):
         return info
     bridge.dev_reopen(timeout=timeout)
@@ -207,6 +211,36 @@ def ensure_running(
     }
 
 
+_REOPEN_AT = float("-inf")  # when we last tried to repair a closed device (never, at boot)
+REOPEN_COOLDOWN = 15.0      # a poller must not spawn a repair attempt every two seconds
+
+
+def _device_info() -> tuple[dict, bool]:
+    """DEVINFO, and whether this call had to reopen a device that came up closed.
+
+    A killed REAPER leaves ASIO wedged, so the next start can come up with no device at all. That
+    is a repair, not a diagnosis: the player did not unplug anything, so the pane should not read
+    like they did.
+    """
+    global _REOPEN_AT
+    info = bridge.devinfo(timeout=3.0)
+    if not info.get("device_closed"):
+        return info, False
+    if time.monotonic() - _REOPEN_AT < REOPEN_COOLDOWN:
+        return info, False
+    _REOPEN_AT = time.monotonic()
+    repaired = ensure_audio(timeout=5.0, info=info)
+    return repaired, not repaired.get("device_closed")
+
+
+def _same_file(left: str, right: Path | None) -> bool:
+    """Compare two ways of naming a project: REAPER hands back forward slashes and its own case."""
+    if not left or right is None:
+        return False
+    norm = lambda text: str(text).replace("\\", "/").rstrip("/").lower()  # noqa: E731
+    return norm(left) == norm(right)
+
+
 def state() -> dict:
     """One call for the pane: bridge, project, safety, device, latency.
 
@@ -214,29 +248,52 @@ def state() -> dict:
     REAPER, so "down" with a reason is a state, not an exception: the pane has to be able to
     draw "REAPER NOT RUNNING" instead of crashing on the way to it.
     """
+    rig = _rig_path()
     try:
-        info = bridge.devinfo(timeout=3.0)
+        info, reopened = _device_info()
         status = bridge.status(timeout=3.0)
     except bridge.ReaperError as exc:
         alive = _running()
+        if not alive:
+            return {
+                "bridge": "not-running",
+                "reason": "REAPER is not running; the bridge heartbeat is stale",
+                "project": None, "path": "", "tracks": 0, "device": {},
+                "instances": 0, "rig_tab": None,
+            }
+        # REAPER is up but nothing answers: either a dialog owns the main thread, or the bridge
+        # script is not there at all (deleted, or a resource folder that got rebuilt).
+        kind, sentence = bridge.liveness()
+        if kind == "not-loaded":
+            return {
+                "bridge": "gone",
+                "reason": f"{sentence}. Run setup to put it back.",
+                "project": None, "path": "", "tracks": 0, "device": {},
+                "instances": instances(), "rig_tab": None,
+            }
         return {
-            "bridge": "down" if alive else "not-running",
+            "bridge": "down",
             # The client guesses "a dialog probably has it"; only say that when the process exists.
-            "reason": str(exc) if alive else "REAPER is not running; the bridge heartbeat is stale",
-            "project": None,
-            "path": "",
-            "tracks": 0,
-            "device": {},
+            "reason": str(exc),
+            "project": None, "path": "", "tracks": 0, "device": {},
+            "instances": instances(), "rig_tab": None,
         }
+    path = status.get("path") or ""
     return {
         "bridge": "live",
         "project": status.get("project") or "(unnamed)",
-        "path": status.get("path") or "",
+        "path": path,
         "tracks": status.get("tracks", 0),
+        # The controls in the pane and the tools both write to track 1 of whatever project is in
+        # front of REAPER, so the rig has to be the project in front of REAPER. An empty or
+        # unnamed project (the tab a second `reaper.exe -new` leaves in front) is never the rig.
+        "rig_tab": _same_file(path, rig) if rig is not None else None,
+        "instances": instances(),
         "device": {
             "driver": info.get("ident_in") or "",
             "mode": info.get("mode") or "",
             "closed": bool(info.get("device_closed")),
+            "reopened": reopened,
             "buffer": info.get("bsize") or "",
             "rate": info.get("srate") or "",
             "bits": info.get("bps") or "",
@@ -256,6 +313,44 @@ def _running() -> bool:
     except NoReaperInstall:
         return False
     return "yes" in out
+
+
+# Counting processes costs a PowerShell launch, and the pane asks every couple of seconds. Two
+# instances is a state a player stays in for minutes, so a few seconds of stale count can only
+# ever delay noticing, never invent a problem.
+_INSTANCES: tuple[float, int] = (0.0, 0)
+
+
+def instances(ttl: float = 5.0) -> int:
+    """How many reaper.exe processes are alive. 0 means none (or not checked on this platform)."""
+    global _INSTANCES
+    stamp, count = _INSTANCES
+    if time.monotonic() - stamp < ttl:
+        return count
+    if sys.platform != "win32":
+        _INSTANCES = (time.monotonic(), 0)
+        return 0
+    try:
+        out = _powershell(
+            "@(Get-Process -Name reaper -ErrorAction SilentlyContinue).Count")
+    except NoReaperInstall:
+        return 0
+    try:
+        count = int(str(out).strip() or 0)
+    except ValueError:
+        count = 0
+    _INSTANCES = (time.monotonic(), count)
+    return count
+
+
+def _rig_path() -> Path | None:
+    """The rig the plugin owns. Late import: tools imports this module, not the other way round."""
+    from .tools import rig_path
+
+    try:
+        return rig_path()
+    except Exception:
+        return None
 
 
 def running() -> bool:
