@@ -46,9 +46,21 @@ def _knobs(track: int) -> list[dict]:
     picked = []
     for param in params:
         name = str(param.get("name") or "")
-        if any(word in name.lower() for word in WANTED):
-            picked.append({"name": name, "value": str(param.get("fmt") or "")})
+        low = name.lower()
+        if "pedal" in low or "instigator" in low:
+            continue
+        if any(word in low for word in WANTED):
+            picked.append({"name": name, "value": _pretty(str(param.get("fmt") or ""))})
     return picked[:8]
+
+
+def _pretty(value: str) -> str:
+    """7 decimal places is what the host reports, not what a player wants to read."""
+    try:
+        number = float(value)
+    except ValueError:
+        return value
+    return f"{number:.2f}".rstrip("0").rstrip(".")
 
 
 def _chain(track: int) -> list[dict]:
@@ -65,7 +77,8 @@ def _verdict(state: dict, track: dict, peak: float, clip: bool) -> tuple[str, st
         return word, str(state.get("reason") or "the bridge has not answered")
     device = _device(state)
     if device["closed"]:
-        return "DEVICE CLOSED", "REAPER has no audio device open, so no guitar can arrive"
+        return "DEVICE CLOSED", ("REAPER has no audio device open. Flip LIVE and it opens one "
+                                 "for you.")
     if not track.get("armed"):
         return "STANDBY", "the track is not armed, flip LIVE to play"
     if clip:
