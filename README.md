@@ -13,6 +13,8 @@ read back and verified instead of assumed.
 - Parks the master at -60 dB before arming anything. The track is born disarmed and unmonitored, and
   only an explicit confirm arms it.
 - Builds and inspects a chain by name, with `expect` guards so a write cannot land in the wrong tab.
+- Refuses to guess which plugin or knob you meant. A name that matches several controls comes back
+  with every candidate listed, not with the first fuzzy hit.
 - Answers tone requests in plain language: `"an amp that sounds like blink182"` resolves to a saved NAM
   preset, reports the capture and IR it uses, applies the knob moves, and reads the plugin back.
 
@@ -36,6 +38,27 @@ Library layout it expects:
 
 - captures: `%USERPROFILE%\WaveMind\NAMU\Amps\**\*.nam`
 - presets: `%USERPROFILE%\WaveMind\NAMU\*.preset`
+
+## Naming a plugin or a knob
+
+`amphead/resolver.py` answers two questions: which plugin on this track, and which knob on that plugin.
+The ladder is exact name, exact name without the `VST3:`/`JS:` prefix, every word present, every word
+present allowing one vendor misspelling, then the query as a subsequence. Only the best rung that hit
+counts, and if two controls land on it the answer is a refusal that names them:
+
+```
+gain             -> 'gain' matches 8 parameters: #2 Input Gain, #3 Output Gain,
+                    #6 Pedal Input Gain, #7 Pedal Ouput Gain, #15 Amplifier Input Gain,
+                    #8 Instigator Input Gain, #16 Amplifier Output Gain, #9 Instigator Output Gain.
+                    Name one of them exactly.
+output gain      -> Output Gain (#3)
+pedal output gain-> Pedal Ouput Gain (#7)      # the plugin misspells it, the request does not
+presence         -> no parameter matches 'presence'
+```
+
+Before any write the chain is re-read and the name is confirmed against its index, because FX indices
+shift the moment something is added or removed. Writing to index 2 because it used to be the amp is
+exactly the kind of wrong that sounds plausible.
 
 ## The amp face (Hermes side)
 

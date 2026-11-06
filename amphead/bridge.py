@@ -345,22 +345,18 @@ def fx_params(track: int = 1, fx: int = 0, keep: int | None = None, **kwargs) ->
 
 
 def param_index(name: str, track: int = 1, fx: int = 0, **kwargs) -> int:
-    """Resolve a parameter by name, refusing ambiguity instead of taking the first match."""
-    wanted = name.strip().lower()
-    params = fx_params(track=track, fx=fx, **kwargs)
-    exact = [p for p in params if str(p.get("name", "")).strip().lower() == wanted]
-    if len(exact) == 1:
-        return int(exact[0]["i"])
-    if len(exact) > 1:
-        raise LookupError(f"{name!r} matches {len(exact)} parameters: "
-                          + ", ".join(f"#{p['i']}" for p in exact))
-    partial = [p for p in params if wanted in str(p.get("name", "")).lower()]
-    if len(partial) == 1:
-        return int(partial[0]["i"])
-    if partial:
-        raise LookupError(f"{name!r} is ambiguous, candidates: "
-                          + ", ".join(f"#{p['i']} {p.get('name')}" for p in partial[:6]))
-    raise LookupError(f"no parameter named {name!r} on fx {fx}")
+    """Resolve a parameter by name, refusing ambiguity instead of taking the first match.
+
+    One ladder only: the ranking lives in :mod:`amphead.resolver`, so a name that resolves here
+    resolves the same way everywhere. Imported inside the function because the resolver reads the
+    bridge for its default chain and parameters.
+    """
+    from . import resolver
+
+    outcome = resolver.resolve_param(name, track=track, fx=fx, **kwargs)
+    if isinstance(outcome, resolver.Resolved):
+        return outcome.index
+    raise LookupError(outcome.sentence())
 
 
 def fx_bypass(track: int = 1, fx: int = 0, on: bool = True, **kwargs) -> dict:

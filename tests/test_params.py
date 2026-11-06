@@ -47,13 +47,16 @@ class TestParamIndex(unittest.TestCase):
     def test_missing_name_lists_nothing_but_says_so(self):
         with self.assertRaises(LookupError) as ctx:
             bridge.param_index("Presence", fx=0)
-        self.assertIn("no parameter named", str(ctx.exception))
+        self.assertIn("no parameter matches", str(ctx.exception))
 
     def test_ambiguous_substring_lists_candidates(self):
         with self.assertRaises(LookupError) as ctx:
             bridge.param_index("driv", fx=0)
-        self.assertIn("ambiguous", str(ctx.exception))
-        self.assertIn("candidates", str(ctx.exception))
+        message = str(ctx.exception)
+        # Two params are literally named Drive and a third is Drive Tone: all three are candidates.
+        self.assertIn("matches 3 parameters", message)
+        self.assertIn("#0 Drive", message)
+        self.assertIn("Drive Tone", message)
 
 
 class TestInputEncoding(unittest.TestCase):
