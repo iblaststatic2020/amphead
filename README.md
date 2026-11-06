@@ -67,13 +67,19 @@ pane named `amp` for layouts that have a right zone. A dB chip also sits in the 
 `amphead_live` is the switch that makes the rig audible from inside Hermes.
 
 ```
+amphead_live on=true confirm=true master_db=-20
 amphead_live on=true confirm=true master_db=-20 input="1"
 amphead_live on=false
 ```
 
 `on=true` opens the audio device if REAPER parked it closed, sets the master to the level you asked
-for, points the track at the input, then arms and monitors it. `confirm=true` is required because
-this is the step that makes noise. `on=false` disarms and parks the master back at -60 dB.
+for, then arms and monitors the track. `confirm=true` is required because this is the step that
+makes noise. `on=false` disarms and parks the master back at -60 dB.
+
+`input` defaults to `0`, which means leave the track's input exactly as REAPER has it; the reply
+reports the input REAPER actually holds (`input=3 | input_changed=False`). Name an input only when
+you want the tool to move it: `input="1"` for mono input 1, `input="1+2"` for a stereo pair,
+`input="none"` to clear it.
 
 ## Panic
 

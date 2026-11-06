@@ -265,10 +265,12 @@ class TestLive(unittest.TestCase):
         disarm.assert_called_once()
         self.assertEqual(master.call_args.kwargs["db"], -60.0)
 
-    def test_on_sets_level_input_and_arms(self):
+    def test_on_sets_level_and_arms_without_touching_the_input(self):
         with mock.patch.object(tools.bridge, "tabs_list", return_value=self.TABS), \
              mock.patch.object(tools.bridge, "master", return_value={"db": -20.0}), \
              mock.patch.object(tools.bridge, "set_input", return_value={"ok": True}) as set_input, \
+             mock.patch.object(tools.bridge, "track_info",
+                               return_value={"recinput": "3", "armed": True, "monitor": True}), \
              mock.patch.object(tools.bridge, "arm",
                                return_value={"armed": True, "monitor": True}) as arm, \
              mock.patch.object(tools.launch, "ensure_audio",
@@ -278,16 +280,31 @@ class TestLive(unittest.TestCase):
         self.assertIn("armed=True", out)
         self.assertIn("master_db=-20.0", out)
         self.assertIn("clips_at=11.6", out)
-        self.assertEqual(set_input.call_args.kwargs["spec"], "1")
+        self.assertIn("input_changed=False", out)
+        # The default keeps whatever input REAPER already had and reports it back.
+        self.assertIn("input=3", out)
+        set_input.assert_not_called()
         self.assertTrue(arm.call_args.kwargs["allow_loud"])
+
+    def test_explicit_input_still_retargets_the_track(self):
+        with mock.patch.object(tools.bridge, "tabs_list", return_value=self.TABS), \
+             mock.patch.object(tools.bridge, "master", return_value={"db": -20.0}), \
+             mock.patch.object(tools.bridge, "set_input", return_value={"ok": True}) as set_input, \
+             mock.patch.object(tools.bridge, "track_info", return_value={"recinput": "1"}), \
+             mock.patch.object(tools.bridge, "arm", return_value={"armed": True, "monitor": True}), \
+             mock.patch.object(tools.launch, "ensure_audio", return_value={"inputs": 2}):
+            out = tools.handle_live({"on": True, "confirm": True, "input": "1"})
+        self.assertEqual(set_input.call_args.kwargs["spec"], "1")
+        self.assertIn("input_changed=True", out)
 
     def test_every_write_carries_the_active_project_as_expect(self):
         with mock.patch.object(tools.bridge, "tabs_list", return_value=self.TABS), \
              mock.patch.object(tools.bridge, "master", return_value={"db": -20.0}) as master, \
              mock.patch.object(tools.bridge, "set_input", return_value={"ok": True}) as set_input, \
+             mock.patch.object(tools.bridge, "track_info", return_value={"recinput": "2"}), \
              mock.patch.object(tools.bridge, "arm", return_value={"armed": True}) as arm, \
              mock.patch.object(tools.launch, "ensure_audio", return_value={"inputs": 2}):
-            tools.handle_live({"on": True, "confirm": True})
+            tools.handle_live({"on": True, "confirm": True, "input": "2"})
         for call in (set_input, arm):
             self.assertEqual(call.call_args.kwargs.get("expect"), "C:/x/rig.rpp")
         # master is written once and read once, so check the write, not the read

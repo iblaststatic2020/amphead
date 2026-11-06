@@ -46,6 +46,7 @@ def _load():
 ROUTER, API = _load()
 STATE = ROUTER.routes[("GET", "/state")]
 METER = ROUTER.routes[("GET", "/meter")]
+LIVE = ROUTER.routes[("POST", "/live")]
 PANIC = ROUTER.routes[("POST", "/panic")]
 
 
@@ -109,6 +110,22 @@ class TestState(unittest.TestCase):
         with mock.patch.object(API.bridge, "meter", side_effect=API.bridge.NoReaper("down")):
             payload = asyncio.run(METER())
         self.assertEqual(payload, {"l": 0.0, "r": 0.0, "clip": False, "live": False})
+
+
+class TestLiveRoute(unittest.TestCase):
+    """The pane's Live button must not repoint the track behind the player's back."""
+
+    def test_live_button_leaves_the_input_alone_by_default(self):
+        with mock.patch("amphead.tools.handle_live", return_value="live=True") as handler:
+            payload = asyncio.run(LIVE({"on": True, "master_db": -20}))
+        self.assertEqual(handler.call_args.args[0]["input"], "0")
+        self.assertEqual(handler.call_args.args[0]["master_db"], -20)
+        self.assertTrue(payload["on"])
+
+    def test_live_button_still_passes_an_explicit_input_through(self):
+        with mock.patch("amphead.tools.handle_live", return_value="live=True") as handler:
+            asyncio.run(LIVE({"on": True, "input": "1+2"}))
+        self.assertEqual(handler.call_args.args[0]["input"], "1+2")
 
 
 class TestPanicRoute(unittest.TestCase):

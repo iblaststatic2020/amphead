@@ -70,7 +70,7 @@ Installed guitar-relevant VSTs already present: **NAM Universal (WaveMind)**, NA
 
 | tool | input | output |
 |---|---|---|
-| `rig_setup` | `amp` (plugin name or alias), `input` (default 1), `chain` (optional list) | tab created, chain built, `{ready, verdict, latency_ms, problems[]}` |
+| `rig_setup` | `amp` (plugin name or alias), `input` (default 0 = leave REAPER's input alone), `chain` (optional list) | tab created, chain built, `{ready, verdict, latency_ms, problems[]}` |
 | `rig_tweak` | `changes: {param: value}` or free text | per-param `{requested, actual, accepted}` |
 | `rig_preset` | preset name or `{...}` object | full diff applied, single undo group |
 | `rig_ready` | none | `{verdict, meter, chain[], problems[]}` |

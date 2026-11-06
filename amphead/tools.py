@@ -99,8 +99,8 @@ LIVE_SCHEMA = _schema(
                                   "ceiling 0).",
                    "minimum": -60, "maximum": 0},
      "input": {"type": "string",
-               "description": "Track input: \"1\" for mono input 1, \"1+2\" for a stereo pair "
-                              "(default 1)."},
+               "description": "Track input: \"0\" (default) leaves whatever input REAPER already has, "
+                              "\"1\" for mono input 1, \"1+2\" for a stereo pair, \"none\" to clear it."},
      "track": {"type": "integer", "description": "Track index, 1 based (default 1).", "minimum": 1}},
 )
 
@@ -319,7 +319,10 @@ def handle_live(args: dict[str, Any], **_kw) -> str:
 
     db = float(args.get("master_db", -18.0))
     db = max(STANDBY_DB, min(0.0, db))
-    spec = str(args.get("input") or "1")
+    # Input 0 means "leave the track's input alone". Pointing a player's track at input 1 behind
+    # their back is the one write that breaks a rig silently, so it only happens when asked.
+    spec = str(args.get("input") if args.get("input") is not None else "0").strip().lower()
+    retarget = spec not in {"", "0", "keep", "as-is", "unchanged"}
 
     # REAPER can park the device closed while it sits idle, and a closed device has zero inputs,
     # so the input write would fail for a reason that has nothing to do with the player's rig.
@@ -333,9 +336,11 @@ def handle_live(args: dict[str, Any], **_kw) -> str:
 
     try:
         bridge.master(db=db, expect=expect)
-        bridge.set_input(track=track, spec=spec, expect=expect)
+        if retarget:
+            bridge.set_input(track=track, spec=spec, expect=expect)
         armed = bridge.arm(track=track, monitor=True, allow_loud=True, expect=expect)
         level = bridge.master()
+        now = bridge.track_info(track=track, expect=expect)
     except bridge.NoReaper:
         return "NOT LIVE: REAPER is not running, call amphead_setup first"
     except bridge.ReaperError as exc:
@@ -343,7 +348,9 @@ def handle_live(args: dict[str, Any], **_kw) -> str:
 
     return _fmt([("live", True), ("track", track), ("armed", armed.get("armed")),
                  ("monitor", armed.get("monitor")), ("master_db", level.get("db")),
-                 ("input", spec), ("clips_at", device.get("output_latency_ms"))])
+                 ("input", now.get("recinput", spec if retarget else "unchanged")),
+                 ("input_changed", retarget),
+                 ("clips_at", device.get("output_latency_ms"))])
 
 
 def handle_panic(args: dict[str, Any], **_kw) -> str:

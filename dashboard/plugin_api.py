@@ -156,7 +156,10 @@ async def live_switch(body: dict) -> dict[str, Any]:
 
     on = bool(body.get("on"))
     db = body.get("master_db", -18)
-    out = tools.handle_live({"on": on, "confirm": True, "master_db": db, "input": "1"})
+    # Input 0: the Live button never repoints the track's input. Whatever the player chose in
+    # REAPER stays chosen, which is the only default that cannot break a DI or a stereo pair.
+    out = tools.handle_live({"on": on, "confirm": True, "master_db": db,
+                             "input": body.get("input", "0")})
     return {"output": out, "on": on}
 
 
