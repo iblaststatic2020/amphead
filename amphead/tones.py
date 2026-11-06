@@ -46,6 +46,21 @@ ARCHETYPES: tuple[Archetype, ...] = (
              "little Oomph for the low-mid punch the double tracks need."),
     ),
     Archetype(
+        key="pop-punk-hot",
+        title="Pop punk, hotter second flavour (blink-182 bite, Dude Ranch edge)",
+        preset="maybe_punk_tone_2.preset",
+        keywords=("another", "second", "one more", "hotter", "brighter", "hot", "dude ranch",
+                  "cheshire cat", "enema of the state", "old blink", "bite", "raw punk",
+                  "more gain", "angrier", "less polished", "blink", "blink182", "blink-182"),
+        tweaks={"amp_bass": 0.5, "amp_treble": -0.6, "sparkle": -0.8, "oomph": 0.4},
+        why=("The same Soldano HR50X capture as punk_tone, but the front end is already driven hard "
+             "and the treble sits near the top of the dial, so this is the rawer, angrier take. Bass "
+             "comes up to put body back under the extra gain, treble and sparkle come down so the fizz "
+             "does not slice on doubled tracks, and Oomph returns the thump the palm mutes lose when "
+             "the input is pushed this hard. The Blackstar 57 on a Vintage 30 puts it forward and "
+             "meaner than the close-mic punk_tone."),
+    ),
+    Archetype(
         key="modern-metal",
         title="Modern metal, metalcore, djent (chugging, drop tunings)",
         preset="gainzilla_sexy.preset",
@@ -133,7 +148,14 @@ def tokens(query: str) -> set[str]:
 
 
 def score(arch: Archetype, query: str) -> int:
-    hay = " ".join(tokens(query))
+    """Phrases are searched in the whole sentence, single words against the tokens.
+
+    The haystack has to be the sentence, not a set of tokens: joined from a set, two words that
+    touch in the request ("dude ranch") can come out in any order and the phrase never matches.
+    """
+    raw = normalise(query)
+    words = [w for w in raw.split() if w]
+    hay = f"{raw} {raw.replace(' ', '')}"
     hits = 0
     for kw in arch.keywords:
         needle = normalise(kw)
@@ -142,9 +164,9 @@ def score(arch: Archetype, query: str) -> int:
         if " " in needle:
             if needle in hay:
                 hits += 3
-        elif needle in hay.split():
+        elif needle in words:
             hits += 2
-        elif needle.replace(" ", "") in hay.replace(" ", ""):
+        elif needle.replace(" ", "") in raw.replace(" ", ""):
             hits += 1
     return hits
 

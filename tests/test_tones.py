@@ -30,6 +30,12 @@ class RoutingTest(unittest.TestCase):
         for query in ("sounds like blink182", "give me blink 182", "I want a blink-182 tone"):
             self.check(query, "pop-punk")
 
+    def test_another_blink_amp_reaches_the_hotter_flavour(self):
+        self.check("another blink 182 tone", "pop-punk-hot")
+        self.check("blink 182 but hotter and brighter", "pop-punk-hot")
+        self.check("dude ranch blink", "pop-punk-hot")
+        self.check("one more punk amp please", "pop-punk-hot")
+
     def test_filler_words_alone_match_nothing(self):
         arch, ranked = tones.best("give me a nice amp tone")
         self.assertIsNone(arch)
