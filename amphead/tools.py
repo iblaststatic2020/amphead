@@ -299,12 +299,22 @@ def handle_live(args: dict[str, Any], **_kw) -> str:
     db = float(args.get("master_db", -18.0))
     db = max(STANDBY_DB, min(0.0, db))
     spec = str(args.get("input") or "1")
+
+    # REAPER can park the device closed while it sits idle, and a closed device has zero inputs,
+    # so the input write would fail for a reason that has nothing to do with the player's rig.
+    try:
+        device = launch.ensure_audio()
+    except bridge.ReaperError as exc:
+        return f"NOT LIVE: could not open the audio device: {exc}"
+    if int(device.get("inputs") or 0) < 1:
+        return ("NOT LIVE: REAPER's audio device is closed, so the track has no input to point at. "
+                "Open it once in Options > Preferences > Audio > Device, then call this again.")
+
     try:
         bridge.master(db=db, expect=expect)
         bridge.set_input(track=track, spec=spec, expect=expect)
         armed = bridge.arm(track=track, monitor=True, allow_loud=True, expect=expect)
         level = bridge.master()
-        device = bridge.devinfo()
     except bridge.NoReaper:
         return "NOT LIVE: REAPER is not running, call amphead_setup first"
     except bridge.ReaperError as exc:

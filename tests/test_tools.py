@@ -271,8 +271,8 @@ class TestLive(unittest.TestCase):
              mock.patch.object(tools.bridge, "set_input", return_value={"ok": True}) as set_input, \
              mock.patch.object(tools.bridge, "arm",
                                return_value={"armed": True, "monitor": True}) as arm, \
-             mock.patch.object(tools.bridge, "devinfo",
-                               return_value={"output_latency_ms": 11.6}):
+             mock.patch.object(tools.launch, "ensure_audio",
+                               return_value={"inputs": 2, "output_latency_ms": 11.6}):
             out = tools.handle_live({"on": True, "confirm": True, "master_db": -20})
         self.assertIn("live=True", out)
         self.assertIn("armed=True", out)
@@ -286,12 +286,22 @@ class TestLive(unittest.TestCase):
              mock.patch.object(tools.bridge, "master", return_value={"db": -20.0}) as master, \
              mock.patch.object(tools.bridge, "set_input", return_value={"ok": True}) as set_input, \
              mock.patch.object(tools.bridge, "arm", return_value={"armed": True}) as arm, \
-             mock.patch.object(tools.bridge, "devinfo", return_value={}):
+             mock.patch.object(tools.launch, "ensure_audio", return_value={"inputs": 2}):
             tools.handle_live({"on": True, "confirm": True})
         for call in (set_input, arm):
             self.assertEqual(call.call_args.kwargs.get("expect"), "C:/x/rig.rpp")
         # master is written once and read once, so check the write, not the read
         self.assertEqual(master.call_args_list[0].kwargs.get("expect"), "C:/x/rig.rpp")
+
+    def test_closed_device_is_named_instead_of_a_bare_value_error(self):
+        with mock.patch.object(tools.bridge, "tabs_list", return_value=self.TABS), \
+             mock.patch.object(tools.launch, "ensure_audio",
+                               return_value={"inputs": 0, "device_closed": True}), \
+             mock.patch.object(tools.bridge, "set_input") as set_input:
+            out = tools.handle_live({"on": True, "confirm": True})
+        self.assertIn("NOT LIVE", out)
+        self.assertIn("audio device is closed", out)
+        set_input.assert_not_called()
 
     def test_no_open_project(self):
         with mock.patch.object(tools.bridge, "tabs_list", return_value=[]):
