@@ -8,3 +8,4 @@ provides_tools:
   - amphead_setup
   - amphead_teardown
   - amphead_tone
+  - amphead_live

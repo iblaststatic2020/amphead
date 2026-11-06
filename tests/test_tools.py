@@ -242,5 +242,63 @@ class TestManifest(unittest.TestCase):
             self.assertTrue(schema["description"])
 
 
+class TestLive(unittest.TestCase):
+    """Going live is the one tool that makes noise, so the refusal path gets tested hardest."""
+
+    TABS = [{"i": 0, "project": "rig.rpp", "path": "C:/x/rig.rpp", "active": True}]
+
+    def test_refuses_without_confirm(self):
+        with mock.patch.object(tools.bridge, "tabs_list", return_value=self.TABS), \
+             mock.patch.object(tools.bridge, "master") as master:
+            out = tools.handle_live({"on": True, "master_db": -12})
+        self.assertIn("REFUSED", out)
+        master.assert_not_called()
+
+    def test_off_disarms_and_parks_the_master(self):
+        with mock.patch.object(tools.bridge, "tabs_list", return_value=self.TABS), \
+             mock.patch.object(tools.bridge, "disarm",
+                               return_value={"armed": False, "monitor": False}) as disarm, \
+             mock.patch.object(tools.bridge, "master", return_value={"db": -60.0}) as master:
+            out = tools.handle_live({"on": False})
+        self.assertIn("live=False", out)
+        self.assertIn("master_db=-60.0", out)
+        disarm.assert_called_once()
+        self.assertEqual(master.call_args.kwargs["db"], -60.0)
+
+    def test_on_sets_level_input_and_arms(self):
+        with mock.patch.object(tools.bridge, "tabs_list", return_value=self.TABS), \
+             mock.patch.object(tools.bridge, "master", return_value={"db": -20.0}), \
+             mock.patch.object(tools.bridge, "set_input", return_value={"ok": True}) as set_input, \
+             mock.patch.object(tools.bridge, "arm",
+                               return_value={"armed": True, "monitor": True}) as arm, \
+             mock.patch.object(tools.bridge, "devinfo",
+                               return_value={"output_latency_ms": 11.6}):
+            out = tools.handle_live({"on": True, "confirm": True, "master_db": -20})
+        self.assertIn("live=True", out)
+        self.assertIn("armed=True", out)
+        self.assertIn("master_db=-20.0", out)
+        self.assertIn("clips_at=11.6", out)
+        self.assertEqual(set_input.call_args.kwargs["spec"], "1")
+        self.assertTrue(arm.call_args.kwargs["allow_loud"])
+
+    def test_every_write_carries_the_active_project_as_expect(self):
+        with mock.patch.object(tools.bridge, "tabs_list", return_value=self.TABS), \
+             mock.patch.object(tools.bridge, "master", return_value={"db": -20.0}) as master, \
+             mock.patch.object(tools.bridge, "set_input", return_value={"ok": True}) as set_input, \
+             mock.patch.object(tools.bridge, "arm", return_value={"armed": True}) as arm, \
+             mock.patch.object(tools.bridge, "devinfo", return_value={}):
+            tools.handle_live({"on": True, "confirm": True})
+        for call in (set_input, arm):
+            self.assertEqual(call.call_args.kwargs.get("expect"), "C:/x/rig.rpp")
+        # master is written once and read once, so check the write, not the read
+        self.assertEqual(master.call_args_list[0].kwargs.get("expect"), "C:/x/rig.rpp")
+
+    def test_no_open_project(self):
+        with mock.patch.object(tools.bridge, "tabs_list", return_value=[]):
+            out = tools.handle_live({"on": True, "confirm": True})
+        self.assertIn("NOT LIVE", out)
+        self.assertIn("no project", out)
+
+
 if __name__ == "__main__":
     unittest.main()

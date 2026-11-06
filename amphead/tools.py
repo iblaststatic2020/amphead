@@ -86,6 +86,27 @@ TONE_SCHEMA = _schema(
 )
 
 
+LIVE_SCHEMA = _schema(
+    "amphead_live",
+    "Open or close the guitar's path to the speakers. on=true sets the master to the requested "
+    "level, points the track at the input, arms it and turns input monitoring on; on=false disarms "
+    "and parks the master at -60 dB. Going live is audible, so on=true requires confirm=true.",
+    {"on": {"type": "boolean", "description": "true goes live, false returns to standby."},
+     "confirm": {"type": "boolean",
+                 "description": "Required for on=true. Confirms the player wants the amp audible."},
+     "master_db": {"type": "number",
+                   "description": "Master level in dB for live playing (default -18, floor -60, "
+                                  "ceiling 0).",
+                   "minimum": -60, "maximum": 0},
+     "input": {"type": "string",
+               "description": "Track input: \"1\" for mono input 1, \"1+2\" for a stereo pair "
+                              "(default 1)."},
+     "track": {"type": "integer", "description": "Track index, 1 based (default 1).", "minimum": 1}},
+)
+
+STANDBY_DB = -60.0
+
+
 def check_reaper_available() -> bool:
     """True when REAPER is installed. Deliberately does not require it to be running: setup's
     whole job is to start it, so requiring a live host here would hide the tool that starts it."""
@@ -241,6 +262,59 @@ def handle_tone(args: dict[str, Any], **_kw) -> str:
     return "\n".join(lines)
 
 
+def active_path() -> str | None:
+    """The project the user is looking at. Every write carries it as `expect`."""
+    for tab in bridge.tabs_list():
+        if tab.get("active") and tab.get("path"):
+            return str(tab["path"])
+    return None
+
+
+def handle_live(args: dict[str, Any], **_kw) -> str:
+    on = args.get("on")
+    on = True if on is None else bool(on)
+    track = int(args.get("track") or 1)
+    try:
+        expect = active_path()
+    except bridge.NoReaper:
+        return "NOT LIVE: REAPER is not running, call amphead_setup first"
+    if expect is None:
+        return "NOT LIVE: no project is open, call amphead_setup first"
+
+    if not on:
+        try:
+            payload = bridge.disarm(track=track, expect=expect)
+            level = bridge.master(db=STANDBY_DB, expect=expect)
+        except bridge.NoReaper:
+            return "NOT LIVE: REAPER is not running, call amphead_setup first"
+        except bridge.ReaperError as exc:
+            return f"NOT LIVE: {exc}"
+        return _fmt([("live", False), ("armed", payload.get("armed")),
+                     ("monitor", payload.get("monitor")), ("master_db", level.get("db"))])
+
+    if not args.get("confirm"):
+        return ("REFUSED: going live makes the amp audible. Call again with confirm=true, "
+                "and pick a master_db you can live with (default -18).")
+
+    db = float(args.get("master_db", -18.0))
+    db = max(STANDBY_DB, min(0.0, db))
+    spec = str(args.get("input") or "1")
+    try:
+        bridge.master(db=db, expect=expect)
+        bridge.set_input(track=track, spec=spec, expect=expect)
+        armed = bridge.arm(track=track, monitor=True, allow_loud=True, expect=expect)
+        level = bridge.master()
+        device = bridge.devinfo()
+    except bridge.NoReaper:
+        return "NOT LIVE: REAPER is not running, call amphead_setup first"
+    except bridge.ReaperError as exc:
+        return f"NOT LIVE: {exc}"
+
+    return _fmt([("live", True), ("track", track), ("armed", armed.get("armed")),
+                 ("monitor", armed.get("monitor")), ("master_db", level.get("db")),
+                 ("input", spec), ("clips_at", device.get("output_latency_ms"))])
+
+
 def run_call(cmd: str, **kwargs) -> dict:
     """Small indirection so tests can stub the wire without a live host."""
     return bridge.call(cmd, **kwargs)
@@ -252,4 +326,5 @@ TOOLS = (
     ("amphead_setup", SETUP_SCHEMA, handle_setup, "🎛️"),
     ("amphead_teardown", TEARDOWN_SCHEMA, handle_teardown, "⏏️"),
     ("amphead_tone", TONE_SCHEMA, handle_tone, "🎚️"),
+    ("amphead_live", LIVE_SCHEMA, handle_live, "🔊"),
 )
