@@ -169,6 +169,49 @@ class TestSetup(unittest.TestCase):
         self.assertEqual(writes["MASTER_VOL"]["expect"], self.rig.as_posix(),
                          "every write must name the tab it targets")
 
+    def test_setup_points_a_rig_with_no_input_at_input_1(self):
+        """recinput 0 reads in the verdict like a dead cable, so setup picks input 1 for it."""
+        calls: list[dict] = []
+
+        def set_input(**kwargs):
+            calls.append(kwargs)
+            return {"recinput": "1", "applied": True}
+
+        infos = [{"recinput": 0.0, "armed": True, "monitor": True},
+                 {"recinput": 1.0, "armed": True, "monitor": True}]
+
+        with mock.patch.object(tools.launch, "find_reaper", return_value=Path("C:/reaper.exe")), \
+             mock.patch.object(tools.launch, "ensure_running", return_value={"ui": "minimized"}), \
+             mock.patch.object(tools.bridge, "open_rig",
+                               return_value={"path": self.rig.as_posix()}), \
+             mock.patch.object(tools.bridge, "call", return_value={"db": -60.0}), \
+             mock.patch.object(tools.bridge, "tabs_list", side_effect=[["a"], ["a", "b"]]), \
+             mock.patch.object(tools.bridge, "track_info", side_effect=infos), \
+             mock.patch.object(tools.bridge, "set_input", side_effect=set_input):
+            out = tools.handle_setup({})
+
+        self.assertIn("input=1 (set to 1 by setup)", out)
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0].get("spec"), 1)
+        self.assertEqual(calls[0].get("expect"), self.rig.as_posix(),
+                         "the repair is a write, so it names the tab it targets")
+
+    def test_setup_leaves_a_rig_that_already_has_an_input_alone(self):
+        with mock.patch.object(tools.launch, "find_reaper", return_value=Path("C:/reaper.exe")), \
+             mock.patch.object(tools.launch, "ensure_running", return_value={"ui": "minimized"}), \
+             mock.patch.object(tools.bridge, "open_rig",
+                               return_value={"path": self.rig.as_posix()}), \
+             mock.patch.object(tools.bridge, "call", return_value={"db": -60.0}), \
+             mock.patch.object(tools.bridge, "tabs_list", side_effect=[["a"], ["a", "b"]]), \
+             mock.patch.object(tools.bridge, "track_info",
+                               return_value={"recinput": 2.0, "armed": True, "monitor": True}), \
+             mock.patch.object(tools.bridge, "set_input",
+                               side_effect=AssertionError("setup must not retarget a live input")):
+            out = tools.handle_setup({})
+
+        self.assertIn("input=2", out)
+        self.assertNotIn("set to 1", out)
+
     def test_setup_repairs_the_install_before_it_touches_the_rig(self) -> None:
         """A pane on a rebuilt resource folder has to fix itself; telling the player to run
         a command line is how a plugin loses a musician."""

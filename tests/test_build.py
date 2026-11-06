@@ -63,8 +63,13 @@ class TestBuild(BuildCase):
         out = self.build(input="1")
         self.assertEqual(out.input, 1)
 
-    def test_input_none_leaves_the_input_alone(self):
+    def test_input_defaults_to_input_1(self):
+        """A track with no input reads like a dead cable, so the build picks input 1 unasked."""
         out = self.build()
+        self.assertEqual(out.input, 1)
+
+    def test_input_none_still_builds_a_track_with_no_input(self):
+        out = self.build(input="none")
         self.assertIsNone(out.input)
 
     def test_snapshot_of_the_tab_before_building(self):
@@ -132,7 +137,7 @@ class TestBuildTool(BuildCase):
         out = tools.handle_build({"amp": "RigSculpt"})
         self.assertIn("armed=False", out)
         self.assertIn("the player flips Live", out)
-        self.assertIn("untouched (default 0)", out)
+        self.assertIn("input=1", out)
 
     def test_tool_refuses_a_bad_amp_without_pretending(self):
         from amphead import tools

@@ -244,6 +244,7 @@ def set_param(fx: int | str, param: int | str, value: float, *, track: int = 1,
 
 DEFAULT_AMP = "NAM Universal"
 DEFAULT_TRACK = "Gtr"
+DEFAULT_INPUT = 1
 START_DB = -6.0
 
 
@@ -352,7 +353,8 @@ def build_rig(
     Order matters. The tab is created from a project file on disk first, because that is the only
     silent way to give a tab a path, and a path is what every later write is guarded against.
     Then one BATCH does the building: track, amp, input, level, and optionally arming. Arming is
-    opt-in because the moments a track goes live belong to the player.
+    opt-in because the moments a track goes live belong to the player. The input defaults to
+    input 1, because a track with no input reads exactly like a dead cable in the verdict.
 
     FX that came with the project file are reported and left alone: a build never deletes
     something it did not add.
@@ -377,13 +379,19 @@ def build_rig(
     built_track = tracks_before + 1
     ops.append(("FX_ADD", {"track": built_track, "name": amp}))
     spec = None
-    if input is not None and str(input) not in ("0", "none", ""):
+    # A rig whose track has no input is indistinguishable from a broken cable, so the build picks
+    # input 1 (mono, channel 1) unless told otherwise; input="none" builds a track with no input.
+    wanted = DEFAULT_INPUT if input is None else input
+    if str(wanted) not in ("0", "none", ""):
         try:
             dev = int(bridge.call("DEVINFO").get("inputs", 2))
         except (bridge.NoReaper, bridge.CommandFailed):
             dev = 2
-        spec = bridge.input_encoding(input, dev)
-        ops.append(("SET_INPUT", {"track": built_track, "input": spec}))
+        if dev >= 1:
+            # A closed device (dev 0) has no channels to point at: the build is still a build, and
+            # setup repairs the input on the next pass rather than failing here for a closed device.
+            spec = bridge.input_encoding(wanted, dev)
+            ops.append(("SET_INPUT", {"track": built_track, "input": spec}))
     ops.append(("TRACK_VOL", {"track": built_track, "db": f"{start_db:g}"}))
     if arm:
         ops.append(("ARM", {"track": built_track, "monitor": "1", "confirm": "1"}))

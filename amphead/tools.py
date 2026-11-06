@@ -245,6 +245,17 @@ def handle_setup(args: dict[str, Any], **_kw) -> str:
         # Report the track as it actually is, not as the plan says it should be: the template arms
         # and monitors so the chain is testable, and the parked master is what keeps that silent.
         info = bridge.track_info(1)
+        # A rig built before the default existed carries recinput 0, which reads in the verdict as
+        # "no input selected" and looks to a player like a dead cable. Setup points it at input 1.
+        input_line = _whole(info.get("recinput"))
+        repaired = False
+        if str(input_line) in ("0", "0.0"):
+            try:
+                bridge.set_input(track=1, spec=1, expect=rig)
+                input_line = _whole(bridge.track_info(1).get("recinput"))
+                repaired = True
+            except bridge.ReaperError as exc:
+                input_line = f"still 0 (refused: {exc})"
     except bridge.ReaperError as exc:
         return f"SETUP FAILED: {exc}"
     except launch.NoReaperInstall as exc:
@@ -253,6 +264,7 @@ def handle_setup(args: dict[str, Any], **_kw) -> str:
         ("state", "STANDBY"), ("ui", running.get("ui")), ("rig", path.as_posix()),
         ("tabs", f"{tabs_before}->{tabs_after}"),
         ("master_db", lowered.get("db")),
+        ("input", f"{input_line} (set to 1 by setup)" if repaired else input_line),
         ("armed", f"{info.get('armed')} (silent: master parked at {lowered.get('db')} dB)"),
         ("monitor", info.get("monitor")),
         ("next", "the player flips Live; setup never raises the master"),
@@ -663,7 +675,7 @@ def handle_build(args: dict[str, Any], **_kw) -> str:
         ("built", True), ("rig", built.path), ("track", f"{built.track} {built.track_name}"),
         ("amp", f"{built.amp} at fx {built.amp_index}"), ("chain", len(built.chain)),
         ("db", built.db), ("armed", built.armed), ("monitor", built.monitor),
-        ("input", built.input if built.input is not None else "untouched (default 0)"),
+        ("input", built.input if built.input is not None else "none (as asked)"),
         ("seconds", built.seconds),
     ]
     if built.pre_fx:
