@@ -55,9 +55,12 @@ The pane is the interface. It is a desktop plugin half that ships in this packag
 Routes: `GET /api/plugins/amphead/state`, `GET /api/plugins/amphead/meter` (150 ms poll),
 `POST /live`, `POST /preset`.
 
-The pane ships opt-in in the app: enable it once in **Capabilities, Plugins, AmpHead**. The copy
-the app loads lives in `%LOCALAPPDATA%\hermes\desktop-plugins\amphead\plugin.js`, and a package
-install refreshes it on the next app restart or Rescan.
+The app loads `%LOCALAPPDATA%\hermes\desktop-plugins\amphead\plugin.js` and refreshes that copy from
+`plugins/amphead/desktop/plugin.js` on its own 5 s poll, so saving the source hot-reloads the UI.
+
+Three doors to the same face: an **Amp** row in the sidebar (route `/amphead`, renders in the main
+pane like a built-in view), the command palette entry **AmpHead: open the amp**, and a right-side
+pane named `amp` for layouts that have a right zone. A dB chip also sits in the status bar.
 
 ## Going live
 

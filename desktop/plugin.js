@@ -2,7 +2,7 @@
 // Everything here comes from /api/plugins/amphead/state and /meter, which read REAPER directly,
 // so the pane carries every number REAPER would show while REAPER itself stays on the taskbar.
 
-import { host, useQuery, useQueryClient } from '@hermes/plugin-sdk'
+import { PALETTE_AREA, ROUTES_AREA, SIDEBAR_NAV_AREA, host, useQuery, useQueryClient } from '@hermes/plugin-sdk'
 import { jsx, jsxs } from 'react/jsx-runtime'
 import { useEffect, useRef, useState } from 'react'
 
@@ -194,10 +194,56 @@ function AmpFace({ rest }) {
   })
 }
 
+// The page is the reliable door: a sidebar row and a route render in the workspace like any
+// built-in view, so the amp is one click away and needs no pane dragging to be discovered.
+function AmpPage({ rest }) {
+  return jsxs('div', {
+    className: 'flex h-full flex-col overflow-y-auto',
+    children: [
+      jsxs('div', {
+        className: 'flex items-baseline gap-2 border-b px-4 py-2',
+        style: { borderColor: 'var(--ui-stroke-secondary)' },
+        children: [
+          jsx('span', { className: 'text-sm font-semibold', children: 'AmpHead' }),
+          jsx('span', { className: 'text-[0.6875rem]', style: MUTED, children: 'the rig, without opening REAPER' })
+        ]
+      }),
+      jsx('div', {
+        className: 'mx-auto flex w-full max-w-[420px] flex-1 flex-col',
+        children: jsx(AmpFace, { rest })
+      })
+    ]
+  })
+}
+
 export default {
   id: 'amphead',
   name: 'AmpHead',
   register(ctx) {
+    ctx.registerMany([
+      {
+        id: 'page',
+        area: ROUTES_AREA,
+        data: { path: '/amphead' },
+        render: () => jsx(AmpPage, { rest: ctx.rest })
+      },
+      {
+        id: 'nav',
+        area: SIDEBAR_NAV_AREA,
+        order: 60,
+        data: { codicon: 'pulse', label: 'Amp', path: '/amphead' }
+      },
+      {
+        id: 'open',
+        area: PALETTE_AREA,
+        data: {
+          id: 'amphead.open',
+          label: 'AmpHead: open the amp',
+          keywords: ['amp', 'amphead', 'guitar', 'reaper', 'rig', 'tone'],
+          run: () => host.navigate('/amphead')
+        }
+      }
+    ])
     ctx.register({
       id: 'amp-face',
       area: 'panes',
