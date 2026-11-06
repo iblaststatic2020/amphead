@@ -116,6 +116,50 @@ because the bridge refuses an unguarded write, and that guard is what keeps a wr
 whichever tab happens to be in front. Each attempt is appended to
 `%LOCALAPPDATA%\hermes\amphead\log.jsonl` so a tone change leaves a paper trail.
 
+## A preset, and the knobs it says it moves
+
+`amphead/presets.py` turns intent into knobs. A preset file is plain JSON naming the plugin and the
+knobs in words, with the value in the plugin's own units where that is clearer:
+
+```json
+{
+  "name": "crunch",
+  "about": "pedal in front, amp pushed, treble pulled back",
+  "track_db": -6.0,
+  "targets": {
+    "NAM Universal": {
+      "pedal active": 1,
+      "pedal input gain": 5.8,
+      "amplifier input gain": 5.8,
+      "amplifier treble": 5.2,
+      "sparkle": 6.0
+    }
+  }
+}
+```
+
+Names resolve through the same ladder `amphead_set` uses, so `sparkle`, `Sparkle` and `SPARKLE`
+are one knob. The whole preset is one undo group: pick a preset at random, hit undo once, and you
+are exactly where you were. Then every knob is read back and compared with what was asked for, so a
+plugin with a broken automation binding shows up as a refusal instead of a lie. A knob already where
+the preset wants it is left alone and says so, because writing it would only add noise to the diff.
+
+```
+amphead_preset name="crunch"
+  preset=crunch | changed=8 | already there=2 | 1.07s | one undo point
+  VST3: NAM Universal (WaveMind) | Pedal Active: Off -> On
+  VST3: NAM Universal (WaveMind) | Pedal Input Gain: 0 -> 5.76
+  VST3: NAM Universal (WaveMind) | Amplifier Input Gain: 0 -> 5.76
+  VST3: NAM Universal (WaveMind) | Amplifier Treble: 7.74 -> 5.2
+  VST3: NAM Universal (WaveMind) | IR Blend: 0.5 -> 0.5 (already there)
+  ...
+```
+
+`amphead_preset` with no name lists what is on disk. Three ship: `clean`, `crunch`, `lead`, ordered
+by gain, and the tests hold them to that order. A preset that names a plugin missing from the rig is
+not a failure of the whole call: the plugins that are there still get applied, and the missing one is
+named in the summary. If nothing on the preset is present, nothing is written at all.
+
 ## The amp face (Hermes side)
 
 The pane is the interface. It is a desktop plugin half that ships in this package

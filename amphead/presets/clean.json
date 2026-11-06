@@ -1,0 +1,17 @@
+{
+  "name": "clean",
+  "about": "Amp only, pedal switched out. Chords ring and the top end stays polite.",
+  "track_db": -6.0,
+  "targets": {
+    "NAM Universal": {
+      "pedal active": 0.0,
+      "instigator active": 0.0,
+      "amplifier input gain": 0.42,
+      "amplifier bass": 0.48,
+      "amplifier mid": 0.52,
+      "amplifier treble": 0.62,
+      "ir blend": 0.6,
+      "sparkle": 0.75
+    }
+  }
+}

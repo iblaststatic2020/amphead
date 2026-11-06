@@ -611,6 +611,52 @@ def handle_build(args: dict[str, Any], **_kw) -> str:
     return _fmt(facts)
 
 
+PRESET_SCHEMA = _schema(
+    "amphead_preset",
+    "Apply a rig preset (clean, crunch, lead) as one move: every knob in one undo group, each one "
+    "resolved by name against the live chain and read back afterwards, and a diff of what actually "
+    "changed in the plugin's own units. Plugins that are not on this rig are named, not skipped "
+    "silently, and a knob that refuses the write is reported as refused rather than counted as done.",
+    {"name": {"type": "string",
+              "description": "Preset name (clean, crunch, lead) or a path to a preset .json. "
+                             "Omit to list what ships with the plugin."},
+     "track": {"type": "integer", "description": "Track index, 1 based (default 1).",
+               "minimum": 1}},
+    [],
+)
+
+
+def handle_preset(args: dict[str, Any], **_kw) -> str:
+    """Apply a preset, and answer with the knobs that really moved."""
+    from . import presets, rig
+
+    name = args.get("name")
+    if not name:
+        rows = presets.catalog()
+        if not rows:
+            return f"NO PRESETS: {presets.PRESETS_DIR} holds none"
+        return " | ".join(f"{row['name']}: {row['targets']}" for row in rows)
+
+    try:
+        applied = presets.apply(str(name), track=int(args.get("track") or 1))
+    except bridge.NoReaper:
+        return "NOT APPLIED: REAPER is not running, call amphead_setup first"
+    except LookupError as exc:
+        return f"NOT APPLIED: {exc}"
+    except ValueError as exc:
+        return f"NOT APPLIED: {exc}"
+    except rig.RigRefused as exc:
+        return f"NOT APPLIED: {exc}"
+    except bridge.ReaperError as exc:
+        return f"NOT APPLIED: {exc}"
+
+    lines = presets.diff_lines(applied)
+    head = applied.sentence()
+    if applied.refused:
+        head += " | refused: " + ", ".join(f"{c.param} on {c.fx}" for c in applied.refused)
+    return head + "\n" + "\n".join(lines)
+
+
 def run_call(cmd: str, **kwargs) -> dict:
     """Small indirection so tests can stub the wire without a live host."""
     return bridge.call(cmd, **kwargs)
@@ -627,4 +673,5 @@ TOOLS = (
     ("amphead_ready", READY_SCHEMA, handle_ready, "✅"),
     ("amphead_set", SET_SCHEMA, handle_set, "🎚️"),
     ("amphead_build", BUILD_SCHEMA, handle_build, "🏗️"),
+    ("amphead_preset", PRESET_SCHEMA, handle_preset, "🎸"),
 )

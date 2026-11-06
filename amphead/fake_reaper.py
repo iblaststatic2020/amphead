@@ -46,7 +46,7 @@ ARM_SAFE_MASTER_DB = -60.0
 
 class FakeReaper:
     def __init__(self, root: str | Path, mode: str = "ok", latency: float = 0.0,
-                 traps: bool = False):
+                 traps: bool = False, nam: bool = False):
         self.root = Path(root)
         self.mode = mode
         self.traps = traps
@@ -68,6 +68,33 @@ class FakeReaper:
         # verdict can be exercised over the wire instead of only through mocks.
         self.signal = 0.0
 
+        # ``nam=True`` models the rig the plugin actually builds on this machine: one NAM Universal
+        # with the pedal, the boost, the amp and the IR in the same plugin. The default chain keeps
+        # two plugins so the multi-plugin paths stay exercised.
+        amp_params = [
+            {"name": "Mono Input", "min": 0.0, "max": 1.0, "raw": 0.0, "fmt": "Off"},
+            {"name": "Input Gain", "min": 0.0, "max": 1.0, "raw": 0.5, "fmt": "0.0000000"},
+            {"name": "Output Gain", "min": 0.0, "max": 1.0, "raw": 0.5, "fmt": "0.0000000"},
+            {"name": "Gate Threshold", "min": 0.0, "max": 1.0, "raw": 0.2, "fmt": "-80.0000000"},
+            {"name": "IR Blend", "min": 0.0, "max": 1.0, "raw": 0.5, "fmt": "0.5000000"},
+            {"name": "Pedal Input Gain", "min": 0.0, "max": 1.0, "raw": 0.5, "fmt": "0.0000000"},
+            {"name": "Pedal Ouput Gain", "min": 0.0, "max": 1.0, "raw": 0.5, "fmt": "0.0000000"},
+            {"name": "Instigator Input Gain", "min": 0.0, "max": 1.0, "raw": 0.5, "fmt": "0.0000000"},
+            {"name": "Instigator Bass", "min": 0.0, "max": 1.0, "raw": 0.5, "fmt": "5.0000000"},
+            {"name": "Instigator Mid", "min": 0.0, "max": 1.0, "raw": 0.5, "fmt": "5.0000000"},
+            {"name": "Instigator Treble", "min": 0.0, "max": 1.0, "raw": 0.5, "fmt": "5.0000000"},
+            {"name": "Amplifier Input Gain", "min": 0.0, "max": 1.0, "raw": 0.5, "fmt": "0.0000000"},
+            {"name": "Amplifier Bass", "min": 0.0, "max": 1.0, "raw": 0.44, "fmt": "4.4000001"},
+            {"name": "Amplifier Mid", "min": 0.0, "max": 1.0, "raw": 0.5741, "fmt": "5.7405548"},
+            {"name": "Amplifier Treble", "min": 0.0, "max": 1.0, "raw": 0.7741, "fmt": "7.7410879"},
+            {"name": "Amplifier Tonestack Active", "min": 0.0, "max": 1.0, "raw": 1.0, "fmt": "On"},
+            {"name": "Oomph", "min": 0.0, "max": 1.0, "raw": 0.5923, "fmt": "5.9225168"},
+            {"name": "Sparkle", "min": 0.0, "max": 1.0, "raw": 0.8204, "fmt": "8.2043753"},
+            {"name": "Compressor Threshold", "min": 0.0, "max": 1.0, "raw": 0.6523, "fmt": "65.2347946"},
+            {"name": "Pedal Active", "min": 0.0, "max": 1.0, "raw": 0.0, "fmt": "Off"},
+            {"name": "Instigator Active", "min": 0.0, "max": 1.0, "raw": 0.0, "fmt": "Off"},
+            {"name": "Amplifier Active", "min": 0.0, "max": 1.0, "raw": 1.0, "fmt": "On"},
+        ]
         self.tracks: list[dict] = [
             {
                 "name": "Gtr",
@@ -97,6 +124,10 @@ class FakeReaper:
                 ],
             },
         ]
+        if nam:
+            self.tracks[0]["fx"] = [{"name": "VST3: NAM Universal (WaveMind)",
+                                     "enabled": True, "params": amp_params}]
+            self.tracks[0]["nam"] = True
         if traps:
             # Opt-in second track, because the guitar chain's shape is what most tests assert
             # against. ReaFir's Output Gain takes a raw write of 1.44 and formats it as "-inf",
@@ -420,6 +451,8 @@ class FakeReaper:
                 tr["fx"].append({"name": "VST3: RigSculpt (WaveMind)", "enabled": True,
                                  "params": [{"name": "Presence", "min": 0.0, "max": 1.0, "raw": 0.5, "fmt": "5.0"}]})
                 return _ok(fx=len(tr["fx"]) - 1, name=tr["fx"][-1]["name"], chain_len=len(tr["fx"]))
+            if self.tracks and self.tracks[0].get("nam") and "nam" in want.lower():
+                return _err("fx already loaded", query=want)
             if "shoeless" in want.lower():
                 return _err("fx already loaded", query=want)
             return _err("fx not found", query=want)
@@ -491,6 +524,11 @@ class FakeReaper:
                     and args.get("mode") != "norm" and abs(raw - 1.44) < 0.01):
                 prm["fmt"] = "-inf"     # the value the read-back will report
                 return _ok(norm=(prm["raw"] - mn) / (mx - mn), raw=prm["raw"], fmt="-inf", mode="raw")
+            # Trap: Oomph on the amp-shaped chain ignores writes, the way a plugin with a broken
+            # automation binding does: the write is accepted and nothing moves.
+            if prm["name"] == "Oomph" and tr.get("nam"):
+                return _ok(norm=(prm["raw"] - mn) / (mx - mn), raw=prm["raw"], fmt=prm["fmt"],
+                           mode="norm")
             # Trap: Tone ignores writes, so a write "succeeds" but nothing moves.
             if prm["name"] == "Tone":
                 return _ok(norm=(prm["raw"] - mn) / (mx - mn), raw=prm["raw"], fmt=prm["fmt"], mode="norm")
@@ -498,6 +536,8 @@ class FakeReaper:
             # Trap: Gain at 0.35 normalized formats as -inf on the real plugin.
             if prm["name"] == "Gain" and abs(((raw - mn) / (mx - mn)) - 0.35) < 0.01:
                 prm["fmt"] = "-inf"
+            elif prm["name"].endswith("Active") or prm["name"] == "Mono Input":
+                prm["fmt"] = "On" if raw >= 0.5 else "Off"
             elif prm["fmt"].endswith("dB"):
                 prm["fmt"] = f"{raw:.1f} dB"
             else:

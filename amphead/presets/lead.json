@@ -1,0 +1,21 @@
+{
+  "name": "lead",
+  "about": "Pedal and boost both in, midrange forward so a solo cuts through the band.",
+  "track_db": -6.0,
+  "targets": {
+    "NAM Universal": {
+      "pedal active": 1.0,
+      "pedal input gain": 0.72,
+      "instigator active": 1.0,
+      "instigator input gain": 0.6,
+      "instigator mid": 0.62,
+      "amplifier input gain": 0.7,
+      "amplifier bass": 0.5,
+      "amplifier mid": 0.62,
+      "amplifier treble": 0.45,
+      "ir blend": 0.35,
+      "sparkle": 0.45,
+      "compressor threshold": 0.45
+    }
+  }
+}
