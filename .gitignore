@@ -1,0 +1,21 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+*.egg-info/
+build/
+dist/
+
+# Session audio and renders never belong in the repo
+*.wav
+*.wmri
+*.rpp-bak
+*.rpp.bak
+*.reapeaks
+*.nam
+
+# Local bridge scratch
+.reaper_out/
+request.*.json
+resp_*.json
