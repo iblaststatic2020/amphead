@@ -37,6 +37,28 @@ Library layout it expects:
 - captures: `%USERPROFILE%\WaveMind\NAMU\Amps\**\*.nam`
 - presets: `%USERPROFILE%\WaveMind\NAMU\*.preset`
 
+## The amp face (Hermes side)
+
+The pane is the interface. It is a desktop plugin half that ships in this package
+(`desktop/plugin.js`) and talks to `dashboard/plugin_api.py`, which reads REAPER directly.
+
+| row | what it answers |
+|---|---|
+| verdict | one word: `READY`, `STANDBY`, `NO SIGNAL`, `CLIPPING`, `DEVICE CLOSED`, `REAPER NOT RUNNING`, `REAPER BUSY`, plus the reason in a sentence |
+| input meter | live peak in dB with a latching clip light |
+| LIVE switch | one button: arm and monitor at -18 dB, or disarm and park the master at -60 dB |
+| chain | the real plugin list on the guitar track, in order, marked on or bypassed |
+| amp | the amp's own knob names with the values the host reports |
+| tones | one button per archetype, so "blink182" is also a click |
+| latency, master, project | the numbers REAPER would show, on screen while REAPER is minimized |
+
+Routes: `GET /api/plugins/amphead/state`, `GET /api/plugins/amphead/meter` (150 ms poll),
+`POST /live`, `POST /preset`.
+
+The pane ships opt-in in the app: enable it once in **Capabilities, Plugins, AmpHead**. The copy
+the app loads lives in `%LOCALAPPDATA%\hermes\desktop-plugins\amphead\plugin.js`, and a package
+install refreshes it on the next app restart or Rescan.
+
 ## Going live
 
 `amphead_live` is the switch that makes the rig audible from inside Hermes.
@@ -53,7 +75,7 @@ this is the step that makes noise. `on=false` disarms and parks the master back 
 ## Status
 
 Working and verified against REAPER 7.77: the bridge, the launch and standby rules, the arm safety
-floor, tone application, and the live switch. 116 unit tests, `hermes plugins validate` passes.
+floor, tone application, the live switch, and the amp face backend. 128 unit tests, `hermes plugins validate` passes.
 
 Verified in a fresh Hermes session: `amphead_live` reported `live=True | armed=True | monitor=True |
 master_db=-20.0 | input=1 | clips_at=11.61`, and `amphead_status` read back `device=open`,
