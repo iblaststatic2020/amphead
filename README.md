@@ -37,11 +37,29 @@ Library layout it expects:
 - captures: `%USERPROFILE%\WaveMind\NAMU\Amps\**\*.nam`
 - presets: `%USERPROFILE%\WaveMind\NAMU\*.preset`
 
+## Going live
+
+`amphead_live` is the switch that makes the rig audible from inside Hermes.
+
+```
+amphead_live on=true confirm=true master_db=-20 input="1"
+amphead_live on=false
+```
+
+`on=true` opens the audio device if REAPER parked it closed, sets the master to the level you asked
+for, points the track at the input, then arms and monitors it. `confirm=true` is required because
+this is the step that makes noise. `on=false` disarms and parks the master back at -60 dB.
+
 ## Status
 
 Working and verified against REAPER 7.77: the bridge, the launch and standby rules, the arm safety
-floor, and tone application. 110 unit tests, `hermes plugins validate` passes. Not packaged for
-`hermes plugins install` yet, which only accepts a git URL, so the CLI is the entry point for now.
+floor, tone application, and the live switch. 116 unit tests, `hermes plugins validate` passes.
+
+Verified in a fresh Hermes session: `amphead_live` reported `live=True | armed=True | monitor=True |
+master_db=-20.0 | input=1 | clips_at=11.61`, and `amphead_status` read back `device=open`,
+`buffer=512`, `rate=44100`, `out_ms=11.61`.
+
+Install it into Hermes with `hermes plugins install iblaststatic2020/hermes-reaper-amp --enable`.
 
 Two host facts that cost real time and are worth knowing before touching the bridge:
 
