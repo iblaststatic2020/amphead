@@ -60,6 +60,38 @@ Before any write the chain is re-read and the name is confirmed against its inde
 shift the moment something is added or removed. Writing to index 2 because it used to be the amp is
 exactly the kind of wrong that sounds plausible.
 
+## Turning a knob, and proving it moved
+
+`amphead/rig.py` writes one parameter at a time and does not take the plugin's word for it:
+
+```
+read FX_INFO  ->  pick a mode  ->  clamp, and say so  ->  write in one undo group
+              ->  read the parameter back  ->  accept only if it moved AND is a real number
+              ->  if not, retry once in the other mode  ->  else refuse, showing both tries
+```
+
+```
+amphead_set fx="NAM Universal" param="IR Blend" value=0.52
+  set=True | param=IR Blend | wrote=0.52 (norm) | reads_back=0.5200000 | clamped=False
+
+amphead_set fx="Shoeless" param="Tone" value=0.9
+  REFUSED: Tone on VST3: Shoeless Drive Pedal refused the write:
+           norm 0.9000 read back 5.0 (norm 0.500) then raw 0.9000 read back 5.0 (norm 0.500);
+           value did not move
+```
+
+Two real failures on this machine shaped that order. ReaEQ's gain at 0.35 normalized and ReaFir's
+output gain at 1.44 raw both accept the write and then format the value as `-inf`; ReaFir lands on the
+normalized retry, ReaEQ does not and comes back as a refusal. A plugin that silently ignores a write
+is the third case and is refused the same way.
+
+Details that matter in use: `mode=auto` writes the normalized 0..1 value unless you name the plugin's
+own unit (`dB`, `Hz`), because raw units differ per plugin and `%` is just another way to say
+normalized. Clamping is reported, never hidden. Every write carries the active project as `expect`,
+because the bridge refuses an unguarded write, and that guard is what keeps a write from landing in
+whichever tab happens to be in front. Each attempt is appended to
+`%LOCALAPPDATA%\hermes\amphead\log.jsonl` so a tone change leaves a paper trail.
+
 ## The amp face (Hermes side)
 
 The pane is the interface. It is a desktop plugin half that ships in this package

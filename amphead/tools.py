@@ -304,10 +304,7 @@ def handle_tone(args: dict[str, Any], **_kw) -> str:
 
 def active_path() -> str | None:
     """The project the user is looking at. Every write carries it as `expect`."""
-    for tab in bridge.tabs_list():
-        if tab.get("active") and tab.get("path"):
-            return str(tab["path"])
-    return None
+    return bridge.active_project()
 
 
 def handle_live(args: dict[str, Any], **_kw) -> str:
@@ -503,6 +500,60 @@ def handle_panic(args: dict[str, Any], **_kw) -> str:
     ])
 
 
+SET_SCHEMA = _schema(
+    "amphead_set",
+    "Turn one knob on the amp and prove it moved: resolves the plugin and the parameter by name "
+    "(refusing to guess when a name matches several), writes it as one undo group, reads it back, "
+    "and only reports success when the value actually landed and the read-back is a real number. "
+    "A plugin that accepts a write and ignores it, or reports -inf, comes back as a refusal with "
+    "both attempts shown.",
+    {"track": {"type": "integer", "description": "Track index, 1 based (default 1).",
+               "minimum": 1},
+     "fx": {"type": ["string", "integer"],
+            "description": "Plugin name, or its index on the track. Names beat indices."},
+     "param": {"type": ["string", "integer"],
+               "description": "Parameter name, or its index on the plugin."},
+     "value": {"type": "number", "description": "The new value."},
+     "mode": {"type": "string", "enum": ["auto", "norm", "raw"],
+              "description": "auto (default) writes the plugin's normalized 0..1 value, raw "
+                             "writes the plugin's own units, norm forces normalized."},
+     "unit": {"type": "string",
+              "description": "Optional unit the value is in: '%' for a percentage, 'dB' or 'Hz' "
+                             "for the plugin's own scale. Naming a unit switches to raw."}},
+    ["fx", "param", "value"],
+)
+
+
+def handle_set(args: dict[str, Any], **_kw) -> str:
+    """Write one parameter, and answer with the value the plugin actually reports."""
+    from . import rig
+
+    try:
+        done = rig.set_param(
+            args.get("fx"), args.get("param"), float(args.get("value")),
+            track=int(args.get("track") or 1),
+            mode=str(args.get("mode") or "auto"),
+            unit=args.get("unit"),
+        )
+    except bridge.NoReaper:
+        return "NOT SET: REAPER is not running, call amphead_setup first"
+    except rig.WriteRefused as exc:
+        # Before ReaperError: a refusal is a rig failure, not "the host would not answer".
+        return f"REFUSED: {exc}"
+    except bridge.ReaperError as exc:
+        return f"NOT SET: {exc}"
+    except LookupError as exc:
+        return f"NOT SET: {exc}"
+    except (TypeError, ValueError) as exc:
+        return f"NOT SET: {exc}"
+
+    return _fmt([
+        ("set", True), ("fx", done.fx_name), ("param", done.param_name),
+        ("wrote", f"{done.written:g} ({done.mode})"), ("reads_back", done.fmt),
+        ("norm", done.norm), ("clamped", done.clamped), ("retried", done.retried),
+    ])
+
+
 def run_call(cmd: str, **kwargs) -> dict:
     """Small indirection so tests can stub the wire without a live host."""
     return bridge.call(cmd, **kwargs)
@@ -517,4 +568,5 @@ TOOLS = (
     ("amphead_live", LIVE_SCHEMA, handle_live, "🔊"),
     ("amphead_panic", PANIC_SCHEMA, handle_panic, "⏹️"),
     ("amphead_ready", READY_SCHEMA, handle_ready, "✅"),
+    ("amphead_set", SET_SCHEMA, handle_set, "🎚️"),
 )

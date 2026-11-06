@@ -45,9 +45,11 @@ ARM_SAFE_MASTER_DB = -60.0
 
 
 class FakeReaper:
-    def __init__(self, root: str | Path, mode: str = "ok", latency: float = 0.0):
+    def __init__(self, root: str | Path, mode: str = "ok", latency: float = 0.0,
+                 traps: bool = False):
         self.root = Path(root)
         self.mode = mode
+        self.traps = traps
         self.latency = latency
         self.out = self.root / "out"
         self.req = self.root / "request.txt"
@@ -93,8 +95,28 @@ class FakeReaper:
                         ],
                     },
                 ],
-            }
+            },
         ]
+        if traps:
+            # Opt-in second track, because the guitar chain's shape is what most tests assert
+            # against. ReaFir's Output Gain takes a raw write of 1.44 and formats it as "-inf",
+            # while a normalized write of the same value lands: that is why the retry exists.
+            self.tracks.append({
+                "name": "Bus",
+                "armed": False,
+                "monitor": False,
+                "recinput": 0,
+                "vol": 1.0,
+                "fx": [
+                    {
+                        "name": "VST3: ReaFir (Cockos)",
+                        "enabled": True,
+                        "params": [
+                            {"name": "Output Gain", "min": 0.0, "max": 2.0, "raw": 1.0, "fmt": "0.0 dB"},
+                        ],
+                    },
+                ],
+            })
 
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -462,6 +484,11 @@ class FakeReaper:
                 raw = mn + v * (mx - mn)
             else:
                 raw = v
+            # Trap: ReaFir Output Gain takes a raw write of 1.44 and reports -inf.
+            if ("reafir" in tr["fx"][fx]["name"].lower() and prm["name"] == "Output Gain"
+                    and args.get("mode") != "norm" and abs(raw - 1.44) < 0.01):
+                prm["fmt"] = "-inf"     # the value the read-back will report
+                return _ok(norm=(prm["raw"] - mn) / (mx - mn), raw=prm["raw"], fmt="-inf", mode="raw")
             # Trap: Tone ignores writes, so a write "succeeds" but nothing moves.
             if prm["name"] == "Tone":
                 return _ok(norm=(prm["raw"] - mn) / (mx - mn), raw=prm["raw"], fmt=prm["fmt"], mode="norm")
@@ -469,6 +496,8 @@ class FakeReaper:
             # Trap: Gain at 0.35 normalized formats as -inf on the real plugin.
             if prm["name"] == "Gain" and abs(((raw - mn) / (mx - mn)) - 0.35) < 0.01:
                 prm["fmt"] = "-inf"
+            elif prm["fmt"].endswith("dB"):
+                prm["fmt"] = f"{raw:.1f} dB"
             else:
                 prm["fmt"] = f"{raw * 10:.1f}"
             norm = (raw - mn) / (mx - mn) if mx > mn else 0.0
@@ -548,7 +577,8 @@ class FakeReaper:
         if cmd == "UNDO":
             if self.tx_open:
                 return _err("transaction open, close it first")
-            return _ok(undone=True)
+            popped = self.undo_stack.pop() if self.undo_stack else None
+            return _ok(undone=True, label=(popped or {}).get("label", ""))
         if cmd == "BATCH":
             ops = args.get("ops", "")
             self.tx_open = True
@@ -571,6 +601,9 @@ class FakeReaper:
                     failed_at = i
                     break
             self.tx_open = False
+            if failed_at is None:
+                # One BATCH is one undo point; this is what lets a test prove the grouping.
+                self.undo_stack.append({"label": args.get("label", "")})
             return {
                 "ok": failed_at is None,
                 "proto": PROTO,

@@ -11,3 +11,4 @@ provides_tools:
   - amphead_live
   - amphead_panic
   - amphead_ready
+  - amphead_set

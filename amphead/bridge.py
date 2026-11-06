@@ -493,6 +493,18 @@ def guard(expect: str | None = None, created: bool = False) -> dict:
     return out
 
 
+def active_project() -> str | None:
+    """Path of the project the user is looking at.
+
+    Mutating commands refuse to run without it, so every write carries this as `expect`: a write
+    cannot land in a tab nobody meant to touch just because that tab happened to be active.
+    """
+    for tab in tabs_list():
+        if tab.get("active") and tab.get("path"):
+            return str(tab["path"])
+    return None
+
+
 def wait_ready(timeout: float = 15.0, **kwargs) -> dict:
     """Poll until the bridge answers, for launches and restarts."""
     deadline = time.monotonic() + timeout
