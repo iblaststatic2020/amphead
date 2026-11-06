@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>AmpHead face preview</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script type="importmap">
+      {
+        "imports": {
+          "react": "https://esm.sh/react@18.3.1",
+          "react-dom/client": "https://esm.sh/react-dom@18.3.1/client",
+          "react/jsx-runtime": "https://esm.sh/react@18.3.1/jsx-runtime",
+          "@hermes/plugin-sdk": "./sdk.js"
+        }
+      }
+    </script>
+    <style>
+      :root {
+        --ui-accent: #7aa2f7;
+        --ui-text-quaternary: #565f89;
+        --ui-text-secondary: #9aa5ce;
+        --ui-stroke-secondary: #2a2f45;
+      }
+      html, body { margin: 0; background: #0b0a09; color: #f0e2c8; }
+      body { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+      .frame { border: 1px solid #2a2521; border-radius: 8px; overflow: hidden; background: #12100d; }
+      .label { font: 600 10px/1 ui-monospace, monospace; letter-spacing: 0.16em; text-transform: uppercase; color: #6b6357; margin: 0 0 6px 2px; }
+    </style>
+  </head>
+  <body>
+    <div style="display: flex; gap: 18px; align-items: flex-start; padding: 16px">
+      <div>
+        <p class="label">pane · 300px</p>
+        <div class="frame" id="pane" style="width: 300px; height: 860px"></div>
+      </div>
+      <div>
+        <p class="label">page · 420px</p>
+        <div class="frame" id="page" style="width: 420px; height: 860px"></div>
+      </div>
+    </div>
+    <script type="module" src="./main.js"></script>
+  </body>
+</html>
