@@ -46,6 +46,7 @@ def _load():
 ROUTER, API = _load()
 STATE = ROUTER.routes[("GET", "/state")]
 METER = ROUTER.routes[("GET", "/meter")]
+PANIC = ROUTER.routes[("POST", "/panic")]
 
 
 def _live(**over):
@@ -108,6 +109,31 @@ class TestState(unittest.TestCase):
         with mock.patch.object(API.bridge, "meter", side_effect=API.bridge.NoReaper("down")):
             payload = asyncio.run(METER())
         self.assertEqual(payload, {"l": 0.0, "r": 0.0, "clip": False, "live": False})
+
+
+class TestPanicRoute(unittest.TestCase):
+    """The pane's red button has to reach the tool, and the tool's sentence has to come back."""
+
+    def test_panic_passes_the_call_through_and_keeps_the_words(self):
+        said = "panicked=True | master_db=-60.0 | bypassed=1"
+        with mock.patch("amphead.tools.handle_panic", return_value=said) as handler:
+            payload = asyncio.run(PANIC({"restore": False}))
+        handler.assert_called_once_with({"restore": False, "master_db": -60})
+        self.assertEqual(payload["output"], said)
+        self.assertTrue(payload["ok"])
+        self.assertFalse(payload["restore"])
+
+    def test_restore_is_forwarded_with_the_level(self):
+        with mock.patch("amphead.tools.handle_panic", return_value="panicked=False") as handler:
+            payload = asyncio.run(PANIC({"restore": True, "master_db": -24}))
+        handler.assert_called_once_with({"restore": True, "master_db": -24})
+        self.assertTrue(payload["restore"])
+
+    def test_a_rig_that_was_never_up_is_not_reported_as_ok(self):
+        with mock.patch("amphead.tools.handle_panic",
+                        return_value="NOT PANICKED: REAPER is not running, so nothing can reach the speakers anyway"):
+            payload = asyncio.run(PANIC({}))
+        self.assertFalse(payload["ok"])
 
 
 class TestPretty(unittest.TestCase):

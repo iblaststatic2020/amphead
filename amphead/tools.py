@@ -104,6 +104,22 @@ LIVE_SCHEMA = _schema(
      "track": {"type": "integer", "description": "Track index, 1 based (default 1).", "minimum": 1}},
 )
 
+PANIC_SCHEMA = _schema(
+    "amphead_panic",
+    "Silence the rig in one call: park the master at -60 dB, disarm the track and bypass every "
+    "plugin in the chain, then read all three back and report what is actually true. The meter "
+    "keeps working, so the input is still visible while nothing reaches the speakers. restore=true "
+    "puts the chain back and lifts the master to the given level, without arming the track.",
+    {"restore": {"type": "boolean",
+                 "description": "Undo the panic: un-bypass the chain and lift the master "
+                                "(default false, which silences the rig)."},
+     "master_db": {"type": "number",
+                   "description": "Master level used when restoring (default -18).",
+                   "minimum": -60, "maximum": 0},
+     "track": {"type": "integer", "description": "Track index, 1 based (default 1).",
+               "minimum": 1}},
+)
+
 STANDBY_DB = -60.0
 
 
@@ -193,6 +209,9 @@ def handle_setup(args: dict[str, Any], **_kw) -> str:
         # intends to touch, so a stale handle can never land on somebody's song.
         lowered = bridge.call("MASTER_VOL", db=SAFE_MASTER_DB, expect=rig)
         tabs_after = len(bridge.tabs_list())
+        # Report the track as it actually is, not as the plan says it should be: the template arms
+        # and monitors so the chain is testable, and the parked master is what keeps that silent.
+        info = bridge.track_info(1)
     except bridge.ReaperError as exc:
         return f"SETUP FAILED: {exc}"
     except launch.NoReaperInstall as exc:
@@ -200,8 +219,10 @@ def handle_setup(args: dict[str, Any], **_kw) -> str:
     return _fmt([
         ("state", "STANDBY"), ("ui", running.get("ui")), ("rig", path.as_posix()),
         ("tabs", f"{tabs_before}->{tabs_after}"),
-        ("master_db", lowered.get("db")), ("armed", False),
-        ("next", "the player flips Live; nothing here arms the track"),
+        ("master_db", lowered.get("db")),
+        ("armed", f"{info.get('armed')} (silent: master parked at {lowered.get('db')} dB)"),
+        ("monitor", info.get("monitor")),
+        ("next", "the player flips Live; setup never raises the master"),
     ])
 
 
@@ -325,6 +346,75 @@ def handle_live(args: dict[str, Any], **_kw) -> str:
                  ("input", spec), ("clips_at", device.get("output_latency_ms"))])
 
 
+def handle_panic(args: dict[str, Any], **_kw) -> str:
+    """The dead man's switch: silence first, then prove it with read-backs, never assume it."""
+    track = int(args.get("track") or 1)
+    restore = bool(args.get("restore"))
+    try:
+        expect = active_path()
+    except bridge.NoReaper:
+        return "NOT PANICKED: REAPER is not running, so nothing can reach the speakers anyway"
+    if expect is None:
+        return "NOT PANICKED: no project is open, so there is no rig to silence"
+
+    try:
+        if restore:
+            db = max(STANDBY_DB, min(0.0, float(args.get("master_db", -18.0))))
+            bridge.master(db=db, expect=expect)
+        else:
+            # Master first: it is the one control that cannot fail because a plugin refused it.
+            bridge.master(db=STANDBY_DB, expect=expect)
+
+        # One stubborn plugin must not stop the others from closing: keep going and report the
+        # stragglers by name, because "panicked, except the amp" is the sentence that saves ears.
+        chain = bridge.fx_list(track=track, expect=expect)
+        refused: list[str] = []
+        for fx in chain:
+            try:
+                bridge.fx_bypass(track=track, fx=int(fx["i"]), on=not restore, expect=expect)
+            except bridge.ReaperError as exc:
+                refused.append(f"{fx.get('name')} ({exc})")
+
+        if restore:
+            armed = bridge.track_info(track=track, expect=expect)
+        else:
+            bridge.disarm(track=track, expect=expect)
+            armed = bridge.track_info(track=track, expect=expect)
+
+        level = bridge.master()
+        after = bridge.fx_list(track=track, expect=expect)
+    except bridge.NoReaper:
+        return "NOT PANICKED: REAPER stopped answering mid-call"
+    except bridge.ReaperError as exc:
+        return f"PANIC INCOMPLETE: {exc}. Park the master by hand before you keep playing."
+
+    bypassed = [fx.get("name") for fx in after if not fx.get("enabled")]
+    live_fx = [fx.get("name") for fx in after if fx.get("enabled")]
+    if restore:
+        return _fmt([
+            ("panicked", False), ("master_db", level.get("db")),
+            ("plugins_on", len(live_fx)), ("still_bypassed", len(bypassed)),
+            ("armed", armed.get("armed")),
+            ("next", "flip Live if you want to play; restore never arms the track for you"),
+        ])
+    problems = []
+    if float(level.get("db") or 0.0) > STANDBY_DB + 0.5:
+        problems.append(f"master is at {level.get('db')} dB")
+    if armed.get("armed") or armed.get("monitor"):
+        problems.append("track is still armed or monitoring")
+    if live_fx:
+        problems.append("still passing: " + ", ".join(live_fx))
+    for item in refused:
+        problems.append(f"refused the bypass: {item}")
+    return _fmt([
+        ("panicked", not problems), ("master_db", level.get("db")),
+        ("bypassed", len(bypassed)), ("bypassed_names", ", ".join(bypassed) or "none"),
+        ("armed", armed.get("armed")), ("monitor", armed.get("monitor")),
+        ("meter", "still live: the input stays visible even with the speakers silent"),
+        ("problems", "; ".join(problems) or "none"),
+    ])
+
+
 def run_call(cmd: str, **kwargs) -> dict:
     """Small indirection so tests can stub the wire without a live host."""
     return bridge.call(cmd, **kwargs)
@@ -337,4 +427,5 @@ TOOLS = (
     ("amphead_teardown", TEARDOWN_SCHEMA, handle_teardown, "⏏️"),
     ("amphead_tone", TONE_SCHEMA, handle_tone, "🎚️"),
     ("amphead_live", LIVE_SCHEMA, handle_live, "🔊"),
+    ("amphead_panic", PANIC_SCHEMA, handle_panic, "⏹️"),
 )

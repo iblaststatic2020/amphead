@@ -160,6 +160,16 @@ async def live_switch(body: dict) -> dict[str, Any]:
     return {"output": out, "on": on}
 
 
+@router.post("/panic")
+async def panic(body: dict) -> dict[str, Any]:
+    from amphead import tools
+
+    restore = bool(body.get("restore"))
+    db = body.get("master_db", -60)
+    out = tools.handle_panic({"restore": restore, "master_db": db})
+    return {"output": out, "ok": not out.startswith("NOT PANICKED"), "restore": restore}
+
+
 @router.post("/preset")
 async def preset(body: dict) -> dict[str, Any]:
     from amphead import tools

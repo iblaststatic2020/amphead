@@ -175,7 +175,7 @@ Detailed step plan: [PHASE1.md](PHASE1.md) — seven steps, each with its own ve
 
 **Task 2.3** Snapshots and `/ab`: `snapshot(label)` captures chain + every param raw and formatted; `compare(a, b)` returns human diff lines. Verify: apply preset, snapshot, undo, compare shows the inverse diff.
 
-**Task 2.4** `rig_panic`: bypass all FX, mute track, disarm. Verify: meter still moves, audio dead, one call to restore.
+**Task 2.4** `rig_panic`: master to -60 dB, disarm, bypass every FX slot, all read back. **Done 2026-11-05**, live-verified against the rig tab: `panicked=True | master_db=-60.0 | bypassed=1 | armed=False | monitor=False`, and `restore=true` puts the chain back at -18 dB without arming. No mute: muting would kill the meter, and the meter is the pane's only proof that input is still arriving. Kept the name `amphead_panic`.
 
 **Acceptance:** "make it crunchier" as free text maps to a preset or a param delta, applies in one undo group, and reports what actually changed with real numbers.
 

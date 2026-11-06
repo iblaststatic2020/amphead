@@ -75,10 +75,36 @@ amphead_live on=false
 for, points the track at the input, then arms and monitors it. `confirm=true` is required because
 this is the step that makes noise. `on=false` disarms and parks the master back at -60 dB.
 
+## Panic
+
+`amphead_panic` is the dead man's switch, and it is the one button the pane paints red.
+
+```
+amphead_panic
+amphead_panic restore=true master_db=-20
+```
+
+Panic parks the master at -60 dB first, because that is the control no plugin can refuse. Then it
+disarms the track and bypasses every slot in the chain, reading each one back. The reply is a list of
+facts, not a claim:
+
+```
+panicked=True | master_db=-60.0 | bypassed=1 | bypassed_names=VST3: NAM Universal (WaveMind)
+armed=False | monitor=False | meter=still live: the input stays visible even with the speakers silent
+problems=none
+```
+
+If a plugin ignores the bypass, the rest still close and the reply names the one that did not:
+`still passing: Stubborn; refused the bypass: Stubborn (fx 0 ignored bypass)`. There is no mute
+involved on purpose: muting would kill the meter, and the meter is how the face proves the guitar is
+still arriving while nothing reaches the speakers. `restore=true` un-bypasses the chain and lifts the
+master, and deliberately leaves the track disarmed, so the Live switch stays the only way back to
+sound.
+
 ## Status
 
 Working and verified against REAPER 7.77: the bridge, the launch and standby rules, the arm safety
-floor, tone application, the live switch, and the amp face backend. 128 unit tests, `hermes plugins validate` passes.
+floor, tone application, the live switch, panic, and the amp face backend. 142 unit tests, `hermes plugins validate` passes.
 
 Verified in a fresh Hermes session: `amphead_live` reported `live=True | armed=True | monitor=True |
 master_db=-20.0 | input=1 | clips_at=11.61`, and `amphead_status` read back `device=open`,

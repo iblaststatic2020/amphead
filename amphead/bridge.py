@@ -363,6 +363,15 @@ def param_index(name: str, track: int = 1, fx: int = 0, **kwargs) -> int:
     raise LookupError(f"no parameter named {name!r} on fx {fx}")
 
 
+def fx_bypass(track: int = 1, fx: int = 0, on: bool = True, **kwargs) -> dict:
+    """Bypass (``on=True``) or restore one FX slot, then trust only the read-back."""
+    payload = call("FX_BYPASS", track=track, fx=fx, on="1" if on else "0", **kwargs)
+    landed = bool(payload.get("bypassed"))
+    if landed != bool(on):
+        raise CommandFailed(payload, f"fx {fx} reads bypassed={landed} after asking for {on}")
+    return payload
+
+
 ARM_SAFE_MASTER_DB = -60.0
 
 

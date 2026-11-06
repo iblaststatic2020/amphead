@@ -101,6 +101,11 @@ function AmpFace({ rest }) {
     }
   }
 
+  // Panic is not a mode the daemon remembers: it is a visible fact about the chain, so the button
+  // reads the chain it just fetched and offers the reverse action only when the reverse is true.
+  const chain = s.chain || []
+  const silenced = chain.length > 0 && chain.every((fx) => !fx.enabled)
+
   const liveLabel = armed
     ? 'STANDBY: disarm and park the master at -60 dB'
     : 'LIVE: arm, monitor and play at -18 dB'
@@ -131,6 +136,21 @@ function AmpFace({ rest }) {
           ? { background: 'var(--ui-stroke-secondary)', color: 'var(--ui-text)' }
           : { background: 'var(--ui-accent)', color: 'var(--ui-accent-foreground, #fff)' },
         children: busy ? 'working' : liveLabel
+      }),
+
+      jsxs('button', {
+        type: 'button',
+        disabled: busy,
+        onClick: () => act('/panic', silenced ? { restore: true, master_db: -18 } : {}),
+        className: 'w-full rounded-md px-3 py-1.5 text-xs font-semibold disabled:opacity-50',
+        style: silenced
+          ? { background: 'var(--ui-stroke-secondary)', color: 'var(--ui-text)' }
+          : { background: '#8f1d20', color: '#fff' },
+        children: busy
+          ? 'working'
+          : silenced
+            ? 'RESTORE: un-bypass the chain and lift the master'
+            : 'PANIC: silence the rig now'
       }),
 
       jsxs('div', {

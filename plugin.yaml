@@ -9,3 +9,4 @@ provides_tools:
   - amphead_teardown
   - amphead_tone
   - amphead_live
+  - amphead_panic
