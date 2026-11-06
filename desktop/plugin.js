@@ -574,6 +574,7 @@ function AmpFace({ rest }) {
   const device = s.device || {}
   const chain = s.chain || []
   const silenced = chain.length > 0 && chain.every((fx) => !fx.enabled)
+  const problems = s.problems || []
   const [ampGroup, hostGroup] = groups(s.knobs || [])
 
   async function act(path, body) {
@@ -618,7 +619,19 @@ function AmpFace({ rest }) {
             className: 'mt-1 text-[0.625rem] leading-snug',
             style: { color: FACE_DIM },
             children: s.reason || 'reading the rig'
-          })
+          }),
+          // The reason is one sentence; problems are the separate things wrong at the same time, so
+          // they get their own lines instead of being crammed into that sentence.
+          problems.length
+            ? jsx('ul', {
+              className: 'mt-1 space-y-0.5',
+              children: problems.map((p, i) => jsxs('li', {
+                className: 'text-[0.5625rem] leading-snug',
+                style: { color: VERDICT_COLOR[verdict] || FACE_DIM, opacity: 0.85 },
+                children: ['– ', p]
+              }, i))
+            })
+            : null
         ]
       }),
 

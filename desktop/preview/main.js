@@ -4,7 +4,7 @@
 
 import { createRoot } from 'react-dom/client'
 import { createElement } from 'react'
-import plugin from '../plugin.next.js'
+import plugin from '../plugin.js'
 import { rest } from './fixture.js'
 
 const entries = []

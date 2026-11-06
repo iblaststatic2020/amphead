@@ -42,7 +42,8 @@ export const state = () => {
     master_db: master,
     project: 'amphead.rpp',
     ui: 'visible',
-    device: { buffer: 512, rate: 44100, out_ms: 11.61, closed: false },
+    device: { buffer: '512', rate: '44100', out_ms: 11.61, closed: false },
+    problems: forced ? ['the active project is not the rig'] : [],
     chain,
     knobs,
     presets: [
