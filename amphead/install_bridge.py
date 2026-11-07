@@ -51,7 +51,10 @@ end
 OUR_FILES = ("bridge.lua", "request.txt", "request.lock", "alive", "lock.txt")
 
 
-class InstallError(RuntimeError):
+from . import port
+
+
+class InstallError(port.RigError):
     """A setup step that cannot proceed, with the sentence a user needs to read."""
 
 

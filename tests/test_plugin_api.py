@@ -129,11 +129,11 @@ class TestVerdict(unittest.TestCase):
 
 class TestState(unittest.TestCase):
     def test_state_payload_has_the_five_pane_rows(self):
-        with mock.patch.object(API.launch, "state", return_value=_live()), \
+        with mock.patch.object(API.RIG, "state", return_value=_live()), \
              mock.patch.object(API, "_track", return_value={"armed": True, "monitor": True}), \
-             mock.patch.object(API.bridge, "meter",
+             mock.patch.object(API.RIG, "meter",
                                return_value={"l": 0.3, "r": 0.3, "clip": False}), \
-             mock.patch.object(API.bridge, "master", return_value={"db": -20.0}), \
+             mock.patch.object(API.RIG, "master", return_value={"db": -20.0}), \
              mock.patch.object(API, "_chain", return_value=[{"name": "VST3: NAM Universal", "enabled": True}]), \
              mock.patch.object(API, "_knobs", return_value=[{"name": "Bass", "value": "4.4"}]):
             payload = STATE()
@@ -143,13 +143,13 @@ class TestState(unittest.TestCase):
         self.assertTrue(payload["presets"])
 
     def test_no_reaper_install_is_a_sentence_not_a_crash(self):
-        with mock.patch.object(API.launch, "state", side_effect=API.launch.NoReaperInstall("gone")):
+        with mock.patch.object(API.RIG, "state", side_effect=API.port.NoRig("gone")):
             payload = STATE()
         self.assertEqual(payload["verdict"], "NO REAPER INSTALL")
         self.assertIn("not installed", payload["reason"])
 
     def test_meter_is_cheap_and_survives_a_dead_bridge(self):
-        with mock.patch.object(API.bridge, "meter", side_effect=API.bridge.NoReaper("down")):
+        with mock.patch.object(API.RIG, "meter", side_effect=API.port.NoRig("down")):
             payload = METER()
         self.assertEqual(payload, {"l": 0.0, "r": 0.0, "clip": False, "live": False})
 
@@ -199,16 +199,16 @@ class TestFocusRoute(unittest.TestCase):
     """A click that focuses a plugin in a hidden chain window would be a click with no effect."""
 
     def test_a_hidden_reaper_is_told_in_words_and_nothing_is_focused(self):
-        with mock.patch.object(API.launch, "ui_visible", return_value=False), \
-             mock.patch.object(API.bridge, "fx_focus") as focus:
+        with mock.patch.object(API.RIG, "ui_visible", return_value=False), \
+             mock.patch.object(API.RIG, "fx_focus") as focus:
             payload = FOCUS({"fx": 0})
         focus.assert_not_called()
         self.assertFalse(payload["ok"])
         self.assertIn("not showing", payload["output"])
 
     def test_a_visible_reaper_gets_the_focus_call(self):
-        with mock.patch.object(API.launch, "ui_visible", return_value=True), \
-             mock.patch.object(API.bridge, "fx_focus",
+        with mock.patch.object(API.RIG, "ui_visible", return_value=True), \
+             mock.patch.object(API.RIG, "fx_focus",
                                return_value={"fx": "VST3: NAM Universal"}) as focus:
             payload = FOCUS({"fx": 0})
         focus.assert_called_once_with(1, 0)
@@ -216,8 +216,8 @@ class TestFocusRoute(unittest.TestCase):
         self.assertIn("NAM Universal", payload["output"])
 
     def test_a_refused_focus_is_not_ok(self):
-        with mock.patch.object(API.launch, "ui_visible", return_value=True), \
-             mock.patch.object(API.bridge, "fx_focus", side_effect=API.bridge.ReaperError("no fx 7")):
+        with mock.patch.object(API.RIG, "ui_visible", return_value=True), \
+             mock.patch.object(API.RIG, "fx_focus", side_effect=API.port.RigError("no fx 7")):
             self.assertFalse(FOCUS({"fx": 7})["ok"])
 
 
@@ -255,11 +255,11 @@ class TestParkedMaster(unittest.TestCase):
         self.assertEqual(API._verdict(_live(), {"armed": True}, 0.3, False)[0], "READY")
 
     def test_state_reads_the_master_before_judging(self):
-        with mock.patch.object(API.launch, "state", return_value=_live()), \
+        with mock.patch.object(API.RIG, "state", return_value=_live()), \
              mock.patch.object(API, "_track", return_value={"armed": True, "monitor": True}), \
-             mock.patch.object(API.bridge, "meter",
+             mock.patch.object(API.RIG, "meter",
                                return_value={"l": 0.3, "r": 0.3, "clip": False}), \
-             mock.patch.object(API.bridge, "master", return_value={"db": -60.0}), \
+             mock.patch.object(API.RIG, "master", return_value={"db": -60.0}), \
              mock.patch.object(API, "_chain", return_value=[{"name": "NAM", "enabled": True}]), \
              mock.patch.object(API, "_knobs", return_value=[]):
             payload = STATE()
@@ -274,7 +274,7 @@ class TestKnobs(unittest.TestCase):
             {"i": 5, "name": "Amplifier Bass", "fmt": "4.4000001", "norm": 0.44, "raw": 4.4},
             {"i": 9, "name": "Pedal Bypass", "fmt": "Off", "norm": 0.0, "raw": 0.0},
         ]
-        with mock.patch.object(API.bridge, "fx_params", return_value=params):
+        with mock.patch.object(API.RIG, "fx_params", return_value=params):
             knobs = API._knobs(1)
         # Every control the plugin has, amp first, in the plugin's own order within each section:
         # the pane is meant to be the VST's own face, not a shortlist this file invented.
@@ -288,7 +288,7 @@ class TestKnobs(unittest.TestCase):
         """A switch reads "Off", and hiding it would leave the face disagreeing with the VST."""
         params = [{"i": 1, "name": "Amplifier Voicing", "fmt": "Vintage", "norm": 0.33, "raw": 2.0},
                   {"i": 2, "name": "Pedal Bypass", "fmt": "Off", "norm": 0.0, "raw": 0.0}]
-        with mock.patch.object(API.bridge, "fx_params", return_value=params):
+        with mock.patch.object(API.RIG, "fx_params", return_value=params):
             knobs = API._knobs(1)
         self.assertEqual([k["value"] for k in knobs], ["Vintage", "Off"])
 
@@ -300,7 +300,7 @@ class TestKnobs(unittest.TestCase):
             {"i": 2, "name": "Amplifier Bass", "fmt": "4.4", "norm": 0.44, "raw": 4.4},
             {"i": 3, "name": "HD Mode", "fmt": "On", "norm": 1.0, "raw": 1.0},
         ]
-        with mock.patch.object(API.bridge, "fx_params", return_value=params):
+        with mock.patch.object(API.RIG, "fx_params", return_value=params):
             knobs = {k["name"]: k for k in API._knobs(1)}
         self.assertTrue(knobs["Pedal Bypass"]["bool"])
         self.assertTrue(knobs["HD Mode"]["bool"])
@@ -308,11 +308,11 @@ class TestKnobs(unittest.TestCase):
 
     def test_a_nameless_parameter_is_skipped_rather_than_shown_blank(self):
         params = [{"i": 1, "name": "", "fmt": "0", "norm": 0.0}, {"i": 2, "name": "Input Gain", "fmt": "0", "norm": 0.0}]
-        with mock.patch.object(API.bridge, "fx_params", return_value=params):
+        with mock.patch.object(API.RIG, "fx_params", return_value=params):
             self.assertEqual([k["name"] for k in API._knobs(1)], ["Input Gain"])
 
     def test_a_failed_read_is_an_empty_list_not_a_crash(self):
-        with mock.patch.object(API.bridge, "fx_params", side_effect=API.bridge.ReaperError("no fx")):
+        with mock.patch.object(API.RIG, "fx_params", side_effect=API.port.RigError("no fx")):
             self.assertEqual(API._knobs(1), [])
 
 
@@ -324,32 +324,32 @@ class TestInputSocket(unittest.TestCase):
 
     def test_socket_one_is_the_first_channel_not_the_track_number(self):
         """REAPER stores the first channel as 0, and a track's own number plays no part in it."""
-        with mock.patch.object(API.bridge, "inputs", return_value=self._channels()):
+        with mock.patch.object(API.RIG, "inputs", return_value=self._channels()):
             mine = API._input({"recinput": 0.0}, {"bridge": "live"})
         self.assertEqual((mine["number"], mine["name"], mine["value"]), (1, "IN 1", "input 1"))
         self.assertEqual(mine["count"], 2)
         self.assertEqual(mine["norm"], 0.0)
 
     def test_the_second_socket_is_the_second_stop_of_the_knob(self):
-        with mock.patch.object(API.bridge, "inputs", return_value=self._channels()):
+        with mock.patch.object(API.RIG, "inputs", return_value=self._channels()):
             mine = API._input({"recinput": 1.0}, {"bridge": "live"})
         self.assertEqual((mine["number"], mine["name"]), (2, "IN 2"))
         self.assertEqual(mine["norm"], 1.0)
 
     def test_a_track_pointed_past_the_sockets_is_reported_not_clamped(self):
         """Three tracks and two sockets must not invent a third socket."""
-        with mock.patch.object(API.bridge, "inputs", return_value=self._channels()):
+        with mock.patch.object(API.RIG, "inputs", return_value=self._channels()):
             mine = API._input({"recinput": 2.0}, {"bridge": "live"})
         self.assertEqual(mine["number"], 3)
         self.assertEqual(mine["name"], "input 3")
         self.assertEqual([row["name"] for row in mine["channels"]], ["IN 1", "IN 2"])
 
     def test_a_socket_turn_writes_and_reports_the_interface_name(self):
-        with mock.patch.object(API.bridge, "active_project", return_value=RIG_PATH), \
-             mock.patch.object(API.bridge, "inputs", return_value=self._channels()), \
-             mock.patch.object(API.bridge, "set_input",
+        with mock.patch.object(API.RIG, "project", return_value=RIG_PATH), \
+             mock.patch.object(API.RIG, "inputs", return_value=self._channels()), \
+             mock.patch.object(API.RIG, "set_input",
                                return_value={"recinput": 1.0, "applied": True}) as wrote, \
-             mock.patch.object(API.bridge, "track_info", return_value={"recinput": 1.0}):
+             mock.patch.object(API.RIG, "track_info", return_value={"recinput": 1.0}):
             answer = INPUT({"input": 2})
         # The write names the project the player is looking at, or the bridge's guard refuses it.
         wrote.assert_called_once_with(track=1, spec=2, inputs=2, expect=RIG_PATH)
@@ -358,11 +358,11 @@ class TestInputSocket(unittest.TestCase):
         self.assertIn("IN 2", answer["output"])
 
     def test_a_turn_with_no_sockets_says_the_device_is_closed(self):
-        with mock.patch.object(API.bridge, "active_project", return_value=RIG_PATH), \
-             mock.patch.object(API.bridge, "inputs", return_value={"count": 0, "channels": []}), \
-             mock.patch.object(API.launch, "ensure_audio",
+        with mock.patch.object(API.RIG, "project", return_value=RIG_PATH), \
+             mock.patch.object(API.RIG, "inputs", return_value={"count": 0, "channels": []}), \
+             mock.patch.object(API.RIG, "ensure_audio",
                                return_value={"count": 0, "inputs": 0}) as opened, \
-             mock.patch.object(API.bridge, "set_input") as wrote:
+             mock.patch.object(API.RIG, "set_input") as wrote:
             answer = INPUT({"input": 1})
         self.assertFalse(answer["ok"])
         self.assertIn("closed", answer["output"])
@@ -375,13 +375,13 @@ class TestInputSocket(unittest.TestCase):
         # the interface answers with its own channel names again.
         asleep = {"count": 0, "channels": []}
         awake = self._channels()
-        with mock.patch.object(API.bridge, "active_project", return_value=RIG_PATH), \
-             mock.patch.object(API.bridge, "inputs", side_effect=[asleep, awake]), \
-             mock.patch.object(API.launch, "ensure_audio",
+        with mock.patch.object(API.RIG, "project", return_value=RIG_PATH), \
+             mock.patch.object(API.RIG, "inputs", side_effect=[asleep, awake]), \
+             mock.patch.object(API.RIG, "ensure_audio",
                                return_value={"count": 2, "inputs": 2}) as opened, \
-             mock.patch.object(API.bridge, "set_input",
+             mock.patch.object(API.RIG, "set_input",
                                return_value={"recinput": 0.0, "applied": True}) as wrote, \
-             mock.patch.object(API.bridge, "track_info", return_value={"recinput": 0.0}):
+             mock.patch.object(API.RIG, "track_info", return_value={"recinput": 0.0}):
             answer = INPUT({"input": 1})
         opened.assert_called_once()
         wrote.assert_called_once_with(track=1, spec=1, inputs=2, expect=RIG_PATH)
@@ -389,9 +389,9 @@ class TestInputSocket(unittest.TestCase):
         self.assertEqual(answer["name"], "IN 1")
 
     def test_a_turn_with_no_project_open_is_refused(self):
-        with mock.patch.object(API.bridge, "active_project", return_value=None), \
-             mock.patch.object(API.bridge, "inputs", return_value=self._channels()), \
-             mock.patch.object(API.bridge, "set_input") as wrote:
+        with mock.patch.object(API.RIG, "project", return_value=None), \
+             mock.patch.object(API.RIG, "inputs", return_value=self._channels()), \
+             mock.patch.object(API.RIG, "set_input") as wrote:
             answer = INPUT({"input": 1})
         self.assertFalse(answer["ok"])
         self.assertIn("no project", answer["output"])
@@ -402,7 +402,7 @@ class TestInputSocket(unittest.TestCase):
         self.assertFalse(INPUT({"input": "  "})["ok"])
 
     def test_the_state_carries_the_socket_so_the_pane_can_turn_it(self):
-        with mock.patch.object(API.bridge, "inputs", return_value=self._channels()):
+        with mock.patch.object(API.RIG, "inputs", return_value=self._channels()):
             mine = API._input({"recinput": 0.0}, {"bridge": "live"})
         self.assertEqual(set(mine), {"value", "name", "number", "count", "channels", "stereo",
                                      "norm", "track"})
@@ -425,9 +425,9 @@ class TestKnobRoute(unittest.TestCase):
 
     def test_a_turn_never_lists_the_chain_or_the_meter(self):
         """A drag asks ten times a second, so the route must not pay for the face's state."""
-        with mock.patch.object(API.bridge, "fx_list", side_effect=AssertionError("chain read")), \
-             mock.patch.object(API.bridge, "meter", side_effect=AssertionError("meter read")), \
-             mock.patch.object(API.bridge, "track_info", side_effect=AssertionError("track read")):
+        with mock.patch.object(API.RIG, "fx_list", side_effect=AssertionError("chain read")), \
+             mock.patch.object(API.RIG, "meter", side_effect=AssertionError("meter read")), \
+             mock.patch.object(API.RIG, "track_info", side_effect=AssertionError("track read")):
             done = mock.Mock(norm=0.5, fmt="0.5", written=0.5, clamped=False, retried=False,
                              param_name="Amplifier Mid")
             done.sentence.return_value = "ok"
@@ -446,7 +446,7 @@ class TestKnobRoute(unittest.TestCase):
         self.assertAlmostEqual(payload["norm"], 1.0)
 
     def test_a_turn_with_no_reaper_answers_in_words(self):
-        with mock.patch("amphead.rig.set_param", side_effect=API.bridge.NoReaper()):
+        with mock.patch("amphead.rig.set_param", side_effect=API.port.NoRig()):
             payload = API.knob({"param": 3, "value": 0.5})
         self.assertFalse(payload["ok"])
         self.assertIn("REAPER is not running", payload["output"])

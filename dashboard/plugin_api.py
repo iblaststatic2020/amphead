@@ -26,7 +26,10 @@ _ROOT = Path(__file__).resolve().parent.parent
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-from amphead import bridge, demo, launch, tones, verdict  # noqa: E402
+from amphead import demo, port, tones, verdict  # noqa: E402
+
+#: The rig this pane talks to. Same env switch as the tools.
+RIG = port.active()  # noqa: E402
 
 FLOOR = verdict.FLOOR  # -60 dB, the same floor the rig boots and parks at
 def _device(state: dict) -> dict:
@@ -49,8 +52,8 @@ def _channels() -> dict:
     holding REAPER's API docs.
     """
     try:
-        got = bridge.inputs()
-    except bridge.ReaperError:
+        got = RIG.inputs()
+    except port.RigError:
         return {"count": 0, "channels": []}
     rows = []
     for index, channel in enumerate(got.get("channels") or []):
@@ -68,15 +71,15 @@ def _input(track: dict, live: dict) -> dict:
     """
     sockets = _channels() if live.get("bridge") == "live" else {"count": 0, "channels": []}
     held = track.get("recinput")
-    said = bridge.describe_input(held) if held is not None else "unknown"
+    said = RIG.describe_input(held) if held is not None else "unknown"
     number, stereo = None, False
     try:
         raw = int(float(held))
     except (TypeError, ValueError):
         raw = None
     if raw is not None and raw >= 0:
-        if raw >= bridge.INPUT_PAIR_BASE:
-            number, stereo = raw - bridge.INPUT_PAIR_BASE + 1, True
+        if raw >= port.INPUT_PAIR_BASE:
+            number, stereo = raw - port.INPUT_PAIR_BASE + 1, True
         else:
             number = raw + 1
     name = next((row["name"] for row in sockets["channels"] if row["number"] == number), said)
@@ -98,8 +101,8 @@ def _knobs(track: int) -> list[dict]:
     guess which twin it belongs to.
     """
     try:
-        params = bridge.fx_params(track, 0, keep=4096)
-    except bridge.ReaperError:
+        params = RIG.fx_params(track, 0, keep=4096)
+    except port.RigError:
         return []
     picked = []
     for param in params:
@@ -136,8 +139,8 @@ def _section(name: str) -> str:
 def _plugin(track: int) -> dict:
     """The plugin the knobs belong to, so the face can name it instead of implying it."""
     try:
-        chain = bridge.fx_list(track)
-    except bridge.ReaperError:
+        chain = RIG.fx_list(track)
+    except port.RigError:
         return {}
     if not chain:
         return {}
@@ -158,8 +161,8 @@ def _chain(track: int) -> list[dict] | None:
     """None means the chain could not be read, which is not the same as an empty chain."""
     try:
         return [{"name": str(fx.get("name")), "enabled": bool(fx.get("enabled", True))}
-                for fx in bridge.fx_list(track)]
-    except bridge.ReaperError:
+                for fx in RIG.fx_list(track)]
+    except port.RigError:
         return None
 
 
@@ -175,8 +178,8 @@ def _verdict(state: dict, track: dict, peak: float, clip: bool,
 
 def _track(track_no: int) -> dict:
     try:
-        return bridge.track_info(track_no)
-    except bridge.ReaperError:
+        return RIG.track_info(track_no)
+    except port.RigError:
         return {}
 
 
@@ -198,8 +201,8 @@ def state() -> dict[str, Any]:
     if demo.enabled():
         return demo.state()
     try:
-        live = launch.state()
-    except launch.NoReaperInstall:
+        live = RIG.state()
+    except port.NoRig:
         return {"verdict": "NO REAPER INSTALL", "reason": "REAPER is not installed on this machine",
                 "chain": [], "plugin": {}, "knobs": [], "presets": _presets(), "meter": {"peak": 0.0}}
 
@@ -208,18 +211,18 @@ def state() -> dict[str, Any]:
     peak, clip = 0.0, False
     if live.get("bridge") == "live" and int(live.get("tracks") or 0) >= 1:
         try:
-            reading = bridge.meter(track_no)
+            reading = RIG.meter(track_no)
             peak = float(max(reading.get("l") or 0.0, reading.get("r") or 0.0))
             clip = bool(reading.get("clip"))
-        except bridge.ReaperError:
+        except port.RigError:
             peak, clip = 0.0, False
 
     chain = _chain(track_no) if live.get("bridge") == "live" else None
     master = None
     if live.get("bridge") == "live":
         try:
-            master = bridge.master().get("db")
-        except bridge.ReaperError:
+            master = RIG.master().get("db")
+        except port.RigError:
             master = None
 
     reading = {"l": peak, "r": peak, "clip": clip}
@@ -238,7 +241,7 @@ def state() -> dict[str, Any]:
         "input": _input(track, live),
         "master_db": master,
         # Whether REAPER's window is on screen decides if a chain-row click may focus a plugin.
-        "ui": "visible" if live.get("bridge") == "live" and launch.ui_visible() else "hidden",
+        "ui": "visible" if live.get("bridge") == "live" and RIG.ui_visible() else "hidden",
         "armed": bool(track.get("armed")),
         "monitor": bool(track.get("monitor")),
         "problems": judged["problems"],
@@ -257,8 +260,8 @@ def meter() -> dict[str, Any]:
     if demo.enabled():
         return demo.meter()
     try:
-        reading = bridge.meter(1)
-    except bridge.ReaperError:
+        reading = RIG.meter(1)
+    except port.RigError:
         return {"l": 0.0, "r": 0.0, "clip": False, "live": False}
     return {"l": float(reading.get("l") or 0.0), "r": float(reading.get("r") or 0.0),
             "clip": bool(reading.get("clip")), "live": True}
@@ -315,11 +318,11 @@ def knob(body: dict) -> dict[str, Any]:
             track=int(body.get("track") or 1),
             mode=str(body.get("mode") or "norm"),
         )
-    except bridge.NoReaper:
+    except port.NoRig:
         return {"output": "NOT SET: REAPER is not running", "ok": False}
     except rig.WriteRefused as exc:
         return {"output": f"REFUSED: {exc}", "ok": False}
-    except (bridge.ReaperError, LookupError, TypeError, ValueError) as exc:
+    except (port.RigError, LookupError, TypeError, ValueError) as exc:
         return {"output": f"NOT SET: {exc}", "ok": False}
     return {"output": done.sentence(), "ok": True, "norm": done.norm, "value": done.fmt,
             "raw": done.written, "clamped": done.clamped, "retried": done.retried,
@@ -344,11 +347,11 @@ def input_switch(body: dict) -> dict[str, Any]:
         # Every write carries the project the player is looking at as `expect`. Without it the
         # bridge's guard refuses, and rightly: a record input is per project, so a write that does
         # not name a project could land in a tab nobody meant to touch.
-        expect = bridge.active_project()
-        got = bridge.inputs()
-    except bridge.NoReaper:
+        expect = RIG.project()
+        got = RIG.inputs()
+    except port.NoRig:
         return {"output": "NOT SET: REAPER is not running", "ok": False}
-    except bridge.ReaperError as exc:
+    except port.RigError as exc:
         return {"output": f"NOT SET: {exc}", "ok": False}
     if not expect:
         return {"output": "NOT SET: no project is open, so there is no track to point", "ok": False}
@@ -356,17 +359,17 @@ def input_switch(body: dict) -> dict[str, Any]:
         # REAPER parks the device closed when idle, and a closed device has no sockets. Opening it
         # is the difference between "your interface has no inputs" and "the device was asleep".
         try:
-            got = launch.ensure_audio(info=got)
-        except bridge.ReaperError as exc:
+            got = RIG.ensure_audio(info=got)
+        except port.RigError as exc:
             return {"output": f"NOT SET: could not open the audio device: {exc}", "ok": False}
         if int(got.get("count") or 0) < 1:
             return {"output": "NOT SET: the audio device is closed, so there are no sockets to "
                               "point at. Open REAPER's audio device and turn again.", "ok": False}
     try:
-        bridge.set_input(track=track_no, spec=spec, inputs=int(got["count"]), expect=expect)
-    except bridge.NoReaper:
+        RIG.set_input(track=track_no, spec=spec, inputs=int(got["count"]), expect=expect)
+    except port.NoRig:
         return {"output": "NOT SET: REAPER is not running", "ok": False}
-    except (bridge.CommandFailed, bridge.ReaperError, ValueError) as exc:
+    except (port.RigSaidNo, port.RigError, ValueError) as exc:
         return {"output": f"NOT SET: {exc}", "ok": False}
     mine = _input(_track(track_no), {"bridge": "live"})
     mine["track"] = track_no
@@ -403,13 +406,13 @@ def focus(body: dict) -> dict[str, Any]:
         return demo.focus(body)
     fx = body.get("fx", 0)
     track = int(body.get("track") or 1)
-    if not launch.ui_visible():
+    if not RIG.ui_visible():
         return {"output": "REAPER's window is not showing, so there is no chain window to bring "
                           "forward. Un-minimize REAPER and click again.",
                 "ok": False, "focused": False}
     try:
-        done = bridge.fx_focus(track, int(fx))
-    except bridge.ReaperError as exc:
+        done = RIG.fx_focus(track, int(fx))
+    except port.RigError as exc:
         return {"output": f"the bridge refused the focus: {exc}", "ok": False, "focused": False}
     return {"output": f"brought {done.get('fx') or 'the plugin'} to the front of the chain",
             "ok": True, "focused": True, "fx": done.get("fx")}

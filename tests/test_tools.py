@@ -14,39 +14,39 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from amphead import bridge, launch, tools  # noqa: E402
+from amphead import bridge, launch, port, tools  # noqa: E402
 
 
 class TestCheckFn(unittest.TestCase):
     def test_true_when_reaper_is_installed(self):
-        with mock.patch.object(tools.launch, "find_reaper", return_value=Path("C:/reaper.exe")):
+        with mock.patch.object(tools.RIG, "find", return_value=Path("C:/reaper.exe")):
             self.assertTrue(tools.check_reaper_available())
 
     def test_false_when_no_install(self):
-        with mock.patch.object(tools.launch, "find_reaper",
+        with mock.patch.object(tools.RIG, "find",
                                side_effect=launch.NoReaperInstall("nope")):
             self.assertFalse(tools.check_reaper_available())
 
     def test_check_does_not_require_a_running_host(self):
         """setup exists to start REAPER; hiding it until REAPER runs would be a dead end."""
         called = mock.Mock(side_effect=AssertionError("check_fn must not probe the bridge"))
-        with mock.patch.object(tools.launch, "find_reaper", return_value=Path("C:/reaper.exe")), \
-             mock.patch.object(tools.bridge, "ping", called):
+        with mock.patch.object(tools.RIG, "find", return_value=Path("C:/reaper.exe")), \
+             mock.patch.object(tools.RIG, "ping", called):
             self.assertTrue(tools.check_reaper_available())
         called.assert_not_called()
 
 
 class TestPing(unittest.TestCase):
     def test_not_running(self):
-        with mock.patch.object(tools.bridge, "ping", side_effect=bridge.NoReaper("stale")), \
-             mock.patch.object(tools.launch, "find_reaper", return_value=Path("C:/reaper.exe")):
+        with mock.patch.object(tools.RIG, "ping", side_effect=bridge.NoReaper("stale")), \
+             mock.patch.object(tools.RIG, "find", return_value=Path("C:/reaper.exe")):
             out = tools.handle_ping({})
         self.assertIn("REAPER NOT RUNNING", out)
         self.assertIn("amphead_setup", out)
 
     def test_ok(self):
         payload = {"ok": True, "proto": 2, "version": "7.77/x64", "bridge": "2.0.0"}
-        with mock.patch.object(tools.bridge, "ping", return_value=payload):
+        with mock.patch.object(tools.RIG, "ping", return_value=payload):
             out = tools.handle_ping({})
         self.assertIn("ok=True", out)
         self.assertIn("proto=2", out)
@@ -54,16 +54,16 @@ class TestPing(unittest.TestCase):
 
     def test_blocked_blames_a_dialog_only_when_the_process_exists(self):
         exc = bridge.BridgeBlocked("REAPER is running but did not answer")
-        with mock.patch.object(tools.bridge, "ping", side_effect=exc), \
-             mock.patch.object(tools.launch, "running", return_value=True):
+        with mock.patch.object(tools.RIG, "ping", side_effect=exc), \
+             mock.patch.object(tools.RIG, "running", return_value=True):
             self.assertIn("REAPER BLOCKED", tools.handle_ping({}))
-        with mock.patch.object(tools.bridge, "ping", side_effect=exc), \
-             mock.patch.object(tools.launch, "running", return_value=False), \
-             mock.patch.object(tools.launch, "find_reaper", return_value=Path("C:/reaper.exe")):
+        with mock.patch.object(tools.RIG, "ping", side_effect=exc), \
+             mock.patch.object(tools.RIG, "running", return_value=False), \
+             mock.patch.object(tools.RIG, "find", return_value=Path("C:/reaper.exe")):
             self.assertIn("REAPER NOT RUNNING", tools.handle_ping({}))
 
     def test_old_bridge_is_named(self):
-        with mock.patch.object(tools.bridge, "ping", side_effect=bridge.OldBridge("proto 1")):
+        with mock.patch.object(tools.RIG, "ping", side_effect=bridge.OldBridge("proto 1")):
             out = tools.handle_ping({})
         self.assertIn("OLD BRIDGE", out)
         self.assertIn("proto 1", out)
@@ -74,7 +74,7 @@ class TestStatus(unittest.TestCase):
             "path": "", "tracks": 0, "device": {}}
 
     def test_down_state_explains_itself(self):
-        with mock.patch.object(tools.launch, "state", return_value=dict(self.DOWN)):
+        with mock.patch.object(tools.RIG, "state", return_value=dict(self.DOWN)):
             out = tools.handle_status({})
         self.assertIn("REAPER NOT RUNNING", out)
         self.assertIn("amphead_setup", out)
@@ -84,9 +84,9 @@ class TestStatus(unittest.TestCase):
                  "tracks": 1,
                  "device": {"buffer": "512", "rate": "44100", "latency_out_ms": 11.61,
                             "closed": False}}
-        with mock.patch.object(tools.launch, "state", return_value=state), \
-             mock.patch.object(tools.bridge, "master", return_value={"db": -60.0}), \
-             mock.patch.object(tools.bridge, "track_info",
+        with mock.patch.object(tools.RIG, "state", return_value=state), \
+             mock.patch.object(tools.RIG, "master", return_value={"db": -60.0}), \
+             mock.patch.object(tools.RIG, "track_info",
                                return_value={"armed": False, "monitor": False}):
             out = tools.handle_status({})
         self.assertIn("buffer=512", out)
@@ -98,15 +98,15 @@ class TestStatus(unittest.TestCase):
         state = {"bridge": "live", "project": "amphead.rpp", "path": "C:/rig/amphead.rpp",
                  "tracks": 0, "device": {}}
         asked = mock.Mock(side_effect=AssertionError("no tracks, no TRACK_INFO"))
-        with mock.patch.object(tools.launch, "state", return_value=state), \
-             mock.patch.object(tools.bridge, "master", return_value={"db": -60.0}), \
-             mock.patch.object(tools.bridge, "track_info", asked):
+        with mock.patch.object(tools.RIG, "state", return_value=state), \
+             mock.patch.object(tools.RIG, "master", return_value={"db": -60.0}), \
+             mock.patch.object(tools.RIG, "track_info", asked):
             out = tools.handle_status({})
         asked.assert_not_called()
         self.assertIn("rig=empty", out)
 
     def test_no_install(self):
-        with mock.patch.object(tools.launch, "state",
+        with mock.patch.object(tools.RIG, "state",
                                side_effect=launch.NoReaperInstall("gone")):
             self.assertIn("NO REAPER INSTALL", tools.handle_status({}))
 
@@ -120,11 +120,11 @@ class TestSetup(unittest.TestCase):
         # Setup repairs the install, which must never touch the real REAPER resource folder
         # from a test.
         self._inst = mock.patch.object(
-            tools.install_bridge, "install",
+            tools.RIG, "install",
             return_value=mock.Mock(bridge_path=Path("C:/res/Scripts/hermes_bridge/bridge.lua"),
                                    startup_action="adopted", warnings=[]))
         self._inst.start()
-        self._alive = mock.patch.object(tools.launch, "bridge_alive", return_value=True)
+        self._alive = mock.patch.object(tools.RIG, "host_alive", return_value=True)
         self._alive.start()
 
     def tearDown(self):
@@ -134,29 +134,29 @@ class TestSetup(unittest.TestCase):
         self.tmp.cleanup()
 
     def test_no_install_is_refused_before_any_work(self):
-        with mock.patch.object(tools.launch, "find_reaper",
+        with mock.patch.object(tools.RIG, "find",
                                side_effect=launch.NoReaperInstall("gone")):
             self.assertIn("NO REAPER INSTALL", tools.handle_setup({}))
 
     def test_setup_writes_the_rig_tab_and_parks_the_master(self):
-        seen: list[tuple[str, dict]] = []
+        seen: list[dict] = []
 
-        def record(cmd, **kwargs):
-            seen.append((cmd, kwargs))
-            if cmd == "MASTER_VOL":
-                return {"db": -60.0}
-            if cmd == "PROJ_OPEN":
-                return {"path": self.rig.as_posix()}
-            return {"ok": True}
+        def record(**kwargs):
+            seen.append(kwargs)
+            return {"db": -60.0}
 
-        with mock.patch.object(tools.launch, "find_reaper", return_value=Path("C:/reaper.exe")), \
-             mock.patch.object(tools.launch, "ensure_running", return_value={"ui": "minimized"}), \
-             mock.patch.object(tools.bridge, "open_rig",
+        with mock.patch.object(tools.RIG, "find", return_value=Path("C:/reaper.exe")), \
+             mock.patch.object(tools.RIG, "ensure", return_value={"ui": "minimized"}), \
+             mock.patch.object(tools.RIG, "open_rig",
                                return_value={"path": self.rig.as_posix()}), \
-             mock.patch.object(tools.bridge, "call", side_effect=record), \
-             mock.patch.object(tools.bridge, "tabs_list",
+             mock.patch.object(tools.RIG, "host_alive", return_value=True), \
+             mock.patch.object(tools.RIG, "master", side_effect=record), \
+             mock.patch.object(tools.RIG, "set_track_level") as parked, \
+             mock.patch.object(tools.RIG, "track_info",
+                               return_value={"recinput": "1", "armed": True, "monitor": True}), \
+             mock.patch.object(tools.RIG, "tabs_list",
                                side_effect=[["a"], ["a", "b"]]), \
-             mock.patch.object(tools.bridge, "arm",
+             mock.patch.object(tools.RIG, "arm",
                                side_effect=AssertionError("setup must never arm")):
             out = tools.handle_setup({})
 
@@ -164,9 +164,9 @@ class TestSetup(unittest.TestCase):
         self.assertIn("state=STANDBY", out)
         self.assertIn("master_db=-60.0", out)
         self.assertIn("tabs=1->2", out)
-        writes = dict(seen)
-        self.assertEqual(writes["MASTER_VOL"]["db"], -60.0)
-        self.assertEqual(writes["MASTER_VOL"]["expect"], self.rig.as_posix(),
+        self.assertEqual(seen[0]["db"], -60.0)
+        parked.assert_called_once_with(1, tools.SAFE_MASTER_DB, expect=self.rig.as_posix())
+        self.assertEqual(seen[0]["expect"], self.rig.as_posix(),
                          "every write must name the tab it targets")
 
     def test_setup_points_a_rig_with_no_input_at_input_1(self):
@@ -181,14 +181,14 @@ class TestSetup(unittest.TestCase):
         infos = [{"recinput": -1.0, "armed": True, "monitor": True},
                  {"recinput": 0.0, "armed": True, "monitor": True}]
 
-        with mock.patch.object(tools.launch, "find_reaper", return_value=Path("C:/reaper.exe")), \
-             mock.patch.object(tools.launch, "ensure_running", return_value={"ui": "minimized"}), \
-             mock.patch.object(tools.bridge, "open_rig",
+        with mock.patch.object(tools.RIG, "find", return_value=Path("C:/reaper.exe")), \
+             mock.patch.object(tools.RIG, "ensure", return_value={"ui": "minimized"}), \
+             mock.patch.object(tools.RIG, "open_rig",
                                return_value={"path": self.rig.as_posix()}), \
-             mock.patch.object(tools.bridge, "call", return_value={"db": -60.0}), \
-             mock.patch.object(tools.bridge, "tabs_list", side_effect=[["a"], ["a", "b"]]), \
-             mock.patch.object(tools.bridge, "track_info", side_effect=infos), \
-             mock.patch.object(tools.bridge, "set_input", side_effect=set_input):
+             mock.patch.object(tools.RIG, "master", return_value={"db": -60.0}), \
+             mock.patch.object(tools.RIG, "tabs_list", side_effect=[["a"], ["a", "b"]]), \
+             mock.patch.object(tools.RIG, "track_info", side_effect=infos), \
+             mock.patch.object(tools.RIG, "set_input", side_effect=set_input):
             out = tools.handle_setup({})
 
         self.assertIn("input=input 1 (setup pointed it at the first input)", out)
@@ -198,15 +198,15 @@ class TestSetup(unittest.TestCase):
                          "the repair is a write, so it names the tab it targets")
 
     def test_setup_leaves_a_rig_that_already_has_an_input_alone(self):
-        with mock.patch.object(tools.launch, "find_reaper", return_value=Path("C:/reaper.exe")), \
-             mock.patch.object(tools.launch, "ensure_running", return_value={"ui": "minimized"}), \
-             mock.patch.object(tools.bridge, "open_rig",
+        with mock.patch.object(tools.RIG, "find", return_value=Path("C:/reaper.exe")), \
+             mock.patch.object(tools.RIG, "ensure", return_value={"ui": "minimized"}), \
+             mock.patch.object(tools.RIG, "open_rig",
                                return_value={"path": self.rig.as_posix()}), \
-             mock.patch.object(tools.bridge, "call", return_value={"db": -60.0}), \
-             mock.patch.object(tools.bridge, "tabs_list", side_effect=[["a"], ["a", "b"]]), \
-             mock.patch.object(tools.bridge, "track_info",
+             mock.patch.object(tools.RIG, "master", return_value={"db": -60.0}), \
+             mock.patch.object(tools.RIG, "tabs_list", side_effect=[["a"], ["a", "b"]]), \
+             mock.patch.object(tools.RIG, "track_info",
                                return_value={"recinput": 1.0, "armed": True, "monitor": True}), \
-             mock.patch.object(tools.bridge, "set_input",
+             mock.patch.object(tools.RIG, "set_input",
                                side_effect=AssertionError("setup must not retarget a live input")):
             out = tools.handle_setup({})
 
@@ -219,18 +219,18 @@ class TestSetup(unittest.TestCase):
         order: list[str] = []
         self._inst.stop()
         self._inst = mock.patch.object(
-            tools.install_bridge, "install",
+            tools.RIG, "install",
             side_effect=lambda: (order.append("install"), mock.Mock(
                 bridge_path=Path("C:/res/bridge.lua"), startup_action="created", warnings=[]))[1])
         self._inst.start()
 
-        with mock.patch.object(tools.launch, "find_reaper", return_value=Path("C:/reaper.exe")), \
-             mock.patch.object(tools.launch, "ensure_running",
+        with mock.patch.object(tools.RIG, "find", return_value=Path("C:/reaper.exe")), \
+             mock.patch.object(tools.RIG, "ensure",
                                side_effect=lambda **kw: order.append("launch") or {"ui": "minimized"}), \
-             mock.patch.object(tools.bridge, "open_rig",
+             mock.patch.object(tools.RIG, "open_rig",
                                return_value={"path": self.rig.as_posix()}), \
-             mock.patch.object(tools.bridge, "call", return_value={"db": -60.0}), \
-             mock.patch.object(tools.bridge, "tabs_list", return_value=[]):
+             mock.patch.object(tools.RIG, "master", return_value={"db": -60.0}), \
+             mock.patch.object(tools.RIG, "tabs_list", return_value=[]):
             tools.handle_setup({})
 
         self.assertEqual(order[:2], ["install", "launch"],
@@ -238,12 +238,12 @@ class TestSetup(unittest.TestCase):
 
     def test_a_bridge_that_does_not_answer_is_reported_with_the_fix(self) -> None:
         self._alive.stop()
-        self._alive = mock.patch.object(tools.launch, "bridge_alive", return_value=False)
+        self._alive = mock.patch.object(tools.RIG, "host_alive", return_value=False)
         self._alive.start()
 
-        with mock.patch.object(tools.launch, "find_reaper", return_value=Path("C:/reaper.exe")), \
-             mock.patch.object(tools.launch, "ensure_running", return_value={"ui": "minimized"}), \
-             mock.patch.object(tools.bridge, "call", side_effect=AssertionError(
+        with mock.patch.object(tools.RIG, "find", return_value=Path("C:/reaper.exe")), \
+             mock.patch.object(tools.RIG, "ensure", return_value={"ui": "minimized"}), \
+             mock.patch.object(tools.RIG, "master", side_effect=AssertionError(
                  "nothing else may be attempted when the bridge is deaf")):
             out = tools.handle_setup({})
 
@@ -252,13 +252,13 @@ class TestSetup(unittest.TestCase):
         self.assertNotIn("state=STANDBY", out, "a deaf bridge is not standby")
 
     def test_setup_reports_a_guard_refusal_instead_of_claiming_success(self):
-        with mock.patch.object(tools.launch, "find_reaper", return_value=Path("C:/reaper.exe")), \
-             mock.patch.object(tools.launch, "ensure_running", return_value={"ui": "minimized"}), \
-             mock.patch.object(tools.bridge, "open_rig",
+        with mock.patch.object(tools.RIG, "find", return_value=Path("C:/reaper.exe")), \
+             mock.patch.object(tools.RIG, "ensure", return_value={"ui": "minimized"}), \
+             mock.patch.object(tools.RIG, "open_rig",
                                return_value={"path": self.rig.as_posix()}), \
-             mock.patch.object(tools.bridge, "call",
-                               side_effect=bridge.CommandFailed({"error": "guard required"})), \
-             mock.patch.object(tools.bridge, "tabs_list", return_value=[]):
+             mock.patch.object(tools.RIG, "master",
+                               side_effect=port.RigSaidNo("guard required")), \
+             mock.patch.object(tools.RIG, "tabs_list", return_value=[]):
             out = tools.handle_setup({})
         self.assertIn("SETUP FAILED", out)
         self.assertIn("guard required", out)
@@ -278,37 +278,38 @@ class TestTeardown(unittest.TestCase):
     def test_closes_only_the_rig_tab(self):
         seen = {}
 
-        def fake_close(cmd, **kwargs):
-            seen[cmd] = kwargs
+        def fake_close(path, **kwargs):
+            seen["path"] = path
+            seen.update(kwargs)
             return {"mode": "cleared", "tracks_removed": 3}
 
-        with mock.patch.object(tools.launch, "bridge_alive", return_value=True), \
-             mock.patch.object(tools.bridge, "call", side_effect=fake_close):
+        with mock.patch.object(tools.RIG, "host_alive", return_value=True), \
+             mock.patch.object(tools.RIG, "close_rig", side_effect=fake_close):
             out = tools.handle_teardown({})
-        self.assertEqual(seen["PROJ_TAB_CLOSE"]["expect"], self.rig.as_posix())
+        self.assertEqual(seen["path"], self.rig.as_posix())
         self.assertIn("mode=cleared", out)
         self.assertIn("tracks_removed=3", out)
         self.assertIn("leave running", out)
 
     def test_refusal_is_reported_not_hidden(self):
-        with mock.patch.object(tools.launch, "bridge_alive", return_value=True), \
-             mock.patch.object(tools.bridge, "call",
-                               side_effect=bridge.CommandFailed({"error": "wrong project"})):
+        with mock.patch.object(tools.RIG, "host_alive", return_value=True), \
+             mock.patch.object(tools.RIG, "close_rig",
+                               side_effect=port.RigSaidNo("wrong project")):
             out = tools.handle_teardown({})
         self.assertIn("refused", out)
         self.assertIn("wrong project", out)
 
     def test_host_left_alone_without_host_closed_by_default(self):
-        with mock.patch.object(tools.launch, "bridge_alive", return_value=False), \
-             mock.patch.object(tools.launch, "stop",
+        with mock.patch.object(tools.RIG, "host_alive", return_value=False), \
+             mock.patch.object(tools.RIG, "stop",
                                side_effect=AssertionError("must not quit REAPER by default")):
             out = tools.handle_teardown({})
         self.assertIn("leave running", out)
         self.assertIn("REAPER not running", out)
 
     def test_stop_host_quits_the_host(self):
-        with mock.patch.object(tools.launch, "bridge_alive", return_value=False), \
-             mock.patch.object(tools.launch, "stop", return_value=True):
+        with mock.patch.object(tools.RIG, "host_alive", return_value=False), \
+             mock.patch.object(tools.RIG, "stop", return_value=True):
             out = tools.handle_teardown({"stop_host": True})
         self.assertIn("host=stopped", out)
 
@@ -341,17 +342,17 @@ class TestLive(unittest.TestCase):
     TABS = [{"i": 0, "project": "rig.rpp", "path": "C:/x/rig.rpp", "active": True}]
 
     def test_refuses_without_confirm(self):
-        with mock.patch.object(tools.bridge, "tabs_list", return_value=self.TABS), \
-             mock.patch.object(tools.bridge, "master") as master:
+        with mock.patch.object(tools.RIG, "tabs_list", return_value=self.TABS), \
+             mock.patch.object(tools.RIG, "master") as master:
             out = tools.handle_live({"on": True, "master_db": -12})
         self.assertIn("REFUSED", out)
         master.assert_not_called()
 
     def test_off_disarms_and_parks_the_master(self):
-        with mock.patch.object(tools.bridge, "tabs_list", return_value=self.TABS), \
-             mock.patch.object(tools.bridge, "disarm",
+        with mock.patch.object(tools.RIG, "tabs_list", return_value=self.TABS), \
+             mock.patch.object(tools.RIG, "disarm",
                                return_value={"armed": False, "monitor": False}) as disarm, \
-             mock.patch.object(tools.bridge, "master", return_value={"db": -60.0}) as master:
+             mock.patch.object(tools.RIG, "master", return_value={"db": -60.0}) as master:
             out = tools.handle_live({"on": False})
         self.assertIn("live=False", out)
         self.assertIn("master_db=-60.0", out)
@@ -359,14 +360,14 @@ class TestLive(unittest.TestCase):
         self.assertEqual(master.call_args.kwargs["db"], -60.0)
 
     def test_on_sets_level_and_arms_without_touching_the_input(self):
-        with mock.patch.object(tools.bridge, "tabs_list", return_value=self.TABS), \
-             mock.patch.object(tools.bridge, "master", return_value={"db": -20.0}), \
-             mock.patch.object(tools.bridge, "set_input", return_value={"ok": True}) as set_input, \
-             mock.patch.object(tools.bridge, "track_info",
+        with mock.patch.object(tools.RIG, "tabs_list", return_value=self.TABS), \
+             mock.patch.object(tools.RIG, "master", return_value={"db": -20.0}), \
+             mock.patch.object(tools.RIG, "set_input", return_value={"ok": True}) as set_input, \
+             mock.patch.object(tools.RIG, "track_info",
                                return_value={"recinput": "2", "armed": True, "monitor": True}), \
-             mock.patch.object(tools.bridge, "arm",
+             mock.patch.object(tools.RIG, "arm",
                                return_value={"armed": True, "monitor": True}) as arm, \
-             mock.patch.object(tools.launch, "ensure_audio",
+             mock.patch.object(tools.RIG, "ensure_audio",
                                return_value={"inputs": 2, "output_latency_ms": 11.6}):
             out = tools.handle_live({"on": True, "confirm": True, "master_db": -20})
         self.assertIn("live=True", out)
@@ -381,23 +382,23 @@ class TestLive(unittest.TestCase):
         self.assertTrue(arm.call_args.kwargs["allow_loud"])
 
     def test_explicit_input_still_retargets_the_track(self):
-        with mock.patch.object(tools.bridge, "tabs_list", return_value=self.TABS), \
-             mock.patch.object(tools.bridge, "master", return_value={"db": -20.0}), \
-             mock.patch.object(tools.bridge, "set_input", return_value={"ok": True}) as set_input, \
-             mock.patch.object(tools.bridge, "track_info", return_value={"recinput": "1"}), \
-             mock.patch.object(tools.bridge, "arm", return_value={"armed": True, "monitor": True}), \
-             mock.patch.object(tools.launch, "ensure_audio", return_value={"inputs": 2}):
+        with mock.patch.object(tools.RIG, "tabs_list", return_value=self.TABS), \
+             mock.patch.object(tools.RIG, "master", return_value={"db": -20.0}), \
+             mock.patch.object(tools.RIG, "set_input", return_value={"ok": True}) as set_input, \
+             mock.patch.object(tools.RIG, "track_info", return_value={"recinput": "1"}), \
+             mock.patch.object(tools.RIG, "arm", return_value={"armed": True, "monitor": True}), \
+             mock.patch.object(tools.RIG, "ensure_audio", return_value={"inputs": 2}):
             out = tools.handle_live({"on": True, "confirm": True, "input": "1"})
         self.assertEqual(set_input.call_args.kwargs["spec"], "1")
         self.assertIn("input_changed=True", out)
 
     def test_every_write_carries_the_active_project_as_expect(self):
-        with mock.patch.object(tools.bridge, "tabs_list", return_value=self.TABS), \
-             mock.patch.object(tools.bridge, "master", return_value={"db": -20.0}) as master, \
-             mock.patch.object(tools.bridge, "set_input", return_value={"ok": True}) as set_input, \
-             mock.patch.object(tools.bridge, "track_info", return_value={"recinput": "2"}), \
-             mock.patch.object(tools.bridge, "arm", return_value={"armed": True}) as arm, \
-             mock.patch.object(tools.launch, "ensure_audio", return_value={"inputs": 2}):
+        with mock.patch.object(tools.RIG, "tabs_list", return_value=self.TABS), \
+             mock.patch.object(tools.RIG, "master", return_value={"db": -20.0}) as master, \
+             mock.patch.object(tools.RIG, "set_input", return_value={"ok": True}) as set_input, \
+             mock.patch.object(tools.RIG, "track_info", return_value={"recinput": "2"}), \
+             mock.patch.object(tools.RIG, "arm", return_value={"armed": True}) as arm, \
+             mock.patch.object(tools.RIG, "ensure_audio", return_value={"inputs": 2}):
             tools.handle_live({"on": True, "confirm": True, "input": "2"})
         for call in (set_input, arm):
             self.assertEqual(call.call_args.kwargs.get("expect"), "C:/x/rig.rpp")
@@ -405,17 +406,17 @@ class TestLive(unittest.TestCase):
         self.assertEqual(master.call_args_list[0].kwargs.get("expect"), "C:/x/rig.rpp")
 
     def test_closed_device_is_named_instead_of_a_bare_value_error(self):
-        with mock.patch.object(tools.bridge, "tabs_list", return_value=self.TABS), \
-             mock.patch.object(tools.launch, "ensure_audio",
+        with mock.patch.object(tools.RIG, "tabs_list", return_value=self.TABS), \
+             mock.patch.object(tools.RIG, "ensure_audio",
                                return_value={"inputs": 0, "device_closed": True}), \
-             mock.patch.object(tools.bridge, "set_input") as set_input:
+             mock.patch.object(tools.RIG, "set_input") as set_input:
             out = tools.handle_live({"on": True, "confirm": True})
         self.assertIn("NOT LIVE", out)
         self.assertIn("audio device is closed", out)
         set_input.assert_not_called()
 
     def test_no_open_project(self):
-        with mock.patch.object(tools.bridge, "tabs_list", return_value=[]):
+        with mock.patch.object(tools.RIG, "tabs_list", return_value=[]):
             out = tools.handle_live({"on": True, "confirm": True})
         self.assertIn("NOT LIVE", out)
         self.assertIn("no project", out)

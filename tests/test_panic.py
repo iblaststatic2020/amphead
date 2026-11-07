@@ -14,7 +14,7 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from amphead import bridge, tools  # noqa: E402
+from amphead import bridge, port, tools  # noqa: E402
 
 
 class FakeHost:
@@ -65,11 +65,11 @@ class PanicCase(unittest.TestCase):
     def run_panic(self, host, args=None):
         patches = [
             mock.patch.object(tools, "active_path", return_value="C:/rig/amphead.rpp"),
-            mock.patch.object(tools.bridge, "master", host.master),
-            mock.patch.object(tools.bridge, "fx_list", host.fx_list),
-            mock.patch.object(tools.bridge, "fx_bypass", host.fx_bypass),
-            mock.patch.object(tools.bridge, "disarm", host.disarm),
-            mock.patch.object(tools.bridge, "track_info", host.track_info),
+            mock.patch.object(tools.RIG, "master", host.master),
+            mock.patch.object(tools.RIG, "fx_list", host.fx_list),
+            mock.patch.object(tools.RIG, "fx_bypass", host.fx_bypass),
+            mock.patch.object(tools.RIG, "disarm", host.disarm),
+            mock.patch.object(tools.RIG, "track_info", host.track_info),
         ]
         for p in patches:
             p.start()

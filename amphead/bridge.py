@@ -23,37 +23,39 @@ from pathlib import Path
 from typing import Any, Iterable
 from urllib.parse import quote, unquote
 
+from . import port
+
 PROTO = 2
 DEFAULT_TIMEOUT = 2.0
 LOCK_TIMEOUT = 10.0      # how long to wait for the slot
 HEARTBEAT_MAX_AGE = 5.0
 
 
-class ReaperError(Exception):
+class ReaperError(port.RigError):
     """Base class for every bridge failure."""
 
 
-class NoReaper(ReaperError):
+class NoReaper(port.NoRig, ReaperError):
     """No bridge answering and no fresh heartbeat: REAPER is closed or the script is not loaded."""
 
 
-class BridgeBlocked(ReaperError):
+class BridgeBlocked(port.RigBlocked, ReaperError):
     """Heartbeat is fresh but no answer arrived: REAPER's main thread is owned by a dialog."""
 
 
-class OldBridge(ReaperError):
+class OldBridge(port.OldRig, ReaperError):
     """The installed bridge speaks a different protocol than this client."""
 
 
-class BridgeTimeout(ReaperError):
+class BridgeTimeout(port.RigTimeout, ReaperError):
     """The request was handed over and the bridge is alive, but no answer arrived in time."""
 
 
-class BadResponse(ReaperError):
+class BadResponse(port.RigError):
     """The response file is missing, empty, truncated, not JSON, or answers a different id."""
 
 
-class CommandFailed(ReaperError):
+class CommandFailed(port.RigSaidNo, ReaperError):
     """The bridge answered ``ok: false``."""
 
     def __init__(self, payload: dict, message: str | None = None):

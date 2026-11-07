@@ -13,13 +13,15 @@ from typing import Any
 import math
 import time
 
-from . import bridge, install_bridge, launch, verdict
-from .rigfile import write_template
+from . import port, verdict
 
 TOOLSET = "amphead"
 
+#: The rig this process talks to. Swap AMPHEAD_ENGINE to swap the backend.
+RIG = port.active()
+
 # Below this the master is quiet enough that arming cannot howl. Same floor the bridge enforces.
-SAFE_MASTER_DB = bridge.ARM_SAFE_MASTER_DB
+SAFE_MASTER_DB = port.SAFE_MASTER_DB
 
 
 def rig_path() -> Path:
@@ -132,9 +134,9 @@ def check_reaper_available() -> bool:
     """True when REAPER is installed. Deliberately does not require it to be running: setup's
     whole job is to start it, so requiring a live host here would hide the tool that starts it."""
     try:
-        launch.find_reaper()
+        RIG.find()
         return True
-    except launch.NoReaperInstall:
+    except port.NoRig:
         return False
 
 
@@ -169,20 +171,20 @@ def _fmt(fields: list[tuple[str, Any]]) -> str:
 
 def handle_ping(args: dict[str, Any], **_kw) -> str:
     try:
-        info = bridge.ping()
-    except bridge.NoReaper:
-        return ("REAPER NOT RUNNING: installed at " + str(launch.find_reaper())
+        info = RIG.ping()
+    except port.NoRig:
+        return ("REAPER NOT RUNNING: installed at " + str(RIG.find())
                 + "; call amphead_setup to start it")
-    except bridge.OldBridge as exc:
+    except port.OldRig as exc:
         return f"OLD BRIDGE: {exc}"
-    except bridge.BridgeBlocked as exc:
+    except port.RigBlocked as exc:
         # A heartbeat can outlive the process by a few seconds. Ask the OS before blaming a dialog.
-        if not launch.running():
-            return ("REAPER NOT RUNNING: installed at " + str(launch.find_reaper())
+        if not RIG.running():
+            return ("REAPER NOT RUNNING: installed at " + str(RIG.find())
                     + "; call amphead_setup to start it")
         return f"REAPER BLOCKED: {exc}"
-    except bridge.ReaperError as exc:
-        if not launch.running():
+    except port.RigError as exc:
+        if not RIG.running():
             return "REAPER NOT RUNNING: call amphead_setup to start it"
         return f"BRIDGE ERROR: {exc}"
     return _fmt([("ok", info.get("ok")), ("proto", info.get("proto")),
@@ -191,8 +193,8 @@ def handle_ping(args: dict[str, Any], **_kw) -> str:
 
 def handle_status(args: dict[str, Any], **_kw) -> str:
     try:
-        state = launch.state()
-    except launch.NoReaperInstall:
+        state = RIG.state()
+    except port.NoRig:
         return "NO REAPER INSTALL: neither REAPER_EXE nor a standard install path resolved"
     if state.get("bridge") != "live":
         label = "REAPER BLOCKED" if state.get("bridge") == "down" else "REAPER NOT RUNNING"
@@ -208,13 +210,13 @@ def handle_status(args: dict[str, Any], **_kw) -> str:
                ("out_ms", device.get("latency_out_ms")),
                ("device", "closed" if device.get("closed") else "open")]
     try:
-        fields.append(("master_db", bridge.master().get("db")))
+        fields.append(("master_db", RIG.master().get("db")))
         if int(state.get("tracks") or 0) >= 1:
-            info = bridge.track_info(1)
+            info = RIG.track_info(1)
             fields += [("armed", info.get("armed")), ("monitor", info.get("monitor"))]
         else:
             fields.append(("rig", "empty"))
-    except bridge.ReaperError:
+    except port.RigError:
         pass
     return _fmt(fields)
 
@@ -222,8 +224,8 @@ def handle_status(args: dict[str, Any], **_kw) -> str:
 def handle_setup(args: dict[str, Any], **_kw) -> str:
     path = rig_path()
     try:
-        launch.find_reaper()
-    except launch.NoReaperInstall as exc:
+        RIG.find()
+    except port.NoRig as exc:
         return f"NO REAPER INSTALL: {exc}"
     tempo = float(args.get("tempo") or 120.0)
     hide = bool(args.get("hide"))
@@ -231,12 +233,12 @@ def handle_setup(args: dict[str, Any], **_kw) -> str:
         # Setup owns the install as well as the rig: a pane on a machine whose resource folder
         # was rebuilt, or whose REAPER updated and dropped the startup script, should repair
         # itself rather than tell the player to run a command line.
-        installed = install_bridge.install()
-    except install_bridge.InstallError as exc:
+        installed = RIG.install()
+    except port.RigError as exc:
         return f"INSTALL FAILED: {exc}"
     try:
-        running = launch.ensure_running(hidden_desktop=hide)
-        if not launch.bridge_alive():
+        running = RIG.ensure(hidden_desktop=hide)
+        if not RIG.host_alive():
             return _fmt([
                 ("installed", f"{installed.bridge_path} ({installed.startup_action})"),
                 ("state", "BRIDGE NOT ANSWERING"),
@@ -244,38 +246,46 @@ def handle_setup(args: dict[str, Any], **_kw) -> str:
             ])
         if not path.is_file():
             path.parent.mkdir(parents=True, exist_ok=True)
-            write_template(path, tempo=tempo)
-        tabs_before = len(bridge.tabs_list())
-        opened = bridge.open_rig(path.as_posix(), new="1")
+            RIG.prepare_file(path, tempo=tempo)
+        tabs_before = len(RIG.tabs_list())
+        opened = RIG.open_rig(path.as_posix(), new="1")
         rig = opened.get("path") or path.as_posix()
         # The guard is on for file-backed tabs, our own rig included: a write must name the tab it
         # intends to touch, so a stale handle can never land on somebody's song.
-        lowered = bridge.call("MASTER_VOL", db=SAFE_MASTER_DB, expect=rig)
-        tabs_after = len(bridge.tabs_list())
+        lowered = RIG.set_master(SAFE_MASTER_DB, expect=rig)
+        # Boot is silent by construction: the master and the track fader both come up at the
+        # floor, so a rig that boots armed still cannot pass signal until a person raises a level.
+        track_db = lowered.get("db", SAFE_MASTER_DB)
+        try:
+            RIG.set_track_level(1, SAFE_MASTER_DB, expect=rig)
+        except port.RigError as exc:
+            track_db = f"not parked ({exc})"
+        tabs_after = len(RIG.tabs_list())
         # Report the track as it actually is, not as the plan says it should be: the template arms
         # and monitors so the chain is testable, and the parked master is what keeps that silent.
-        info = bridge.track_info(1)
+        info = RIG.track_info(1)
         # A track pointed at no input reads in the verdict as a dead cable, and looks to a player
         # like a broken lead. Setup points a rig that has none at the first input, and reports the
         # input the way a person counts it, never as the zero REAPER stores for channel one.
         held = info.get("recinput")
-        input_line = bridge.describe_input(held)
+        input_line = RIG.describe_input(held)
         repaired = False
         if _no_input(held):
             try:
-                bridge.set_input(track=1, spec=1, expect=rig)
-                input_line = bridge.describe_input(bridge.track_info(1).get("recinput"))
+                RIG.set_input(track=1, spec=1, expect=rig)
+                input_line = RIG.describe_input(RIG.track_info(1).get("recinput"))
                 repaired = True
-            except bridge.ReaperError as exc:
+            except port.RigError as exc:
                 input_line = f"none (refused: {exc})"
-    except bridge.ReaperError as exc:
+    except port.RigError as exc:
         return f"SETUP FAILED: {exc}"
-    except launch.NoReaperInstall as exc:
+    except port.NoRig as exc:
         return f"NO REAPER INSTALL: {exc}"
     return _fmt([
         ("state", "STANDBY"), ("ui", running.get("ui")), ("rig", path.as_posix()),
         ("tabs", f"{tabs_before}->{tabs_after}"),
         ("master_db", lowered.get("db")),
+        ("track_db", track_db),
         ("input", f"{input_line} (setup pointed it at the first input)" if repaired else input_line),
         ("armed", f"{info.get('armed')} (silent: master parked at {lowered.get('db')} dB)"),
         ("monitor", info.get("monitor")),
@@ -288,13 +298,13 @@ def handle_teardown(args: dict[str, Any], **_kw) -> str:
     path = rig_path()
     closed = "no rig tab (REAPER not running)"
     try:
-        if launch.bridge_alive():
-            payload = bridge.call("PROJ_TAB_CLOSE", expect=path.as_posix(), timeout=20.0)
+        if RIG.host_alive():
+            payload = RIG.close_rig(path.as_posix(), timeout=20.0)
             closed = f"mode={payload.get('mode')} tracks_removed={payload.get('tracks_removed')}"
-    except bridge.ReaperError as exc:
+    except port.RigError as exc:
         closed = f"refused: {exc}"
     if stop_host:
-        gone = launch.stop()
+        gone = RIG.stop()
         return _fmt([("rig", closed), ("host", "stopped" if gone else "still running")])
     return _fmt([("rig", closed), ("host", "leave running")])
 
@@ -320,7 +330,7 @@ def handle_tone(args: dict[str, Any], **_kw) -> str:
             return _fmt([("preset", name), ("why", reason), ("apply", "false (dry run)")])
         try:
             applied = presets.apply(name)
-        except bridge.ReaperError:
+        except port.RigError:
             applied = None
         except (LookupError, ValueError):
             applied = None
@@ -355,11 +365,11 @@ def handle_tone(args: dict[str, Any], **_kw) -> str:
 
     try:
         applied = tones.apply_to_live(arch)
-    except bridge.NoReaper:
+    except port.NoRig:
         return "\n".join(lines) + "\nnot applied: REAPER is not running, call amphead_setup first"
     except tones.NoRig as exc:
         return "\n".join(lines) + f"\nnot applied: {exc}"
-    except bridge.ReaperError as exc:
+    except port.RigError as exc:
         return "\n".join(lines) + f"\nnot applied: {exc}"
 
     lines.append(_fmt([("loaded", Path(applied.project).name), ("track", applied.track),
@@ -371,7 +381,7 @@ def handle_tone(args: dict[str, Any], **_kw) -> str:
 
 def active_path() -> str | None:
     """The project the user is looking at. Every write carries it as `expect`."""
-    return bridge.active_project()
+    return port.active_project(RIG)
 
 
 def handle_live(args: dict[str, Any], **_kw) -> str:
@@ -380,18 +390,18 @@ def handle_live(args: dict[str, Any], **_kw) -> str:
     track = int(args.get("track") or 1)
     try:
         expect = active_path()
-    except bridge.NoReaper:
+    except port.NoRig:
         return "NOT LIVE: REAPER is not running, call amphead_setup first"
     if expect is None:
         return "NOT LIVE: no project is open, call amphead_setup first"
 
     if not on:
         try:
-            payload = bridge.disarm(track=track, expect=expect)
-            level = bridge.master(db=STANDBY_DB, expect=expect)
-        except bridge.NoReaper:
+            payload = RIG.disarm(track=track, expect=expect)
+            level = RIG.set_master(db=STANDBY_DB, expect=expect)
+        except port.NoRig:
             return "NOT LIVE: REAPER is not running, call amphead_setup first"
-        except bridge.ReaperError as exc:
+        except port.RigError as exc:
             return f"NOT LIVE: {exc}"
         return _fmt([("live", False), ("armed", payload.get("armed")),
                      ("monitor", payload.get("monitor")), ("master_db", level.get("db"))])
@@ -410,28 +420,28 @@ def handle_live(args: dict[str, Any], **_kw) -> str:
     # REAPER can park the device closed while it sits idle, and a closed device has zero inputs,
     # so the input write would fail for a reason that has nothing to do with the player's rig.
     try:
-        device = launch.ensure_audio()
-    except bridge.ReaperError as exc:
+        device = RIG.ensure_audio()
+    except port.RigError as exc:
         return f"NOT LIVE: could not open the audio device: {exc}"
     if int(device.get("inputs") or 0) < 1:
         return ("NOT LIVE: REAPER's audio device is closed, so the track has no input to point at. "
                 "Open it once in Options > Preferences > Audio > Device, then call this again.")
 
     try:
-        bridge.master(db=db, expect=expect)
+        RIG.set_master(db=db, expect=expect)
         if retarget:
-            bridge.set_input(track=track, spec=spec, expect=expect)
-        armed = bridge.arm(track=track, monitor=True, allow_loud=True, expect=expect)
-        level = bridge.master()
-        now = bridge.track_info(track=track, expect=expect)
-    except bridge.NoReaper:
+            RIG.set_input(track=track, spec=spec, expect=expect)
+        armed = RIG.arm(track=track, monitor=True, allow_loud=True, expect=expect)
+        level = RIG.master()
+        now = RIG.track_info(track=track, expect=expect)
+    except port.NoRig:
         return "NOT LIVE: REAPER is not running, call amphead_setup first"
-    except bridge.ReaperError as exc:
+    except port.RigError as exc:
         return f"NOT LIVE: {exc}"
 
     return _fmt([("live", True), ("track", track), ("armed", armed.get("armed")),
                  ("monitor", armed.get("monitor")), ("master_db", level.get("db")),
-                 ("input", bridge.describe_input(now.get("recinput", spec if retarget else ""))),
+                 ("input", RIG.describe_input(now.get("recinput", spec if retarget else ""))),
                  ("input_changed", retarget),
                  ("clips_at", device.get("output_latency_ms"))])
 
@@ -456,8 +466,8 @@ def handle_ready(args: dict[str, Any], **_kw) -> str:
     track = int(args.get("track") or 1)
     settle = int(args.get("settle_ms", 600))
     try:
-        state = launch.state()
-    except launch.NoReaperInstall:
+        state = RIG.state()
+    except port.NoRig:
         return ("verdict=NO REAPER INSTALL | reason=REAPER is not installed on this machine | "
                 "problems=REAPER is missing")
 
@@ -466,20 +476,20 @@ def handle_ready(args: dict[str, Any], **_kw) -> str:
     reading: dict = {}
     if state.get("bridge") == "live":
         try:
-            info = bridge.track_info(track=track)
+            info = RIG.track_info(track=track)
             chain = [{"name": str(fx.get("name")), "enabled": bool(fx.get("enabled", True))}
-                     for fx in bridge.fx_list(track=track)]
+                     for fx in RIG.fx_list(track=track)]
             # Listen for a moment: a single frame of silence is not the same as a dead input.
             deadline = time.monotonic() + max(0, settle) / 1000.0
             while True:
-                sample = bridge.meter(track=track)
+                sample = RIG.meter(track=track)
                 reading = {"l": max(float(reading.get("l") or 0.0), float(sample.get("l") or 0.0)),
                            "r": max(float(reading.get("r") or 0.0), float(sample.get("r") or 0.0)),
                            "clip": bool(reading.get("clip") or sample.get("clip"))}
                 # The master belongs in the verdict: an armed rig parked at -60 dB is silent.
                 try:
-                    master_db = bridge.master().get("db")
-                except bridge.ReaperError:
+                    master_db = RIG.master().get("db")
+                except port.RigError:
                     master_db = None
                 if master_db is not None:
                     reading["master_db"] = master_db
@@ -487,14 +497,14 @@ def handle_ready(args: dict[str, Any], **_kw) -> str:
                 if loud or reading["clip"] or time.monotonic() >= deadline:
                     break
                 time.sleep(0.05)
-        except bridge.NoReaper:
+        except port.NoRig:
             # Nothing answered mid-read. Ask the client which silence this is: a quit, a dialog,
             # or a bridge that is not loaded at all. Guessing here is how the pane ends up saying
             # REAPER NOT RUNNING to somebody staring at an open REAPER.
-            kind, sentence = bridge.liveness()
+            kind, sentence = RIG.liveness()
             state = {"bridge": {"not-loaded": "gone", "not-running": "not-running"}.get(kind, "down"),
                      "reason": sentence}
-        except bridge.ReaperError as exc:
+        except port.RigError as exc:
             # A read can fail two ways: the wire is wedged (BUSY), or the project in front of
             # REAPER has no track 1 because it is not the rig. state() already decided which one.
             if state.get("rig_tab") is False:
@@ -510,7 +520,7 @@ def handle_ready(args: dict[str, Any], **_kw) -> str:
     if state.get("bridge") == "live":
         fields += [("track", track), ("armed", bool(info.get("armed"))),
                    ("monitor", bool(info.get("monitor"))),
-                   ("input", bridge.describe_input(info.get("recinput"))),
+                   ("input", RIG.describe_input(info.get("recinput"))),
                    ("chain", len(chain)), ("live_fx", len([f for f in chain if f["enabled"]])),
                    ("peak_db", _db_level(max(reading.get("l") or 0.0, reading.get("r") or 0.0))),
                    ("out_ms", (state.get("device") or {}).get("latency_out_ms") or 0.0)]
@@ -523,7 +533,7 @@ def handle_panic(args: dict[str, Any], **_kw) -> str:
     restore = bool(args.get("restore"))
     try:
         expect = active_path()
-    except bridge.NoReaper:
+    except port.NoRig:
         return "NOT PANICKED: REAPER is not running, so nothing can reach the speakers anyway"
     if expect is None:
         return "NOT PANICKED: no project is open, so there is no rig to silence"
@@ -531,32 +541,32 @@ def handle_panic(args: dict[str, Any], **_kw) -> str:
     try:
         if restore:
             db = max(STANDBY_DB, min(0.0, float(args.get("master_db", -18.0))))
-            bridge.master(db=db, expect=expect)
+            RIG.set_master(db=db, expect=expect)
         else:
             # Master first: it is the one control that cannot fail because a plugin refused it.
-            bridge.master(db=STANDBY_DB, expect=expect)
+            RIG.set_master(db=STANDBY_DB, expect=expect)
 
         # One stubborn plugin must not stop the others from closing: keep going and report the
         # stragglers by name, because "panicked, except the amp" is the sentence that saves ears.
-        chain = bridge.fx_list(track=track, expect=expect)
+        chain = RIG.fx_list(track=track, expect=expect)
         refused: list[str] = []
         for fx in chain:
             try:
-                bridge.fx_bypass(track=track, fx=int(fx["i"]), on=not restore, expect=expect)
-            except bridge.ReaperError as exc:
+                RIG.fx_bypass(track=track, fx=int(fx["i"]), on=not restore, expect=expect)
+            except port.RigError as exc:
                 refused.append(f"{fx.get('name')} ({exc})")
 
         if restore:
-            armed = bridge.track_info(track=track, expect=expect)
+            armed = RIG.track_info(track=track, expect=expect)
         else:
-            bridge.disarm(track=track, expect=expect)
-            armed = bridge.track_info(track=track, expect=expect)
+            RIG.disarm(track=track, expect=expect)
+            armed = RIG.track_info(track=track, expect=expect)
 
-        level = bridge.master()
-        after = bridge.fx_list(track=track, expect=expect)
-    except bridge.NoReaper:
+        level = RIG.master()
+        after = RIG.fx_list(track=track, expect=expect)
+    except port.NoRig:
         return "NOT PANICKED: REAPER stopped answering mid-call"
-    except bridge.ReaperError as exc:
+    except port.RigError as exc:
         return f"PANIC INCOMPLETE: {exc}. Park the master by hand before you keep playing."
 
     bypassed = [fx.get("name") for fx in after if not fx.get("enabled")]
@@ -621,12 +631,12 @@ def handle_set(args: dict[str, Any], **_kw) -> str:
             mode=str(args.get("mode") or "auto"),
             unit=args.get("unit"),
         )
-    except bridge.NoReaper:
+    except port.NoRig:
         return "NOT SET: REAPER is not running, call amphead_setup first"
     except rig.WriteRefused as exc:
         # Before ReaperError: a refusal is a rig failure, not "the host would not answer".
         return f"REFUSED: {exc}"
-    except bridge.ReaperError as exc:
+    except port.RigError as exc:
         return f"NOT SET: {exc}"
     except LookupError as exc:
         return f"NOT SET: {exc}"
@@ -676,11 +686,11 @@ def handle_build(args: dict[str, Any], **_kw) -> str:
             arm=bool(args.get("arm")),
             force=bool(args.get("force")),
         )
-    except bridge.NoReaper:
+    except port.NoRig:
         return "NOT BUILT: REAPER is not running, call amphead_setup first"
     except rig.RigRefused as exc:
         return f"NOT BUILT: {exc}"
-    except bridge.ReaperError as exc:
+    except port.RigError as exc:
         return f"NOT BUILT: {exc}"
     except (TypeError, ValueError) as exc:
         return f"NOT BUILT: {exc}"
@@ -689,7 +699,7 @@ def handle_build(args: dict[str, Any], **_kw) -> str:
         ("built", True), ("rig", built.path), ("track", f"{built.track} {built.track_name}"),
         ("amp", f"{built.amp} at fx {built.amp_index}"), ("chain", len(built.chain)),
         ("db", built.db), ("armed", built.armed), ("monitor", built.monitor),
-        ("input", bridge.describe_input(built.input) if built.input is not None else "none (as asked)"),
+        ("input", RIG.describe_input(built.input) if built.input is not None else "none (as asked)"),
         ("seconds", built.seconds),
     ]
     if built.pre_fx:
@@ -727,7 +737,7 @@ def handle_preset(args: dict[str, Any], **_kw) -> str:
 
     try:
         applied = presets.apply(str(name), track=int(args.get("track") or 1))
-    except bridge.NoReaper:
+    except port.NoRig:
         return "NOT APPLIED: REAPER is not running, call amphead_setup first"
     except LookupError as exc:
         return f"NOT APPLIED: {exc}"
@@ -735,7 +745,7 @@ def handle_preset(args: dict[str, Any], **_kw) -> str:
         return f"NOT APPLIED: {exc}"
     except rig.RigRefused as exc:
         return f"NOT APPLIED: {exc}"
-    except bridge.ReaperError as exc:
+    except port.RigError as exc:
         return f"NOT APPLIED: {exc}"
 
     lines = presets.diff_lines(applied)
@@ -790,16 +800,16 @@ def handle_ab(args: dict[str, Any], **_kw) -> str:
 
     try:
         snap = snapshots.capture(label or "a", track=track)
-    except bridge.NoReaper:
+    except port.NoRig:
         return "NOT SNAPSHOT: REAPER is not running, call amphead_setup first"
-    except bridge.ReaperError as exc:
+    except port.RigError as exc:
         return f"NOT SNAPSHOT: {exc}"
     return snap.sentence() + f"\nnext: amphead_ab action=compare label={snap.label} other=<later>"
 
 
 def run_call(cmd: str, **kwargs) -> dict:
     """Small indirection so tests can stub the wire without a live host."""
-    return bridge.call(cmd, **kwargs)
+    return RIG.debug_call(cmd, **kwargs)
 
 
 TOOLS = (

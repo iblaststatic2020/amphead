@@ -17,7 +17,7 @@ import sys
 import time
 from pathlib import Path
 
-from . import bridge
+from . import bridge, port
 
 WINDOWS_CANDIDATES = [
     r"C:\Program Files\REAPER (x64)\reaper.exe",
@@ -29,7 +29,7 @@ WINDOWS_CANDIDATES = [
 HIDDEN_LAUNCHER = Path(__file__).resolve().parents[1] / "scripts" / "reaper_hidden.ps1"
 
 
-class NoReaperInstall(RuntimeError):
+class NoReaperInstall(port.NoRig):
     """REAPER is not installed where we can find it."""
 
 

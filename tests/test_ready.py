@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from amphead import tools, verdict
+from amphead import port, tools, verdict
 from amphead.fake_reaper import FakeReaper
 
 
@@ -104,11 +104,11 @@ class TestJudge(unittest.TestCase):
 
 class TestReadyTool(unittest.TestCase):
     def test_live_rig_reports_ready_with_the_numbers_behind_it(self):
-        with mock.patch.object(tools.launch, "state", return_value=live()), \
-             mock.patch.object(tools.bridge, "track_info", return_value=track()), \
-             mock.patch.object(tools.bridge, "fx_list", return_value=CHAIN), \
-             mock.patch.object(tools.bridge, "master", return_value={"db": -18.0}), \
-             mock.patch.object(tools.bridge, "meter", return_value=read(0.2)) as meter:
+        with mock.patch.object(tools.RIG, "state", return_value=live()), \
+             mock.patch.object(tools.RIG, "track_info", return_value=track()), \
+             mock.patch.object(tools.RIG, "fx_list", return_value=CHAIN), \
+             mock.patch.object(tools.RIG, "master", return_value={"db": -18.0}), \
+             mock.patch.object(tools.RIG, "meter", return_value=read(0.2)) as meter:
             out = tools.handle_ready({"settle_ms": 0})
         self.assertIn("verdict=READY", out)
         self.assertIn("input=input 1", out)
@@ -118,47 +118,47 @@ class TestReadyTool(unittest.TestCase):
 
     def test_it_listens_again_before_calling_a_quiet_rig_silent(self):
         samples = [read(0.0), read(0.0), read(0.3)]
-        with mock.patch.object(tools.launch, "state", return_value=live()), \
-             mock.patch.object(tools.bridge, "track_info", return_value=track()), \
-             mock.patch.object(tools.bridge, "fx_list", return_value=CHAIN), \
-             mock.patch.object(tools.bridge, "master", return_value={"db": -18.0}), \
-             mock.patch.object(tools.bridge, "meter", side_effect=samples) as meter:
+        with mock.patch.object(tools.RIG, "state", return_value=live()), \
+             mock.patch.object(tools.RIG, "track_info", return_value=track()), \
+             mock.patch.object(tools.RIG, "fx_list", return_value=CHAIN), \
+             mock.patch.object(tools.RIG, "master", return_value={"db": -18.0}), \
+             mock.patch.object(tools.RIG, "meter", side_effect=samples) as meter:
             out = tools.handle_ready({"settle_ms": 500})
         self.assertIn("verdict=READY", out)
         self.assertEqual(meter.call_count, 3)
 
     def test_an_armed_rig_with_the_master_parked_is_not_called_ready(self):
-        with mock.patch.object(tools.launch, "state", return_value=live()), \
-             mock.patch.object(tools.bridge, "track_info", return_value=track()), \
-             mock.patch.object(tools.bridge, "fx_list", return_value=CHAIN), \
-             mock.patch.object(tools.bridge, "master", return_value={"db": -60.0}), \
-             mock.patch.object(tools.bridge, "meter", return_value=read(0.2)):
+        with mock.patch.object(tools.RIG, "state", return_value=live()), \
+             mock.patch.object(tools.RIG, "track_info", return_value=track()), \
+             mock.patch.object(tools.RIG, "fx_list", return_value=CHAIN), \
+             mock.patch.object(tools.RIG, "master", return_value={"db": -60.0}), \
+             mock.patch.object(tools.RIG, "meter", return_value=read(0.2)):
             out = tools.handle_ready({"settle_ms": 0})
         self.assertIn("verdict=STANDBY", out)
         self.assertIn("master is parked", out)
 
     def test_a_quiet_rig_with_no_reaper_device_is_not_called_ready(self):
-        with mock.patch.object(tools.launch, "state", return_value=live(closed=True)), \
-             mock.patch.object(tools.bridge, "track_info", return_value=track()), \
-             mock.patch.object(tools.bridge, "fx_list", return_value=CHAIN), \
-             mock.patch.object(tools.bridge, "meter", return_value=read(0.0)):
+        with mock.patch.object(tools.RIG, "state", return_value=live(closed=True)), \
+             mock.patch.object(tools.RIG, "track_info", return_value=track()), \
+             mock.patch.object(tools.RIG, "fx_list", return_value=CHAIN), \
+             mock.patch.object(tools.RIG, "meter", return_value=read(0.0)):
             out = tools.handle_ready({"settle_ms": 0})
         self.assertIn("verdict=DEVICE CLOSED", out)
 
     def test_a_bridge_that_stops_answering_mid_call_is_not_a_panic(self):
-        with mock.patch.object(tools.launch, "state", return_value=live()), \
-             mock.patch.object(tools.bridge, "liveness",
+        with mock.patch.object(tools.RIG, "state", return_value=live()), \
+             mock.patch.object(tools.RIG, "liveness",
                                return_value=("not-running", "REAPER is not running")), \
-             mock.patch.object(tools.bridge, "track_info", side_effect=tools.bridge.NoReaper):
+             mock.patch.object(tools.RIG, "track_info", side_effect=port.NoRig):
             out = tools.handle_ready({"settle_ms": 0})
         self.assertIn("verdict=REAPER NOT RUNNING", out)
 
     def test_a_bridge_that_vanished_mid_call_is_bridge_gone(self):
         # REAPER is still up, so the honest word is that the script went away, not that REAPER did.
-        with mock.patch.object(tools.launch, "state", return_value=live()), \
-             mock.patch.object(tools.bridge, "liveness",
+        with mock.patch.object(tools.RIG, "state", return_value=live()), \
+             mock.patch.object(tools.RIG, "liveness",
                                return_value=("not-loaded", "REAPER is running but the bridge is not loaded")), \
-             mock.patch.object(tools.bridge, "track_info", side_effect=tools.bridge.NoReaper):
+             mock.patch.object(tools.RIG, "track_info", side_effect=port.NoRig):
             out = tools.handle_ready({"settle_ms": 0})
         self.assertIn("verdict=BRIDGE GONE", out)
 
@@ -166,9 +166,9 @@ class TestReadyTool(unittest.TestCase):
         # The bridge is answering, but the tab in front of REAPER has no track 1: not the rig.
         empty = live()
         empty["rig_tab"] = False
-        with mock.patch.object(tools.launch, "state", return_value=empty), \
-             mock.patch.object(tools.bridge, "track_info",
-                               side_effect=tools.bridge.ReaperError("no track 1")):
+        with mock.patch.object(tools.RIG, "state", return_value=empty), \
+             mock.patch.object(tools.RIG, "track_info",
+                               side_effect=port.RigError("no track 1")):
             out = tools.handle_ready({"settle_ms": 0})
         self.assertIn("verdict=RIG TAB CLOSED", out)
 
@@ -267,7 +267,7 @@ class TestReadyOverTheWire(unittest.TestCase):
         self.addCleanup(os.environ.pop, "HERMES_REAPER_BRIDGE", None)
         os.environ["HERMES_REAPER_BRIDGE"] = str(self.root)
         self.state = live()
-        patcher = mock.patch.object(tools.launch, "state", return_value=self.state)
+        patcher = mock.patch.object(tools.RIG, "state", return_value=self.state)
         patcher.start()
         self.addCleanup(patcher.stop)
 
@@ -313,7 +313,7 @@ class TestReadyOverTheWire(unittest.TestCase):
 
     def test_a_bridge_that_is_not_loaded_is_reported_as_bridge_gone(self):
         # The pane must not read a missing bridge script as REAPER NOT RUNNING.
-        with mock.patch.object(tools.launch, "state", return_value={
+        with mock.patch.object(tools.RIG, "state", return_value={
                 "bridge": "gone", "reason": "REAPER is up but the bridge script is not loaded"}):
             self.assertIn("verdict=BRIDGE GONE", tools.handle_ready({"settle_ms": 0}))
 
