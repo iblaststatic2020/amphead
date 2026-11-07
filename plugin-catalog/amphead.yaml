@@ -9,12 +9,20 @@ description: >-
   back from the plugin and compared as a number, and a tone request in plain words ("an amp that
   sounds like blink182", "I want to sound like AC/DC") resolves to a saved NAM capture plus IR and
   reports what it loaded. A desktop pane shows the live input meter, the real chain, every knob the
-  plugin publishes and a READY / NO SIGNAL / CLIPPING verdict. Disclosure — installs a Lua bridge
-  into the REAPER resource path (appending to __startup.lua, with a backup and an uninstall that
-  restores it), launches REAPER, creates and closes its own project tab, arms and monitors a track,
-  writes plugin parameters, lowers the master fader, and saves the rig to its own .rpp under the
-  Hermes data folder; it never saves, renames or overwrites the user's song projects, never touches
-  audio samples, needs REAPER 7 running locally, and makes no network calls. Windows only in v0.
+  plugin publishes and a READY / NO SIGNAL / CLIPPING verdict.
+
+  AmpHead touches the machine in five ways. It runs PowerShell (`-NoProfile -ExecutionPolicy Bypass`)
+  to find REAPER, launch it minimized, steer and measure its window, count running instances, and
+  stop a REAPER it started itself. It installs a Lua bridge into the REAPER resource path, appending
+  one line to `__startup.lua` after backing that file up, and removes both on uninstall. While
+  connected it runs a long-lived background request channel over files in the Hermes data folder,
+  polled at 150 ms from Python and answered by a loop inside REAPER. It reads track names, the FX
+  chain, every parameter name and value the loaded plugin publishes, the master fader, and the path
+  of the project it is pointed at, all from a session it did not create. It writes plugin parameters
+  and the record input into its own rig tab as one undo group per action, lowers the master fader,
+  and saves that tab to its own `.rpp` under the Hermes data folder. It never saves, renames or
+  overwrites your song projects, never touches audio files, stores no credentials and makes no
+  network calls.
 maintainer: iblaststatic2020
 tier: community
 category: tools

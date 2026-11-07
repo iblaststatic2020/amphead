@@ -131,12 +131,18 @@ STANDBY_DB = -60.0
 
 
 def check_reaper_available() -> bool:
-    """True when REAPER is installed. Deliberately does not require it to be running: setup's
-    whole job is to start it, so requiring a live host here would hide the tool that starts it."""
+    """True when this backend has a host to point at. Deliberately does not require it to be
+    running: setup's whole job is to start it, so requiring a live host here would hide the very
+    tool that starts it.
+
+    Catches every rig error, not just NoRig: a backend that hosts its own chain raises NotBuilt
+    from find(), and a check that raises is a check that breaks tool registration rather than
+    reporting the tool as unavailable.
+    """
     try:
         RIG.find()
         return True
-    except port.NoRig:
+    except port.RigError:
         return False
 
 
@@ -169,22 +175,44 @@ def _fmt(fields: list[tuple[str, Any]]) -> str:
     return " | ".join(f"{k}={v}" for k, v in fields)
 
 
+def _rig_find() -> Any:
+    """Where the host is installed, or ``None`` when the backend has no install to find.
+
+    Asked only on the failure path, and it must never raise there: a backend that hosts its own
+    chain has no DAW install, so an unguarded ``find()`` turned "not running" into a traceback.
+    """
+    try:
+        return RIG.find()
+    except Exception:
+        return None
+
+
+def _rig_running() -> bool:
+    """Is the host process alive? Same rule: a failure here must not replace the sentence."""
+    try:
+        return bool(RIG.running())
+    except Exception:
+        return False
+
+
 def handle_ping(args: dict[str, Any], **_kw) -> str:
     try:
         info = RIG.ping()
     except port.NoRig:
-        return ("REAPER NOT RUNNING: installed at " + str(RIG.find())
-                + "; call amphead_setup to start it")
+        found = _rig_find()
+        where = f"installed at {found}" if found else "no install found"
+        return f"REAPER NOT RUNNING: {where}; call amphead_setup to start it"
     except port.OldRig as exc:
         return f"OLD BRIDGE: {exc}"
     except port.RigBlocked as exc:
         # A heartbeat can outlive the process by a few seconds. Ask the OS before blaming a dialog.
-        if not RIG.running():
-            return ("REAPER NOT RUNNING: installed at " + str(RIG.find())
-                    + "; call amphead_setup to start it")
+        if not _rig_running():
+            found = _rig_find()
+            where = f"installed at {found}" if found else "no install found"
+            return f"REAPER NOT RUNNING: {where}; call amphead_setup to start it"
         return f"REAPER BLOCKED: {exc}"
     except port.RigError as exc:
-        if not RIG.running():
+        if not _rig_running():
             return "REAPER NOT RUNNING: call amphead_setup to start it"
         return f"BRIDGE ERROR: {exc}"
     return _fmt([("ok", info.get("ok")), ("proto", info.get("proto")),
@@ -225,7 +253,9 @@ def handle_setup(args: dict[str, Any], **_kw) -> str:
     path = rig_path()
     try:
         RIG.find()
-    except port.NoRig as exc:
+    except port.RigError as exc:
+        # Any rig error means there is no host to set up. Letting NotBuilt out of here would
+        # replace the sentence with a traceback in the middle of a tool call.
         return f"NO REAPER INSTALL: {exc}"
     tempo = float(args.get("tempo") or 120.0)
     hide = bool(args.get("hide"))

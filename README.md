@@ -336,6 +336,24 @@ hardware** with a leave button, and the status chip says `demo` rather than prin
 not measure. It answers through the same `verdict.judge` as the real path, so what a visitor sees is
 the real rules applied to a rig that is not there. It never turns itself on.
 
+## What this touches
+
+The catalog asks for an explicit disclosure, so this is the whole list, not the flattering part of
+it. Nothing here is background magic a reviewer has to discover on their own.
+
+AmpHead touches the machine in five ways. It runs PowerShell (`-NoProfile -ExecutionPolicy Bypass`)
+to find REAPER, launch it minimized, steer and measure its window, count running instances, and
+stop a REAPER it started itself. It installs a Lua bridge into the REAPER resource path, appending
+one line to `__startup.lua` after backing that file up, and removes both on uninstall. While
+connected it runs a long-lived background request channel over files in the Hermes data folder,
+polled at 150 ms from Python and answered by a loop inside REAPER. It reads track names, the FX
+chain, every parameter name and value the loaded plugin publishes, the master fader, and the path
+of the project it is pointed at, all from a session it did not create. It writes plugin parameters
+and the record input into its own rig tab as one undo group per action, lowers the master fader,
+and saves that tab to its own `.rpp` under the Hermes data folder. It never saves, renames or
+overwrites your song projects, never touches audio files, stores no credentials and makes no
+network calls.
+
 ## Honest limits
 
 - **Windows only at 0.1.0.** The launcher, the window handling and the resource-path install are
