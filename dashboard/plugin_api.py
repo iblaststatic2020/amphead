@@ -11,8 +11,10 @@ from __future__ import annotations
 from pathlib import Path
 import math
 import sys
+import threading
 from typing import Any
 
+from contextlib import contextmanager
 from contextvars import ContextVar
 
 from fastapi import APIRouter, Depends
@@ -35,6 +37,9 @@ from amphead import appdecl, demo, port, tones, verdict  # noqa: E402
 #: the tools and the original pane behave. The second pane sends ?engine=amphead2, so the two
 #: faces sit side by side on two backends without one process needing to choose for both.
 _ENGINE: ContextVar[str] = ContextVar("amphead_engine", default="")
+
+
+_TOOLS_LOCK = threading.Lock()
 
 
 class _SelectedRig:
@@ -62,6 +67,26 @@ async def _engine_from_query(engine: str | None = None):
 
 
 router.dependencies.append(Depends(_engine_from_query))
+
+
+@contextmanager
+def _speaking_to_tools():
+    """Point the tool handlers at the rig this request named, then put them back.
+
+    Reads here go through ``RIG``, a proxy that resolves per request. The write routes go
+    through the agent-facing tool handlers, and those hold one rig chosen at import, so an
+    Amp 2 click was answered by the REAPER rig: "REAPER is not running" while the local engine
+    sat open in the next pane. Swapping the module's rig for the length of the call is the
+    smallest honest fix; the lock keeps two panes from swapping it under each other.
+    """
+    from amphead import tools
+
+    with _TOOLS_LOCK:
+        held, tools.RIG = tools.RIG, port.choose(_ENGINE.get() or None)
+        try:
+            yield tools
+        finally:
+            tools.RIG = held
 
 FLOOR = verdict.FLOOR  # -60 dB, the same floor the rig boots and parks at
 def _device(state: dict) -> dict:
@@ -275,6 +300,9 @@ def state() -> dict[str, Any]:
         "master_db": master,
         # Whether REAPER's window is on screen decides if a chain-row click may focus a plugin.
         "ui": "visible" if live.get("bridge") == "live" and RIG.ui_visible() else "hidden",
+        # Is the rig open at all. The pane's first button is Setup until this is true, because a
+        # Live switch on a rig nobody started can only ever answer with a failure.
+        "running": live.get("bridge") == "live",
         "armed": bool(track.get("armed")),
         "monitor": bool(track.get("monitor")),
         "problems": judged["problems"],
@@ -304,7 +332,6 @@ def meter() -> dict[str, Any]:
 def live_switch(body: dict) -> dict[str, Any]:
     if demo.enabled():
         return demo.live_switch(body)
-    from amphead import tools
 
     on = bool(body.get("on"))
     # No level means silent. The Live switch arms and monitors; it never hands back a rig that is
@@ -312,20 +339,35 @@ def live_switch(body: dict) -> dict[str, Any]:
     db = body.get("master_db", -60)
     # Input 0: the Live button never repoints the track's input. Whatever the player chose in
     # REAPER stays chosen, which is the only default that cannot break a DI or a stereo pair.
-    out = tools.handle_live({"on": on, "confirm": True, "master_db": db,
-                             "input": body.get("input", "0")})
-    return {"output": out, "on": on}
+    with _speaking_to_tools() as tools:
+        out = tools.handle_live({"on": on, "confirm": True, "master_db": db,
+                                 "input": body.get("input", "0")})
+    return {"output": out, "on": on, "ok": not out.startswith("NOT LIVE")}
+
+
+@router.post("/setup")
+def setup_rig(body: dict | None = None) -> dict[str, Any]:
+    """Open the rig without making a sound, which is the step Amp 2 has no other door to.
+
+    The original pane could assume a human had already opened REAPER. The local engine has no
+    REAPER to open, so without this the Live switch was the first control a player could press
+    and the engine it woke was never started: every answer was a failure, correctly reported.
+    """
+    if demo.enabled():
+        return {"output": "the demo face is on", "ok": True}
+    with _speaking_to_tools() as tools:
+        out = tools.handle_setup({})
+    return {"output": out, "ok": not out.startswith(("NOT", "NO "))}
 
 
 @router.post("/panic")
 def panic(body: dict) -> dict[str, Any]:
     if demo.enabled():
         return demo.panic(body)
-    from amphead import tools
-
     restore = bool(body.get("restore"))
     db = body.get("master_db", -60)
-    out = tools.handle_panic({"restore": restore, "master_db": db})
+    with _speaking_to_tools() as tools:
+        out = tools.handle_panic({"restore": restore, "master_db": db})
     return {"output": out, "ok": not out.startswith("NOT PANICKED"), "restore": restore}
 
 
@@ -448,20 +490,19 @@ def tweak(body: dict) -> dict[str, Any]:
     """One knob, written the same way chat writes it: resolved by name, read back, one undo group."""
     if demo.enabled():
         return demo.tweak(body)
-    from amphead import tools
-
     param = body.get("param")
     if param is None or param == "":
         return {"output": "NO PARAM: say which knob to turn", "ok": False}
     if body.get("value") is None:
         return {"output": "NO VALUE: say what to set it to", "ok": False}
-    out = tools.handle_set({
-        "track": body.get("track", 1),
-        "fx": body.get("fx", 0),
-        "param": param,
-        "value": body.get("value"),
-        "mode": body.get("mode", "norm"),
-    })
+    with _speaking_to_tools() as tools:
+        out = tools.handle_set({
+            "track": body.get("track", 1),
+            "fx": body.get("fx", 0),
+            "param": param,
+            "value": body.get("value"),
+            "mode": body.get("mode", "norm"),
+        })
     return {"output": out, "ok": not out.startswith(("NOT SET", "REFUSED"))}
 
 

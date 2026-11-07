@@ -19,6 +19,7 @@ REAPER_NOT_RUNNING = "REAPER NOT RUNNING"
 REAPER_BUSY = "REAPER BUSY"
 NO_REAPER_INSTALL = "NO REAPER INSTALL"
 BRIDGE_GONE = "BRIDGE GONE"
+ENGINE_OFF = "ENGINE OFF"
 TWO_REAPER = "TWO REAPER"
 RIG_TAB_CLOSED = "RIG TAB CLOSED"
 DEVICE_CLOSED = "DEVICE CLOSED"
@@ -76,6 +77,12 @@ def judge(state: dict, track: dict, reading: dict,
     problems: list[str] = []
 
     if state.get("bridge") != "live":
+        # The local engine has no REAPER to be "gone": it is started and stopped by this plugin,
+        # so the honest word is off, and the reason names the control that turns it on.
+        if str(state.get("engine") or "") == "amphead2":
+            return {"verdict": ENGINE_OFF,
+                    "reason": "the local engine is not running: press Setup",
+                    "problems": problems}
         word = {
             "no-install": NO_REAPER_INSTALL,
             "gone": BRIDGE_GONE,

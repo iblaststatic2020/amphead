@@ -564,6 +564,90 @@ class TestPresetRoute(unittest.TestCase):
         self.assertFalse(payload["ok"])
 
 
+class TestTheSecondFaceWritesToItsOwnRig(unittest.TestCase):
+    """A click in Amp 2 has to reach the engine, not the REAPER rig that happens to be at import.
+
+    Reads already resolved per request; the write routes go through the tool handlers, which
+    hold one rig for the process. Before this, every Amp 2 button was answered by REAPER and
+    came back "REAPER is not running" while the local engine sat open in the next pane.
+    """
+
+    def setUp(self):
+        from amphead import tools
+
+        self.tools = tools
+        self.held = tools.RIG
+
+    def tearDown(self):
+        self.tools.RIG = self.held
+        API._ENGINE.set("")
+
+    def test_live_under_engine_amphead2_hands_the_handler_the_engine_rig(self):
+        engine = object()
+        seen = {}
+
+        def fake_live(args, **_kw):
+            seen["rig"] = self.tools.RIG
+            return "live=True"
+
+        with mock.patch.object(API.port, "choose", lambda name=None: engine), \
+             mock.patch.object(self.tools, "handle_live", fake_live):
+            API._ENGINE.set("amphead2")
+            LIVE({"on": True, "master_db": -12})
+        self.assertIs(seen["rig"], engine)
+        self.assertIs(self.tools.RIG, self.held)
+
+    def test_panic_under_engine_amphead2_hands_the_handler_the_engine_rig(self):
+        engine = object()
+        seen = {}
+
+        def fake_panic(args, **_kw):
+            seen["rig"] = self.tools.RIG
+            return "panicked=True"
+
+        with mock.patch.object(API.port, "choose", lambda name=None: engine), \
+             mock.patch.object(self.tools, "handle_panic", fake_panic):
+            API._ENGINE.set("amphead2")
+            PANIC({})
+        self.assertIs(seen["rig"], engine)
+
+    def test_the_turn_routes_do_the_same(self):
+        engine = object()
+        seen = {}
+
+        def fake_set(args, **_kw):
+            seen["rig"] = self.tools.RIG
+            return "bass = 3.0"
+
+        with mock.patch.object(API.port, "choose", lambda name=None: engine), \
+             mock.patch.object(self.tools, "handle_set", fake_set):
+            API._ENGINE.set("amphead2")
+            TWEAK({"param": "Bass", "value": 3})
+        self.assertIs(seen["rig"], engine)
+
+    def test_setup_is_a_route_of_its_own(self):
+        """Amp 2 has no REAPER to open, so the pane needs a door that starts the engine."""
+        self.assertIn(("POST", "/setup"), ROUTER.routes)
+        engine = object()
+        seen = {}
+
+        def fake_setup(args, **_kw):
+            seen["rig"] = self.tools.RIG
+            return "state=STANDBY"
+
+        with mock.patch.object(API.port, "choose", lambda name=None: engine), \
+             mock.patch.object(self.tools, "handle_setup", fake_setup):
+            API._ENGINE.set("amphead2")
+            out = ROUTER.routes[("POST", "/setup")]({})
+        self.assertIs(seen["rig"], engine)
+        self.assertTrue(out["ok"])
+
+    def test_a_failed_setup_is_reported_as_not_ok(self):
+        with mock.patch.object(self.tools, "handle_setup", lambda args, **kw: "NOT STARTED: no audio device"):
+            out = ROUTER.routes[("POST", "/setup")]({})
+        self.assertFalse(out["ok"])
+
+
 class TestRoutesStayOffTheEventLoop(unittest.TestCase):
     """A route declared `async def` blocks the whole gateway while the bridge waits.
 

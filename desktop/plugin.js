@@ -34,6 +34,7 @@ const VERDICT_COLOR = {
   'REAPER BUSY': '#ff6b5a',
   'NO REAPER INSTALL': '#ff6b5a',
   'BRIDGE GONE': '#ff6b5a',
+  'ENGINE OFF': FACE_DIM,
   'TWO REAPER': '#ff6b5a',
   'RIG TAB CLOSED': '#ff6b5a',
   'DEVICE UNPLUGGED': '#ff6b5a',
@@ -66,6 +67,7 @@ const CHIP_WORD = {
   'NO REAPER INSTALL': 'no reaper',
   'REAPER BUSY': 'reaper busy',
   'BRIDGE GONE': 'bridge gone',
+  'ENGINE OFF': 'engine off',
   'TWO REAPER': 'two reapers',
   'RIG TAB CLOSED': 'no rig tab',
   'DEVICE CLOSED': 'device closed',
@@ -1509,9 +1511,15 @@ function AmpFace({ rest }) {
   const chain = s.chain || []
   const silenced = chain.length > 0 && chain.every((fx) => !fx.enabled)
 
+  // The engine is neither REAPER nor installed by anyone else: if it is not running, nothing on
+  // this face can succeed, so the first button opens it instead of asking it for a level.
+  const running = s.running !== false
   const liveLabel = armed
     ? 'STANDBY: disarm and park the master at -60 dB'
     : 'LIVE: arm and monitor, master stays silent until you raise it'
+  const firstLabel = !running
+    ? 'SET UP: open the engine, silent until Live'
+    : liveLabel
 
   return jsxs('div', {
     className: 'flex h-full flex-col gap-3 overflow-y-auto p-3 text-sm',
@@ -1533,17 +1541,17 @@ function AmpFace({ rest }) {
       jsx('button', {
         type: 'button',
         disabled: busy,
-        onClick: () => act('/live', { on: !armed }),
+        onClick: () => (running ? act('/live', { on: !armed }) : act('/setup', {})),
         className: 'w-full rounded-md px-3 py-2 text-xs font-medium disabled:opacity-50',
         style: armed
           ? { background: 'var(--ui-stroke-secondary)', color: 'var(--ui-text)' }
           : { background: 'var(--ui-accent)', color: 'var(--ui-accent-foreground, var(--ui-text))' },
-        children: busy ? 'working' : liveLabel
+        children: busy ? 'working' : firstLabel
       }),
 
       jsxs('button', {
         type: 'button',
-        disabled: busy,
+        disabled: busy || !running,
         onClick: () => act('/panic', silenced ? { restore: true } : {}),
         className: 'w-full rounded-md px-3 py-1.5 text-xs font-semibold disabled:opacity-50',
         style: silenced
