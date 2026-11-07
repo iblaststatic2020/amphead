@@ -232,7 +232,7 @@ repo is only exposed at the moment of submission:
 
 | # | Item | Done when |
 |---|---|---|
-| 1 | G1 application declaration | REAPER missing returns `missing_app`; `amphead_setup` reads it; test covers both branches |
+| 1 | G1 application declaration | ~~REAPER missing returns `missing_app`; `amphead_setup` reads it; test covers both branches~~ **done** |
 | 2 | G2 disclosure | paragraph in catalog `description` and README `## What this touches`; byte-identical text in both |
 | 3 | G3 unattended test | three tools called with no desktop, each returns inside 5 s, no exception |
 | 4 | B2 pin and version | `plugin.yaml` version == catalog version; `sha` == `git rev-parse HEAD`; validate clean at that checkout |
@@ -243,7 +243,7 @@ Non-blocking, before or after the PR depending on the freeze:
 | # | Item | Done when |
 |---|---|---|
 | 6 | G5 profile-aware data dir | `rig.data_dir()` returns `plugin_data_dir("amphead")`; suite green; migration tested |
-| 7 | G6 meter policy | meter pauses when the pane is hidden; STANDBY interval 400 ms; reason documented |
+| 7 | G6 meter policy | ~~meter pauses when the pane is hidden; STANDBY interval 400 ms; reason documented~~ **done** |
 | 8 | G4 JSON handlers | `amphead_tone` and `amphead_ready` return `json.dumps` with a `summary` string; live tone proof still shows the same sentence |
 | 9 | G7 unsupported OS | covered by G1 on non-Windows hosts |
 
