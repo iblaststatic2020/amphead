@@ -50,9 +50,15 @@ correctly empty (`__init__.py` registers tools only).
 clone." `gh repo view` reports `PRIVATE` for `iblaststatic2020/hermes-reaper-amp`. The contest
 requires a catalog PR, so a private repo fails before a judge sees anything.
 
-Fix: flip the repo public, then sweep history once for secrets before the flip
-(`git log -p --all | grep -in "token\|api_key\|password\|secret"`). Current tree has no
-credentials; confirm history agrees. Keep `LICENSE` in place.
+Decision 2026-11-07: this stays private until the entry is ready, because it is a competition and
+an early public flip hands the work to other entrants. Nothing else in this document is blocked by
+that: the declaration, the disclosure, the unattended test and the meter work all land in the
+private repo first.
+
+Fix, at submission time only: sweep history once for secrets
+(`git log -p --all | grep -in "token\|api_key\|password\|secret"`), flip the repo public, then
+confirm `gh repo view --json visibility` reports `PUBLIC` and an anonymous clone works. Current
+tree has no credentials; confirm history agrees. Keep `LICENSE` in place.
 
 ### B2. The pin and version are stale
 
@@ -195,15 +201,16 @@ surfaces. Not the other way round. This belongs in the 4.6 shotlist as an explic
 
 ## 6. Work order
 
-Blocking, in this order:
+Blocking, in this order. The public flip is deliberately last, as one step with the pin, so the
+repo is only exposed at the moment of submission:
 
 | # | Item | Done when |
 |---|---|---|
-| 1 | B1 public repo | `gh repo view --json visibility` returns `PUBLIC`; history sweep clean |
-| 2 | G1 application declaration | REAPER missing returns `missing_app`; `amphead_setup` reads it; test covers both branches |
-| 3 | G2 disclosure | paragraph in catalog `description` and README `## What this touches`; byte-identical text in both |
-| 4 | G3 unattended test | three tools called with no desktop, each returns inside 5 s, no exception |
-| 5 | B2 pin and version | `plugin.yaml` version == catalog version; `sha` == `git rev-parse HEAD`; validate clean at that checkout |
+| 1 | G1 application declaration | REAPER missing returns `missing_app`; `amphead_setup` reads it; test covers both branches |
+| 2 | G2 disclosure | paragraph in catalog `description` and README `## What this touches`; byte-identical text in both |
+| 3 | G3 unattended test | three tools called with no desktop, each returns inside 5 s, no exception |
+| 4 | B2 pin and version | `plugin.yaml` version == catalog version; `sha` == `git rev-parse HEAD`; validate clean at that checkout |
+| 5 | B1 flip and cut the PR | history sweep clean, visibility `PUBLIC`, anonymous clone works, catalog PR opened against that SHA |
 
 Non-blocking, before or after the PR depending on the freeze:
 

@@ -168,6 +168,10 @@ class FakeReaper:
 
         self._proc_patch = mock.patch.object(bridge, "_process_running", return_value=True)
         self._proc_patch.start()
+        # Beat once before the thread starts. Otherwise a test whose first act is a read can run
+        # inside the few milliseconds before the loop's first heartbeat and be told the script is
+        # not loaded, which is a race in the double, not a fact about the rig.
+        self.alive.write_text(str(int(time.time())), encoding="utf-8")
         self._thread = threading.Thread(target=self._loop, daemon=True)
         self._thread.start()
         return self

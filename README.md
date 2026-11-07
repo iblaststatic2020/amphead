@@ -384,9 +384,9 @@ catalog requires: what the docs allow, why a plugin that fronts another applicat
 category, and every gap that blocks or will be raised in review, each with its fix and acceptance
 check. Read it before cutting the catalog PR.
 
-Short version: the plugin qualifies on shape, surfaces and the contest's own wording. The submission
-is blocked on a private repository and a stale pin, and wants an application declaration for REAPER,
-a fuller disclosure, and a test that proves the tools behave with no desktop attached.
+Short version: the plugin qualifies on shape, surfaces and the contest's own wording. The repo stays
+private on purpose until submission, so the remaining work is an application declaration for REAPER, a
+fuller disclosure, an unattended-run test, and a fresh pin cut at the end.
 
 ## Layout
 
