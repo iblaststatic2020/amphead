@@ -3,6 +3,8 @@ __pycache__/
 .pytest_cache/
 .venv/
 venv/
+# never again: a 1.2 GB engine venv inside the plugin tree stalls `hermes plugins validate`
+.engine/
 *.egg-info/
 build/
 dist/

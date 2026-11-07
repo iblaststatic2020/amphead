@@ -204,6 +204,29 @@ which begins with a product name rather than a failure word, without letting a c
 passing sentence flip it. A handler that invents a new way to say no will read as `ok: true` until
 the word joins `FAILURE_WORDS`; that list and `_ok()` are the one place to change.
 
+### G8. The engine venv sat inside the plugin tree — **fixed**
+
+Found while re-running validation after G4 and G5, and worth a section because it is a trap that
+only appears on a working tree. The amphead2 spike built its venv at `.engine/` in the repo root:
+1.2 GB, 28,186 files, self-ignored so `git status` stayed clean. `hermes plugins validate` walks the
+directory it is handed, not the tracked file set, so the plugin's security scan became a scan of a
+venv's `site-packages` and did not finish in 15 minutes. When it did finish, it **failed**: the scan
+reported the venv's own files as the plugin's threats (`python_os_popen` in `mv.py`, `python_socket_connect`
+in `_trio.py`, and so on).
+
+A judge cloning the repo never sees this, which is what makes it nasty: the failure is invisible
+until someone validates a working copy, and the reviewer's copy is the one that passes.
+
+Fixed by moving the venv out of the plugin tree to `%LOCALAPPDATA%/amphead/engine-venv`, recording
+the path and the reason in the engine plan, and adding `scripts/engine_env.ps1` to rebuild it
+anywhere. Validation moved from "did not finish" to passing in seconds. `.engine/` stays in
+`.gitignore` so the mistake cannot be re-committed. The leftover binary probe dump went to
+`%LOCALAPPDATA%/amphead/probes/`, which also cleared the `binary_file` caution the scan had raised
+on it.
+
+**Rule for next time:** anything with a `Lib/site-packages` in it belongs beside the toolchains, not
+beside the plugin, however well `.gitignore` hides it.
+
 ### G5. Data paths are hand-rolled instead of `plugin_data_dir()` — **done**
 
 `P:1160-1178` says runtime state must never go in the plugin directory and names the sanctioned

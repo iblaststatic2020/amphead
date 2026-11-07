@@ -73,19 +73,27 @@ Gates are demo-capable states, not a freeze. The REAPER build stays shippable at
 
 ### Task 0.1: engine venv
 
-**Files:** create `.engine/.gitignore`, `scripts/engine_env.ps1`
+**Files:** create `scripts/engine_env.ps1` (the venv itself lives outside the repo)
 
-**Step 1** run:
+**Step 1** run, from the repo root:
 ```
 uv python install 3.11
-uv venv .engine --python 3.11
-.engine/Scripts/python -m pip install "pedalboard==0.9.26" numpy httpx
+uv venv "$LOCALAPPDATA/amphead/engine-venv" --python 3.11
+"$LOCALAPPDATA/amphead/engine-venv/Scripts/python" -m pip install "pedalboard==0.9.26" numpy httpx
 ```
 **Step 2** verify, expected versions printed:
 ```
-.engine/Scripts/python -c "import pedalboard, numpy, httpx, sys; print(sys.version.split()[0], pedalboard.__version__, numpy.__version__)"
+"$LOCALAPPDATA/amphead/engine-venv/Scripts/python" -c "import pedalboard, numpy, httpx, sys; print(sys.version.split()[0], pedalboard.__version__, numpy.__version__)"
 ```
-**Step 3** commit `.engine` ignored, `scripts/engine_env.ps1` committed.
+**Step 3** commit `scripts/engine_env.ps1`.
+
+**Why not `.engine/` in the repo.** Started there (1.2 GB, 28k files, self-ignored so `git status`
+stayed clean) and found the reason to move it: `hermes plugins validate` walks the directory it is
+handed, not the tracked file set, so a security scan of the plugin turned into a scan of a 1.2 GB
+venv and never finished. A judge cloning the repo would not have hit it, which is worse: the failure
+is invisible until someone validates a working tree. The venv is a build artifact of the engine, not
+part of the plugin, so it belongs beside the machine's other toolchains. Recreate it anywhere with
+`engine_env.ps1`; nothing in the plugin reads the path.
 
 ### Task 0.2: prove the capture is readable
 
@@ -183,7 +191,7 @@ self.armed = False
 
 **Files:** create `amphead2_engine/launch.py`, `tests/test_engine_launch.py`
 
-`ensure()`: read `engine.json`; if the pid is alive and `/ping` answers, return it. Otherwise spawn `.engine/Scripts/python -m amphead2_engine.server` detached, poll `/ping` up to 10 s, return the handle. `stop()`: `POST /quit`, wait for pid exit, delete `engine.json`. `host_alive()`: pid alive **and** `/ping` answers; those are different facts and the pane needs both.
+`ensure()`: read `engine.json`; if the pid is alive and `/ping` answers, return it. Otherwise spawn `$LOCALAPPDATA/amphead/engine-venv/Scripts/python -m amphead2_engine.server` detached, poll `/ping` up to 10 s, return the handle. `stop()`: `POST /quit`, wait for pid exit, delete `engine.json`. `host_alive()`: pid alive **and** `/ping` answers; those are different facts and the pane needs both.
 
 **Tests:** `test_ensure_reuses_a_live_engine`, `test_ensure_replaces_a_stale_engine_json`, `test_stop_removes_engine_json`.
 **Run:** `py -3 -m pytest tests/test_engine_launch.py -q`.
@@ -248,7 +256,7 @@ Every `amphead_*` tool gains an optional `engine` argument (`amphead2` or blank 
 **Run:** `py -3 -m pytest tests/test_tool_engine.py -q`.
 **Commit.**
 
-**G1 check, real run:** REAPER closed, `.engine` engine up, guitar in, pane READY, volume ramp audible, chat `amphead_status` says `rig: amphead2`.
+**G1 check, real run:** REAPER closed, engine venv up, guitar in, pane READY, volume ramp audible, chat `amphead_status` says `rig: amphead2`.
 **Commit and write the wiki log line.**
 
 ---
@@ -341,7 +349,7 @@ Unchanged on purpose: `bridge.py`, `launch.py`, `reaper/`, `namstate.py`, both p
 ## Validation
 
 ```
-uv run --python 3.11 -- .engine/Scripts/python -m pytest tests -q      # full suite, every phase
+"$LOCALAPPDATA/amphead/engine-venv/Scripts/python" -m pytest tests -q   # full suite, every phase
 py -3 -m pytest tests -q                                              # host env, REAPER paths
 ```
 Manual per gate: G0 hear it, G1 pane alone, G2 amp change + undo + one chat tone, G3 pull the USB cable. Each gate ends with a wiki log line.
