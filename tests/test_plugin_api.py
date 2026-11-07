@@ -55,6 +55,7 @@ PANIC = ROUTER.routes[("POST", "/panic")]
 TWEAK = ROUTER.routes[("POST", "/tweak")]
 PRESET = ROUTER.routes[("POST", "/preset")]
 FOCUS = ROUTER.routes[("POST", "/focus")]
+INPUT = ROUTER.routes[("POST", "/input")]
 
 
 def _live(**over):
@@ -309,6 +310,64 @@ class TestKnobs(unittest.TestCase):
     def test_a_failed_read_is_an_empty_list_not_a_crash(self):
         with mock.patch.object(API.bridge, "fx_params", side_effect=API.bridge.ReaperError("no fx")):
             self.assertEqual(API._knobs(1), [])
+
+
+class TestInputSocket(unittest.TestCase):
+    """The socket, and the two numbers that must never be confused: track and input."""
+
+    def _channels(self, count=2, names=("IN 1", "IN 2")):
+        return {"count": count, "channels": [{"i": i, "name": name} for i, name in enumerate(names)]}
+
+    def test_socket_one_is_the_first_channel_not_the_track_number(self):
+        """REAPER stores the first channel as 0, and a track's own number plays no part in it."""
+        with mock.patch.object(API.bridge, "inputs", return_value=self._channels()):
+            mine = API._input({"recinput": 0.0}, {"bridge": "live"})
+        self.assertEqual((mine["number"], mine["name"], mine["value"]), (1, "IN 1", "input 1"))
+        self.assertEqual(mine["count"], 2)
+        self.assertEqual(mine["norm"], 0.0)
+
+    def test_the_second_socket_is_the_second_stop_of_the_knob(self):
+        with mock.patch.object(API.bridge, "inputs", return_value=self._channels()):
+            mine = API._input({"recinput": 1.0}, {"bridge": "live"})
+        self.assertEqual((mine["number"], mine["name"]), (2, "IN 2"))
+        self.assertEqual(mine["norm"], 1.0)
+
+    def test_a_track_pointed_past_the_sockets_is_reported_not_clamped(self):
+        """Three tracks and two sockets must not invent a third socket."""
+        with mock.patch.object(API.bridge, "inputs", return_value=self._channels()):
+            mine = API._input({"recinput": 2.0}, {"bridge": "live"})
+        self.assertEqual(mine["number"], 3)
+        self.assertEqual(mine["name"], "input 3")
+        self.assertEqual([row["name"] for row in mine["channels"]], ["IN 1", "IN 2"])
+
+    def test_a_socket_turn_writes_and_reports_the_interface_name(self):
+        with mock.patch.object(API.bridge, "inputs", return_value=self._channels()), \
+             mock.patch.object(API.bridge, "set_input",
+                               return_value={"recinput": 1.0, "applied": True}) as wrote, \
+             mock.patch.object(API.bridge, "track_info", return_value={"recinput": 1.0}):
+            answer = INPUT({"input": 2})
+        wrote.assert_called_once_with(track=1, spec=2, inputs=2)
+        self.assertTrue(answer["ok"])
+        self.assertEqual((answer["number"], answer["name"], answer["track"]), (2, "IN 2", 1))
+        self.assertIn("IN 2", answer["output"])
+
+    def test_a_turn_with_no_sockets_says_the_device_is_closed(self):
+        with mock.patch.object(API.bridge, "inputs", return_value={"count": 0, "channels": []}), \
+             mock.patch.object(API.bridge, "set_input") as wrote:
+            answer = INPUT({"input": 1})
+        self.assertFalse(answer["ok"])
+        self.assertIn("closed", answer["output"])
+        wrote.assert_not_called()
+
+    def test_a_turn_with_no_socket_named_is_refused(self):
+        self.assertFalse(INPUT({})["ok"])
+        self.assertFalse(INPUT({"input": "  "})["ok"])
+
+    def test_the_state_carries_the_socket_so_the_pane_can_turn_it(self):
+        with mock.patch.object(API.bridge, "inputs", return_value=self._channels()):
+            mine = API._input({"recinput": 0.0}, {"bridge": "live"})
+        self.assertEqual(set(mine), {"value", "name", "number", "count", "channels", "stereo",
+                                     "norm", "track"})
 
 
 class TestKnobRoute(unittest.TestCase):

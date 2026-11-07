@@ -291,13 +291,16 @@ function Knob({ knob, busy, onTurn, size }) {
     })
   }
 
-  // An On/Off parameter is a knob with two places to be, not a switch beside the knobs. It snaps to
-  // the nearer end as the finger moves, so it can never be left at 0.47, and a click without a drag
-  // flips it, which is what a footswitch does.
+  // An On/Off parameter is a knob with two places to be, not a switch beside the knobs, and the
+  // input socket is a knob with one place per socket. A stepped knob snaps to its nearest stop as
+  // the finger moves, so it can never be left at 0.47 with no meaning, and a tap without a drag
+  // steps to the next one, which is what a footswitch does.
   const isBool = knob.bool === true
+  const steps = isBool ? 2 : (Number(knob.steps) > 1 ? Math.round(Number(knob.steps)) : 0)
+  const snap = (value) => (steps > 1 ? Math.round(value * (steps - 1)) / (steps - 1) : value)
+  const nextStop = () => (steps > 1 ? ((Math.round(cur.current * (steps - 1)) + 1) % steps) / (steps - 1) : 0)
   const move = (next, final) => {
-    const clamped = Math.min(1, Math.max(0, next))
-    const landed = isBool ? (clamped >= 0.5 ? 1 : 0) : clamped
+    const landed = snap(Math.min(1, Math.max(0, next)))
     cur.current = landed
     setValue(landed)
     if (final || Date.now() - sent_at.current >= SEND_MS) push(landed, final)
@@ -333,9 +336,9 @@ function Knob({ knob, busy, onTurn, size }) {
         onPointerUp: () => {
           if (!dragging) return
           setDragging(false)
-          // A tap on an On/Off knob is a flip; a drag already landed on one end, so it writes that.
-          if (isBool && !moved.current) {
-            move(cur.current >= 0.5 ? 0 : 1, true)
+          // A tap steps a stepped knob to its next stop; a drag already landed on one, so it writes that.
+          if (steps > 1 && !moved.current) {
+            move(nextStop(), true)
             return
           }
           move(cur.current, true)
@@ -347,16 +350,17 @@ function Knob({ knob, busy, onTurn, size }) {
         },
         onKeyDown: (event) => {
           if (busy) return
-          const step = event.shiftKey ? 0.1 : 0.02
+          // One stop per press on a stepped knob, a nudge on a continuous one.
+          const step = steps > 1 ? 1 / (steps - 1) : (event.shiftKey ? 0.1 : 0.02)
           if (event.key === 'ArrowUp' || event.key === 'ArrowRight') {
             event.preventDefault()
-            move(isBool ? 1 : value + step, true)
+            move(cur.current + step, true)
           } else if (event.key === 'ArrowDown' || event.key === 'ArrowLeft') {
             event.preventDefault()
-            move(isBool ? 0 : value - step, true)
-          } else if (isBool && (event.key === 'Enter' || event.key === ' ')) {
+            move(cur.current - step, true)
+          } else if (steps > 1 && (event.key === 'Enter' || event.key === ' ')) {
             event.preventDefault()
-            move(value >= 0.5 ? 0 : 1, true)
+            move(nextStop(), true)
           }
         },
         className: 'relative shrink-0 select-none rounded-full outline-none',
@@ -720,6 +724,15 @@ function AmpFace({ rest }) {
   const plugin = s.plugin || {}
   const [ampGroup, pedalGroup, hostGroup] = groups(s.knobs || [], plugin)
 
+  // The socket is not a plugin parameter, but it is the control that decides whether anything
+  // reaches the amp at all, so it is a knob like the rest: one stop per socket on the interface,
+  // labelled with the interface's own name for it, and it never pretends to be a track number.
+  const socket = s.input || {}
+  const socketKnob = socket.count > 0
+    ? { name: 'input', value: socket.name || socket.value || 'unknown',
+        norm: typeof socket.norm === 'number' ? socket.norm : 0, steps: socket.count }
+    : null
+
   // A knob turn is its own path: cheap, answered in the plugin's units, and deliberately not
   // wrapped in `act`, because `act` sets `busy` for the whole face and refetches the state. That
   // was the other half of the sticky knob: releasing one knob greyed out every other control.
@@ -734,6 +747,27 @@ function AmpFace({ rest }) {
       return answer
     } catch (err) {
       const line = `that knob would not move: ${err && err.message ? err.message : err}`
+      setSaid(line)
+      return { ok: false, output: line }
+    }
+  }
+
+  // A socket turn is its own route: the plugin's knobs cannot move the record input, and the
+  // record input cannot be written as a parameter, so this is a knob with its own way to REAPER.
+  async function turnInput(knob, value, final) {
+    const count = socket.count || 0
+    const number = Math.max(1, Math.min(count, Math.round(value * (count - 1)) + 1))
+    try {
+      const answer = await rest('/input', { method: 'POST', body: { input: number } })
+      if (answer && answer.ok === false) {
+        setSaid(String(answer.output || 'that socket would not take'))
+      } else if (final) {
+        setSaid(String((answer && answer.output) || `track 1 records from ${answer.name}`))
+        client.invalidateQueries({ queryKey: ['amphead', 'state'] })
+      }
+      return answer
+    } catch (err) {
+      const line = `that socket would not take: ${err && err.message ? err.message : err}`
       setSaid(line)
       return { ok: false, output: line }
     }
@@ -826,6 +860,27 @@ function AmpFace({ rest }) {
           return answer && answer.output
         }
       }),
+
+      socketKnob
+        ? jsx(Panel, {
+          title: 'input',
+          // Said in place, because the numbers are the thing that gets confused: a track is a lane
+          // in the project, an input is a socket on the interface, and they share no arithmetic.
+          caption: `the socket on ${device.driver || 'the interface'}, not the track number`,
+          children: jsxs('div', {
+            className: 'flex flex-col items-center gap-1',
+            children: [
+              jsx(Knob, { knob: socketKnob, busy, size: 'lg', onTurn: turnInput }),
+              jsx('div', {
+                className: 'text-[0.5625rem] leading-snug',
+                style: { color: FACE_DIM },
+                children: `track ${socket.track || 1} records from ${socket.name || socket.value} ` +
+                          `of ${socket.count} socket${socket.count === 1 ? '' : 's'}`
+              })
+            ]
+          })
+        })
+        : null,
 
       ampGroup
         ? jsx(Panel, {

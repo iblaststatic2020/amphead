@@ -32,11 +32,58 @@ FLOOR = verdict.FLOOR  # -60 dB, the same floor the rig boots and parks at
 def _device(state: dict) -> dict:
     device = state.get("device") or {}
     return {
+        "driver": device.get("driver") or "",
+        "inputs": int(device.get("inputs") or 0),
         "buffer": device.get("buffer") or "",
         "rate": device.get("rate") or "",
         "out_ms": device.get("latency_out_ms") or 0.0,
         "closed": bool(device.get("closed")),
     }
+
+
+def _channels() -> dict:
+    """The interface's own sockets, in the device's own names, so the knob reads the front panel.
+
+    REAPER numbers these from zero internally; a front panel numbers them from one. Nothing leaves
+    this file as a zero, because a zero under a knob reads as "no input" to anyone who is not
+    holding REAPER's API docs.
+    """
+    try:
+        got = bridge.inputs()
+    except bridge.ReaperError:
+        return {"count": 0, "channels": []}
+    rows = []
+    for index, channel in enumerate(got.get("channels") or []):
+        number = int(channel.get("i", index)) + 1
+        rows.append({"number": number, "name": str(channel.get("name") or f"IN {number}")})
+    return {"count": int(got.get("count") or len(rows)), "channels": rows}
+
+
+def _input(track: dict, live: dict) -> dict:
+    """Which socket on the interface the track's record input points at.
+
+    A track number and an input number are two different numbers: a track is a lane in the project,
+    an input is a socket on the interface. Nothing here derives one from the other, because a rig
+    with three tracks and two inputs would then claim a third socket exists.
+    """
+    sockets = _channels() if live.get("bridge") == "live" else {"count": 0, "channels": []}
+    held = track.get("recinput")
+    said = bridge.describe_input(held) if held is not None else "unknown"
+    number, stereo = None, False
+    try:
+        raw = int(float(held))
+    except (TypeError, ValueError):
+        raw = None
+    if raw is not None and raw >= 0:
+        if raw >= bridge.INPUT_PAIR_BASE:
+            number, stereo = raw - bridge.INPUT_PAIR_BASE + 1, True
+        else:
+            number = raw + 1
+    name = next((row["name"] for row in sockets["channels"] if row["number"] == number), said)
+    count = sockets["count"]
+    norm = round((number - 1) / (count - 1), 4) if number and count > 1 else 0.0
+    return {"value": said, "name": name, "number": number, "count": count,
+            "channels": sockets["channels"], "stereo": stereo, "norm": norm, "track": 1}
 
 
 def _knobs(track: int) -> list[dict]:
@@ -186,6 +233,9 @@ def state() -> dict[str, Any]:
         "reason": reason,
         "project": live.get("project") or "unnamed",
         "device": _device(live),
+        # Which socket the track listens to. A separate control from the plugin's knobs, but the
+        # same kind of control: it turns, it has a fixed set of places to be, and it says which.
+        "input": _input(track, live),
         "master_db": master,
         # Whether REAPER's window is on screen decides if a chain-row click may focus a plugin.
         "ui": "visible" if live.get("bridge") == "live" and launch.ui_visible() else "hidden",
@@ -274,6 +324,39 @@ def knob(body: dict) -> dict[str, Any]:
     return {"output": done.sentence(), "ok": True, "norm": done.norm, "value": done.fmt,
             "raw": done.written, "clamped": done.clamped, "retried": done.retried,
             "param": done.param_name}
+
+
+@router.post("/input")
+def input_switch(body: dict) -> dict[str, Any]:
+    """Point the track's record input at one socket on the interface, and prove REAPER stored it.
+
+    This is the only route that changes which hardware channel the rig listens to. It writes the
+    track's own record input, never a device setting, so REAPER's audio device block is untouched
+    and the change is one undo away from where it was.
+    """
+    if demo.enabled():
+        return demo.input_switch(body)
+    spec = body.get("input")
+    if spec is None or str(spec).strip() == "":
+        return {"output": "NO INPUT: say which socket on the interface", "ok": False}
+    track_no = int(body.get("track") or 1)
+    try:
+        got = bridge.inputs()
+    except bridge.ReaperError as exc:
+        return {"output": f"NOT SET: {exc}", "ok": False}
+    if int(got.get("count") or 0) < 1:
+        return {"output": "NOT SET: the audio device is closed, so there are no sockets to point "
+                          "at. Open REAPER's audio device and turn again.", "ok": False}
+    try:
+        bridge.set_input(track=track_no, spec=spec, inputs=int(got["count"]))
+    except bridge.NoReaper:
+        return {"output": "NOT SET: REAPER is not running", "ok": False}
+    except (bridge.CommandFailed, bridge.ReaperError, ValueError) as exc:
+        return {"output": f"NOT SET: {exc}", "ok": False}
+    mine = _input(_track(track_no), {"bridge": "live"})
+    mine["track"] = track_no
+    return {"output": f"track {track_no} records from {mine['name']} ({mine['value']})",
+            "ok": True, **mine}
 
 
 @router.post("/tweak")

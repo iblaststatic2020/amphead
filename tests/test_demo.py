@@ -18,7 +18,7 @@ from amphead import demo, verdict  # noqa: E402
 # Every key the pane reads. A demo payload missing one of these breaks the face in a way tests of
 # the real path would never catch, because the real path is the one that gets exercised.
 STATE_KEYS = {"verdict", "reason", "project", "device", "master_db", "ui", "armed", "monitor",
-              "problems", "chain", "plugin", "knobs", "presets", "demo"}
+              "problems", "chain", "plugin", "knobs", "input", "presets", "demo"}
 
 
 class DemoHome(unittest.TestCase):
@@ -110,6 +110,20 @@ class TestHandsOn(DemoHome):
         knobs = {k["name"]: k for k in demo.state()["knobs"]}
         self.assertAlmostEqual(knobs["Amplifier Bass"]["norm"], 0.9, places=3)
         self.assertIn("9", knobs["Amplifier Bass"]["value"])
+
+    def test_the_socket_starts_at_the_first_channel_and_turns(self):
+        """The demo used to park its input at REAPER's 1.0, which is the second socket."""
+        first = demo.state()["input"]
+        self.assertEqual((first["number"], first["name"], first["value"]), (1, "IN 1", "input 1"))
+        out = demo.input_switch({"input": 2})
+        self.assertTrue(out["ok"], out["output"])
+        self.assertEqual((out["number"], out["name"]), (2, "IN 2"))
+        self.assertEqual(demo.state()["input"]["number"], 2)
+        demo.input_switch({"input": 1})
+
+    def test_a_socket_the_interface_does_not_have_is_refused(self):
+        self.assertFalse(demo.input_switch({"input": 3})["ok"])
+        self.assertFalse(demo.input_switch({})["ok"])
 
     def test_an_unknown_knob_is_refused_not_guessed(self):
         out = demo.tweak({"param": "Drive", "value": 0.5, "mode": "norm"})

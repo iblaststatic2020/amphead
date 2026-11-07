@@ -30,6 +30,9 @@ PROJECT = "amphead.rpp (demo rig)"
 # spelled it out_ms would report 11.61 ms of latency as 0.0 ms in the very sentence a player reads.
 DEVICE = {"buffer": "512", "rate": "44100", "latency_out_ms": 11.61, "closed": False,
           "inputs": 2, "reopened": False}
+# The demo interface's sockets, named the way a front panel names them. The demo has two because
+# the rig it is a picture of has two.
+SOCKETS = ["IN 1", "IN 2"]
 LIVE_MASTER_DB = -20.0
 PARKED_MASTER_DB = -60.0
 AMP = "VST3i: NAM Universal (Neural Amp Modeler)"
@@ -91,11 +94,16 @@ def reset() -> None:
     _DEMO["bypass"] = False
     _DEMO["amp"] = AMP
     _DEMO["preset"] = ""
+    # 1 is the first socket, counted the way the front panel counts. The demo used to park this at
+    # 1.0 in REAPER's own encoding, which reads as the second socket, the same off-by-one the live
+    # rig had.
+    _DEMO["input"] = 1
 
 
 def _rig() -> dict[str, Any]:
     if "knobs" not in _DEMO:
         reset()
+    _DEMO.setdefault("input", 1)
     return _DEMO
 
 
@@ -137,7 +145,8 @@ def _judged() -> tuple[dict, dict, list[dict]]:
     rig = _rig()
     live = {"bridge": "live", "project": PROJECT, "path": "", "tracks": 1, "instances": 1,
             "rig_tab": True, "device": dict(DEVICE)}
-    track = {"armed": rig["armed"], "monitor": True, "mute": rig["mute"], "recinput": 1.0}
+    track = {"armed": rig["armed"], "monitor": True, "mute": rig["mute"],
+             "recinput": float(rig["input"] - 1)}
     chain = _chain()
     sample = meter()
     judged = verdict.judge(live, track, {**sample, "master_db": rig["master_db"]}, chain)
@@ -161,9 +170,35 @@ def state() -> dict[str, Any]:
         "chain": chain,
         "plugin": {"name": _rig()["amp"], "enabled": not _rig()["bypass"]},
         "knobs": _knobs(),
+        "input": _input(),
         "presets": [{"key": key, "title": about} for key, about in _PRESETS],
         "demo": True,
     }
+
+
+def _input() -> dict:
+    """The canned rig's socket, in the same shape the live rig answers with."""
+    rig = _rig()
+    number = int(rig["input"])
+    count = len(SOCKETS)
+    return {"value": f"input {number}", "name": SOCKETS[number - 1], "number": number,
+            "count": count, "stereo": False,
+            "channels": [{"number": i + 1, "name": name} for i, name in enumerate(SOCKETS)],
+            "norm": round((number - 1) / (count - 1), 4) if count > 1 else 0.0, "track": 1}
+
+
+def input_switch(body: dict) -> dict[str, Any]:
+    """Turn the demo's socket, so the knob answers on a machine with no interface at all."""
+    rig = _rig()
+    try:
+        number = int(body.get("input"))
+    except (TypeError, ValueError):
+        return {"output": "NO INPUT: say which socket on the interface", "ok": False}
+    if not 1 <= number <= len(SOCKETS):
+        return {"output": f"NOT SET: this demo interface has {len(SOCKETS)} sockets", "ok": False}
+    rig["input"] = number
+    mine = _input()
+    return {"output": f"track 1 records from {mine['name']} ({mine['value']})", "ok": True, **mine}
 
 
 def tweak(body: dict) -> dict[str, Any]:

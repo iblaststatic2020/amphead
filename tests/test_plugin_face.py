@@ -39,15 +39,26 @@ class TestFaceMatchesVerdicts(unittest.TestCase):
         missing = [word for word in words if not re.search(rf"^\s*['\"]?{re.escape(word)}['\"]?:", table, re.M)]
         self.assertEqual([], missing, f"the face has no colour for: {missing}")
 
-    def test_an_on_off_parameter_is_a_knob_with_two_ends(self):
-        """The face draws the plugin's switches as knobs, and an On/Off knob snaps to one of its
-        two ends so a drag can never leave it at a meaningless in-between."""
+    def test_a_stepped_knob_snaps_to_its_stops(self):
+        """Switches and the input socket are knobs with a fixed set of places to be: the turn snaps
+        to the nearest stop, a tap steps to the next, and no drag can leave one at 0.47."""
         source = face_source()
         knob = source[source.index("function Knob("):source.index("function KnobGrid(")]
         self.assertIn("const isBool = knob.bool === true", knob)
-        self.assertIn("isBool ? (clamped >= 0.5 ? 1 : 0) : clamped", knob, "the turn must snap")
-        self.assertIn("if (isBool && !moved.current)", knob, "a tap has to flip it")
-        self.assertIn("move(isBool ? 1 : value + step, true)", knob, "the arrow keys snap too")
+        self.assertIn("const steps = isBool ? 2 :", knob)
+        self.assertIn("Math.round(value * (steps - 1)) / (steps - 1)", knob, "the turn must snap")
+        self.assertIn("if (steps > 1 && !moved.current)", knob, "a tap has to step it")
+        self.assertIn("move(nextStop(), true)", knob, "the tap and the Enter key share one stop")
+
+    def test_the_input_socket_is_a_knob_and_says_it_is_not_a_track_number(self):
+        """The pane offers the socket, in the interface's own name, and says in place that a track
+        number and an input number are different numbers."""
+        source = face_source()
+        self.assertIn("const socketKnob = socket.count > 0", source)
+        self.assertIn("steps: socket.count", source, "the socket knob needs one stop per socket")
+        self.assertIn("const number = Math.max(1, Math.min(count, Math.round(value * (count - 1)) + 1))", source)
+        self.assertIn("not the track number", source, "the caption has to say what the knob is not")
+        self.assertIn("`track ${socket.track || 1} records from", source)
 
     def test_the_face_stays_reachable(self):
         """Four doors, one face: the route, the sidebar row, the command, the pane, the chip."""
