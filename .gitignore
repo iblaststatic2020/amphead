@@ -17,6 +17,10 @@ dist/
 *.reapeaks
 *.nam
 
+# Engine probe scratch: rendered numpy buffers and saved plugin states
+out/
+*.vstpreset
+
 # Local bridge scratch
 .reaper_out/
 request.*.json
