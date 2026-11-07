@@ -25,11 +25,10 @@ SAFE_MASTER_DB = port.SAFE_MASTER_DB
 
 
 def rig_path() -> Path:
-    env = os.environ.get("AMPHEAD_RIG")
-    if env:
-        return Path(env)
-    base = os.environ.get("LOCALAPPDATA") or (Path.home() / "AppData" / "Local")
-    return Path(base) / "hermes" / "amphead" / "rig" / "amphead.rpp"
+    """The rig tab's path, answered by :func:`amphead.rig.rig_path` and nowhere else."""
+    from . import rig as rig_module
+
+    return rig_module.rig_path()
 
 
 def _schema(name: str, description: str, properties: dict[str, Any] | None = None,

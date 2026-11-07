@@ -294,8 +294,22 @@ def data_dir() -> Path:
     return Path(base) / "hermes" / "amphead"
 
 
+#: The rig tab's file name. One name, because the status readout and the file that gets saved
+#: have to be the same file: they were `amphead.rpp` in one module and `rig.rpp` in another, and
+#: a restore that fell back to its own default reopened a leftover stub instead of the rig.
+RIG_FILE = "amphead.rpp"
+
+
 def rig_path() -> Path:
-    return data_dir() / "rig" / "rig.rpp"
+    """Where the rig tab lives. The only place that answers this question.
+
+    ``tools.rig_path`` used to compute its own answer, so setup saved one file and snapshot
+    restore opened another. Anything that needs this path asks here.
+    """
+    env = os.environ.get("AMPHEAD_RIG")
+    if env:
+        return Path(env)
+    return data_dir() / "rig" / RIG_FILE
 
 
 def _snapshot(tag: str, facts: dict[str, Any]) -> str:
