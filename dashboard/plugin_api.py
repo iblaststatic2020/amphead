@@ -12,7 +12,9 @@ from pathlib import Path
 import sys
 from typing import Any
 
-from fastapi import APIRouter
+from contextvars import ContextVar
+
+from fastapi import APIRouter, Depends
 
 router = APIRouter()
 
@@ -28,8 +30,37 @@ if str(_ROOT) not in sys.path:
 
 from amphead import demo, port, tones, verdict  # noqa: E402
 
-#: The rig this pane talks to. Same env switch as the tools.
-RIG = port.active()  # noqa: E402
+#: Which rig a request is talking to. Empty means "the one AMPHEAD_ENGINE names", which is how
+#: the tools and the original pane behave. The second pane sends ?engine=amphead2, so the two
+#: faces sit side by side on two backends without one process needing to choose for both.
+_ENGINE: ContextVar[str] = ContextVar("amphead_engine", default="")
+
+
+class _SelectedRig:
+    """A rig picked per request, not per process.
+
+    Every helper in this file already says ``RIG.something``, so the proxy keeps that spelling
+    and resolves the actual backend at call time. Patching ``RIG.x`` in a test still works: the
+    patch lands on the proxy, which wins over ``__getattr__``.
+    """
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(port.choose(_ENGINE.get() or None), name)
+
+
+RIG = _SelectedRig()
+
+
+async def _engine_from_query(engine: str | None = None):
+    """Read ?engine= on any route and hold it for the length of that request."""
+    token = _ENGINE.set((engine or "").strip().lower())
+    try:
+        yield
+    finally:
+        _ENGINE.reset(token)
+
+
+router.dependencies.append(Depends(_engine_from_query))
 
 FLOOR = verdict.FLOOR  # -60 dB, the same floor the rig boots and parks at
 def _device(state: dict) -> dict:

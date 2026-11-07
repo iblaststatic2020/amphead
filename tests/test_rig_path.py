@@ -42,5 +42,21 @@ class OneRigPath(unittest.TestCase):
                              / "rig" / "amphead.rpp")
 
 
+class OneHomeForState(unittest.TestCase):
+    """The demo switch keeps its flag in the same place as everything else amphead owns."""
+
+    def test_the_flag_lands_beside_the_rig(self):
+        from amphead import demo
+
+        with mock.patch.dict(os.environ, {"AMPHEAD_HOME": r"C:\tmp\amphead-home"}, clear=False):
+            demo.set_enabled(True)
+            self.assertEqual(demo._path(), rig.data_dir() / "demo.json")
+            self.assertTrue((rig.data_dir() / "demo.json").is_file())
+            os.environ.pop("AMPHEAD_DEMO", None)
+            self.assertTrue(demo.enabled())
+            demo.set_enabled(False)
+            self.assertFalse(demo.enabled())
+
+
 if __name__ == "__main__":
     unittest.main()

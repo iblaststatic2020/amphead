@@ -21,6 +21,7 @@ ROOT = Path(__file__).resolve().parent.parent
 class _Router:
     def __init__(self):
         self.routes = {}
+        self.dependencies = []
 
     def _reg(self, method):
         def deco(path):
@@ -41,6 +42,7 @@ def _load():
     router = _Router()
     fake = types.ModuleType("fastapi")
     fake.APIRouter = lambda *a, **k: router
+    fake.Depends = lambda dep=None, **k: dep
     sys.modules.setdefault("fastapi", fake)
     sys.path.insert(0, str(ROOT / "dashboard"))
     import plugin_api
@@ -60,6 +62,22 @@ INPUT = ROUTER.routes[("POST", "/input")]
 # The project a write names as `expect`: every mutating bridge command carries one, so a write
 # cannot land in a tab nobody meant to touch.
 RIG_PATH = "C:/Users/Chris/Music/rig.rpp"
+
+# The demo switch is saved state, so a box that once showed the canned rig would otherwise run
+# every route here against the demo rig and quietly prove nothing about the seam. Tests ask for
+# demo explicitly when they want it; the rest of the file starts from the real rig.
+_demo_off = None
+
+
+def setUpModule():
+    global _demo_off
+    _demo_off = mock.patch.object(API.demo, "enabled", return_value=False)
+    _demo_off.start()
+
+
+def tearDownModule():
+    _demo_off.stop()
+
 
 
 def _live(**over):

@@ -15,8 +15,20 @@ from amphead import verdict as verdicts
 PLUGIN = Path(__file__).resolve().parent.parent / "desktop" / "plugin.js"
 
 
+# The file carries two faces now: the one that shipped (vendored verbatim under this marker, so the
+# original plugin is still on screen) and the rebuild above it. The tests below are about the
+# rebuild, so they read only up to the marker and cannot be satisfied by the old copy.
+LEGACY_MARKER = "// ---- the original face"
+
+
 def face_source() -> str:
-    return PLUGIN.read_text(encoding="utf-8")
+    source = PLUGIN.read_text(encoding="utf-8")
+    return source.split(LEGACY_MARKER)[0]
+
+
+def legacy_source() -> str:
+    source = PLUGIN.read_text(encoding="utf-8")
+    return source.split(LEGACY_MARKER, 1)[1]
 
 
 def verdict_table(source: str) -> str:
@@ -92,7 +104,7 @@ class TestFaceMatchesVerdicts(unittest.TestCase):
     def test_the_chip_speaks_words_when_there_is_no_rig(self):
         """-60 dB with REAPER closed reads as a quiet rig, not as no rig, so words carry it."""
         source = face_source()
-        chip = source[source.index("id: 'amp-chip'"):]
+        chip = source[source.index("id: 'amp2-chip'"):]
         self.assertIn("const live = !!(meter.data && meter.data.live)", chip)
         self.assertIn("CHIP_WORD[verdict]", chip)
         # The dB number sits behind the live check however the ternary is nested, and the demo
@@ -202,3 +214,32 @@ class TestTheDemoIsReachable(unittest.TestCase):
         source = face_source()
         self.assertIn("state.data.demo", source)
         self.assertIn("? 'demo'", source)
+
+
+class TestTheOriginalFaceIsStillThere(unittest.TestCase):
+    """The rebuild is additive. The face that shipped stays in the file, on /amp, on the REAPER rig,
+    so a user who liked the old pane keeps it and the two are side by side instead of one replacing
+    the other."""
+
+    def test_the_shipped_face_is_vendored_whole(self):
+        legacy = legacy_source()
+        self.assertIn("function AmpFace(", legacy)
+        self.assertIn("function Knob(", legacy)
+        self.assertIn("const plugin = {", legacy)
+
+    def test_it_keeps_its_own_route_and_nav_row(self):
+        legacy = legacy_source()
+        self.assertIn("data: { path: '/amp' }", legacy)
+        self.assertIn("label: 'Amp', path: '/amp'", legacy)
+
+    def test_the_rebuild_moved_to_its_own_route(self):
+        source = face_source()
+        self.assertIn("data: { path: '/amp2' }", source)
+        self.assertIn("label: 'Amp 2', path: '/amp2'", source)
+        self.assertNotIn("data: { path: '/amp' }", source, "the rebuild must not take the old route")
+
+    def test_each_face_names_its_own_backend(self):
+        source = face_source()
+        self.assertIn("LegacyPlugin.register(engineContext(ctx, 'reaper'", source)
+        self.assertIn("engineContext(ctx, 'amphead2')", source)
+        self.assertIn("engine=", source, "the engine has to ride on every route the face calls")
