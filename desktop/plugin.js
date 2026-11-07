@@ -141,6 +141,71 @@ function Panel({ title, caption, children, className }) {
   })
 }
 
+// The volume the player actually hears. Boot and Live both leave the master at the floor, so this
+// is the control that makes the rig audible, and it says so before it is touched: a sliver of
+// movement on a hot amp model is already loud, so the caption asks for steps, not a yank.
+function MasterRamp({ db, busy, armed, onCommit }) {
+  const [value, setValue] = useState(typeof db === 'number' ? db : -60)
+  const [dragging, setDragging] = useState(false)
+  useEffect(() => {
+    if (!dragging && typeof db === 'number') setValue(db)
+  }, [db, dragging])
+
+  // A drag can end two ways (mouse up, key up) and the refetch in between can hand back a reading
+  // that is not a number. Every screen and every commit uses `level`, so neither gesture can post a
+  // NaN at the rig and turn the master into a value nothing can read.
+  const level = Number.isFinite(value) ? Math.max(-60, Math.min(0, value)) : -60
+  const silent = level <= -60
+  const commit = () => {
+    setDragging(false)
+    onCommit(Math.round(level))
+  }
+
+  return jsxs('div', {
+    className: 'rounded-md px-2 py-1.5',
+    style: { background: WELL, border: '1px solid rgba(255,255,255,0.05)' },
+    children: [
+      jsxs('div', {
+        className: 'mb-0.5 flex items-baseline justify-between',
+        children: [
+          jsx('span', {
+            className: 'text-[0.5625rem] font-semibold uppercase tracking-[0.14em]',
+            style: { color: FACE, opacity: 0.8 },
+            children: 'volume'
+          }),
+          jsx('span', {
+            className: 'text-[0.625rem] tabular-nums',
+            style: { color: silent ? FACE_DIM : FACE },
+            children: dragging ? `${Math.round(level)} dB` : silent ? 'silent' : `${Math.round(level)} dB`
+          })
+        ]
+      }),
+      jsx('input', {
+        type: 'range',
+        min: -60,
+        max: 0,
+        step: 1,
+        value: level,
+        disabled: busy || !armed,
+        'aria-label': 'master volume',
+        onPointerDown: () => setDragging(true),
+        onPointerUp: commit,
+        onKeyUp: commit,
+        onChange: (event) => setValue(Number(event.target.value)),
+        className: 'w-full',
+        style: { accentColor: 'var(--ui-accent)' }
+      }),
+      jsx('div', {
+        className: 'text-[0.5rem] leading-snug',
+        style: { color: FACE_DIM },
+        children: armed
+          ? 'starts silent, on purpose: drag up in steps and listen'
+          : 'arm the rig first, then ramp the volume here'
+      })
+    ]
+  })
+}
+
 // Segmented meter, like the LED ladder on a hardware amp: the segment count is the reading, and
 // the number beside it and the CLIP light are the same reading spelled out.
 const SEG_DB = [0, -3, -6, -9, -12, -15, -18, -21, -24, -27, -30, -33, -36, -39, -42, -45, -50, -60]
@@ -649,7 +714,7 @@ function PowerSwitch({ armed, busy, onToggle }) {
       jsx('span', {
         className: 'max-w-[62%] text-right text-[0.5625rem] leading-tight',
         style: { color: FACE_DIM },
-        children: busy ? 'working' : armed ? 'armed, monitor on, master -18 dB' : 'click to arm and play'
+        children: busy ? 'working' : armed ? 'armed, master silent until you raise it' : 'click to arm and play'
       })
     ]
   })
@@ -677,7 +742,7 @@ function PanicButton({ silenced, busy, onClick }) {
         children: busy
           ? 'working'
           : silenced
-            ? 'un-bypass the chain, master back to -18 dB'
+            ? 'un-bypass the chain, still silent at -60 dB'
             : 'silence the rig now, nothing else changes'
       })
     ]
@@ -799,10 +864,44 @@ function Strip({ device, master, project }) {
   })
 }
 
+// ---- meter cadence, one policy for every surface -------------------------------
+// 150 ms is fast enough that a strum reaches the number before the eye notices the gap, and it is
+// what six-plus bridge round trips a second costs. So: no polling at all when the pane is not on
+// screen, 400 ms while the rig is parked in STANDBY where the only thing moving is the -60 dB
+// floor, and 150 ms only when the player is actually live. The chip below stays at 400 ms; it is
+// a glance, not a meter.
+const METER_MS = 150
+const METER_IDLE_MS = 400
+const pageOnScreen = () => typeof document === 'undefined' || document.visibilityState !== 'hidden'
+
+function useOnScreen() {
+  const [shown, setShown] = useState(pageOnScreen)
+  useEffect(() => {
+    // Without this listener the poll would stop at the first hidden tick and never restart:
+    // react-query re-evaluates the interval on a render, and coming back to the tab is one.
+    const change = () => setShown(pageOnScreen())
+    document.addEventListener('visibilitychange', change)
+    return () => document.removeEventListener('visibilitychange', change)
+  }, [])
+  return shown
+}
+
+const meterEvery = (armed) => (armed ? METER_MS : METER_IDLE_MS)
+
 function AmpFace({ rest }) {
   const client = useQueryClient()
-  const state = useQuery({ queryKey: ['amphead2', 'state'], queryFn: () => rest('/state'), refetchInterval: 1500 })
-  const meter = useQuery({ queryKey: ['amphead2', 'meter'], queryFn: () => rest('/meter'), refetchInterval: 150 })
+  const shown = useOnScreen()
+  const state = useQuery({
+    queryKey: ['amphead2', 'state'],
+    queryFn: () => rest('/state'),
+    refetchInterval: shown ? 1500 : false
+  })
+  const armedNow = !!(state.data && state.data.armed)
+  const meter = useQuery({
+    queryKey: ['amphead2', 'meter'],
+    queryFn: () => rest('/meter'),
+    refetchInterval: shown ? meterEvery(armedNow) : false
+  })
   const [busy, setBusy] = useState(false)
   const [said, setSaid] = useState('')
   const clipped = useRef(false)
@@ -947,14 +1046,21 @@ function AmpFace({ rest }) {
           jsx(PowerSwitch, {
             armed,
             busy,
-            onToggle: () => act('/live', { on: !armed, master_db: -18 })
+            onToggle: () => act('/live', { on: !armed })
           }),
           jsx(PanicButton, {
             silenced,
             busy,
-            onClick: () => act('/panic', silenced ? { restore: true, master_db: -18 } : {})
+            onClick: () => act('/panic', silenced ? { restore: true } : {})
           })
         ]
+      }),
+
+      jsx(MasterRamp, {
+        db: s.master_db,
+        busy,
+        armed,
+        onCommit: (db) => act('/master', { db })
       }),
 
       jsx(SignalPath, {
@@ -1141,15 +1247,16 @@ export default {
         // The chip is the "is the amp alive" glance from any pane: a verdict dot plus the input level,
         // both from the same routes the page reads, so it cannot disagree with them.
         function Chip() {
+          const shown = useOnScreen()
           const meter = useQuery({
             queryKey: ['amphead2', 'chip-meter'],
             queryFn: () => rest2('/meter'),
-            refetchInterval: 400
+            refetchInterval: shown ? 400 : false
           })
           const state = useQuery({
             queryKey: ['amphead2', 'chip-state'],
             queryFn: () => rest2('/state'),
-            refetchInterval: 4000
+            refetchInterval: shown ? 4000 : false
           })
           const peak = Math.max((meter.data && meter.data.l) || 0, (meter.data && meter.data.r) || 0)
           const verdict = (state.data && state.data.verdict) || 'CONNECTING'
@@ -1182,7 +1289,10 @@ export default {
   }
 }
 
-// ---- the original face, unchanged, kept so both builds are on screen at once ----
+// ---- the original face, kept so both builds are on screen at once ----
+// Verbatim except for the meter cadence: its two useQuery calls read the same policy as the
+// rebuild above (hidden pane stops, STANDBY 400 ms, live 150 ms), because the cost being paid
+// there was a bridge round trip into REAPER, not a look.
 const LegacyPlugin = (() => {
 // AmpHead amp face: the pane that proves the rig is alive while you play.
 // Everything here comes from /api/plugins/amphead/state and /meter, which read REAPER directly,
@@ -1341,8 +1451,20 @@ function ChainRow({ fx, index, ui, onFocus }) {
 
 function AmpFace({ rest }) {
   const client = useQueryClient()
-  const state = useQuery({ queryKey: ['amphead', 'state'], queryFn: () => rest('/state'), refetchInterval: 1500 })
-  const meter = useQuery({ queryKey: ['amphead', 'meter'], queryFn: () => rest('/meter'), refetchInterval: 150 })
+  const shown = useOnScreen()
+  const state = useQuery({
+    queryKey: ['amphead', 'state'],
+    queryFn: () => rest('/state'),
+    refetchInterval: shown ? 1500 : false
+  })
+  const armedNow = !!(state.data && state.data.armed)
+  const meter = useQuery({
+    queryKey: ['amphead', 'meter'],
+    queryFn: () => rest('/meter'),
+    // 150 ms while the rig is live and the pane is on screen; 400 ms in STANDBY; nothing at all
+    // when the pane is hidden. Each poll is a file round trip into REAPER.
+    refetchInterval: shown ? meterEvery(armedNow) : false
+  })
   const [busy, setBusy] = useState(false)
   const [said, setSaid] = useState('')
   const clipped = useRef(false)
@@ -1389,7 +1511,7 @@ function AmpFace({ rest }) {
 
   const liveLabel = armed
     ? 'STANDBY: disarm and park the master at -60 dB'
-    : 'LIVE: arm, monitor and play at -18 dB'
+    : 'LIVE: arm and monitor, master stays silent until you raise it'
 
   return jsxs('div', {
     className: 'flex h-full flex-col gap-3 overflow-y-auto p-3 text-sm',
@@ -1411,7 +1533,7 @@ function AmpFace({ rest }) {
       jsx('button', {
         type: 'button',
         disabled: busy,
-        onClick: () => act('/live', { on: !armed, master_db: -18 }),
+        onClick: () => act('/live', { on: !armed }),
         className: 'w-full rounded-md px-3 py-2 text-xs font-medium disabled:opacity-50',
         style: armed
           ? { background: 'var(--ui-stroke-secondary)', color: 'var(--ui-text)' }
@@ -1422,7 +1544,7 @@ function AmpFace({ rest }) {
       jsxs('button', {
         type: 'button',
         disabled: busy,
-        onClick: () => act('/panic', silenced ? { restore: true, master_db: -18 } : {}),
+        onClick: () => act('/panic', silenced ? { restore: true } : {}),
         className: 'w-full rounded-md px-3 py-1.5 text-xs font-semibold disabled:opacity-50',
         style: silenced
           ? { background: 'var(--ui-stroke-secondary)', color: 'var(--ui-text)' }

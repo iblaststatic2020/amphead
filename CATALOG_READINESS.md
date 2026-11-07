@@ -91,6 +91,25 @@ Fix: register one declaration for REAPER, Windows block only (`executable` check
 miss a portable install), `min_version` 7.0. Then have `amphead_setup` read the availability result
 instead of hand-rolling `find_reaper()`.
 
+**Done.** `amphead/appdecl.py` holds the declaration (Windows block, three install roots plus
+`HKLM\SOFTWARE\REAPER` / `WOW6432Node`, `min_version` 7.0) and registers it from the plugin's
+`__init__`, keeping the returned declaration so `amphead_setup`, `launch.py` and the dashboard's
+`/setup` route read one answer instead of four hand-rolled probes. `state()` maps the host's answer
+onto four words, `available` / `missing_app` / `version_too_old` / `unsupported_os` (plus `unknown`
+when the declaration or its reader is not there), and `sentence()` turns each into the sentence a
+user actually gets. The locator still has a fallback: if the host's reader is missing the plugin
+searches the same roots itself rather than going dark.
+
+One wrinkle worth naming in the PR: the developer-guide page documents
+`hermes_platform.resolver.availability` as the reader, but that module is not in the published
+list `hermes plugins validate` checks against (`hermes_cli/data/plugin_api.json`), so validation
+warns "private core import" on the line that imports it. `hermes_platform.declaration` is on the
+list and is imported plainly. The availability import sits inside the guard's `try` precisely
+because of this: if a release moves it, the plugin degrades to `unknown` and falls back to its own
+search instead of failing to load. That is a documented-module-not-yet-listed gap, and the
+alternative, hand-rolling REAPER version detection out of the PE version resource, would be worse
+than one warning.
+
 ### G2. Rule 13 disclosure is thin in three specific places
 
 Rule 13 asks for "network calls to third-party services, reads outside the plugin's own data, shell
@@ -166,6 +185,13 @@ Fix, cheap: pause the meter when the pane is not visible (`document.visibilitySt
 existing pane mount state) and drop to 400 ms when the rig is in STANDBY, where the only thing
 moving is a -60 dB floor. Document the 150 ms choice and its reason in the PR, so it reads as a
 decision instead of an oversight.
+
+**Done.** One policy in `desktop/plugin.js` covers both panes and the chip: `METER_MS = 150` while
+the rig is armed and the pane is on screen, `METER_IDLE_MS = 400` in STANDBY, nothing at all when
+`document.visibilityState` is `hidden` (a `visibilitychange` listener brings it back, which is why
+the interval can safely be `false`). The `state` query is paused the same way. So an unwatched
+pane costs nothing and a parked rig costs 2.5 requests a second instead of 6.7. The vendored face
+keeps its layout verbatim and reads the same helper; the marker comment says so.
 
 ### G7. Windows only, with no unsupported-OS story
 

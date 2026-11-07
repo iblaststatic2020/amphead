@@ -113,14 +113,16 @@ class TestPanic(PanicCase):
         out = self.run_panic(FakeHost())
         self.assertIn("still live", out)
 
-    def test_restore_unbypasses_and_lifts_the_master_without_arming(self):
+    def test_restore_unbypasses_and_stays_silent_without_arming(self):
         host = FakeHost(master_db=-60.0, armed=False, monitor=False)
         for fx in host.chain:
             fx["enabled"] = False
         out = self.run_panic(host, {"restore": True})
         self.assertIn("panicked=False", out)
         self.assertIn("plugins_on=1", out)
-        self.assertIn("master_db=-18.0", out)
+        # Restore puts the chain back but never raises the master: the player ramps it themselves,
+        # so undo cannot hand back a rig that is suddenly loud.
+        self.assertIn("master_db=-60.0", out)
         self.assertIn("armed=False", out)
         self.assertIn("never arms", out)
         self.assertTrue(host.chain[0]["enabled"])

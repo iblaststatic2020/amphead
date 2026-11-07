@@ -381,6 +381,22 @@ class TestLive(unittest.TestCase):
         set_input.assert_not_called()
         self.assertTrue(arm.call_args.kwargs["allow_loud"])
 
+    def test_on_without_a_level_leaves_the_master_parked(self):
+        # Going live arms and monitors, but must not hand the player a loud rig: the master stays at
+        # the floor until they raise it. A live switch that jumps to -18 is a speaker-destroying
+        # surprise on a rig with a hot amp model already loaded.
+        with mock.patch.object(tools.RIG, "tabs_list", return_value=self.TABS), \
+             mock.patch.object(tools.RIG, "master", return_value={"db": -60.0}), \
+             mock.patch.object(tools.RIG, "set_master") as set_master, \
+             mock.patch.object(tools.RIG, "track_info", return_value={"recinput": "1"}), \
+             mock.patch.object(tools.RIG, "arm",
+                               return_value={"armed": True, "monitor": True}), \
+             mock.patch.object(tools.RIG, "ensure_audio", return_value={"inputs": 2}):
+            out = tools.handle_live({"on": True, "confirm": True})
+        self.assertIn("live=True", out)
+        self.assertIn("master_db=-60.0", out)
+        self.assertEqual(set_master.call_args.kwargs["db"], -60.0)
+
     def test_explicit_input_still_retargets_the_track(self):
         with mock.patch.object(tools.RIG, "tabs_list", return_value=self.TABS), \
              mock.patch.object(tools.RIG, "master", return_value={"db": -20.0}), \

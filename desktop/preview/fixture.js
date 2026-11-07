@@ -1,6 +1,6 @@
 // A rig fixture shaped exactly like /state and /meter answer, so the harness exercises the same
 // field names the real routes use. Values come from the saved amphead.rpp reading: NAM Universal
-// on the guitar track, ASIO at 512 / 44100, 11.61 ms out, master parked at -18 dB while live.
+// on the guitar track, ASIO at 512 / 44100, 11.61 ms out, master parked at -60 dB: the player ramps it up, nothing comes up loud on its own.
 //
 // There are two rigs here because there are two faces: `?engine=reaper` is the contest build's rig
 // and `?engine=amphead2` is the local engine. Each keeps its own chain, master and knob values, so
@@ -27,7 +27,7 @@ const rigs = {
     verdict: 'READY',
     reason: 'armed, monitoring, NAM Universal is passing signal',
     armed: true,
-    master: -18,
+    master: -60,
     project: 'amphead.rpp',
     ui: 'visible',
     problems: [],
@@ -156,19 +156,28 @@ export async function rest(path, options) {
   if (call.path === '/meter') return meter(call.engine)
   if (call.path === '/live') {
     rig.armed = body.on !== undefined ? !!body.on : !rig.armed
-    rig.master = body.master_db !== undefined ? body.master_db : rig.armed ? -18 : -60
+    rig.master = body.master_db !== undefined ? body.master_db : -60
     rig.verdict = rig.armed ? 'READY' : 'STANDBY'
     return { ok: true, engine: call.engine,
-             output: rig.armed ? 'live: armed, monitor on, master -18 dB' : 'standby: disarmed, master parked' }
+             output: rig.armed ? 'live: armed, monitor on, master still parked at -60 dB' : 'standby: disarmed, master parked' }
   }
   if (call.path === '/panic') {
     if (body.restore) {
       rig.chain = rig.chain.map((fx) => ({ ...fx, enabled: true }))
-      rig.master = body.master_db !== undefined ? body.master_db : -18
-      return { ok: true, engine: call.engine, output: 'restored: chain un-bypassed, master -18 dB' }
+      rig.master = body.master_db !== undefined ? body.master_db : -60
+      return { ok: true, engine: call.engine, output: 'restored: chain un-bypassed, still silent at -60 dB' }
     }
     rig.chain = rig.chain.map((fx) => ({ ...fx, enabled: false }))
     return { ok: true, engine: call.engine, output: 'panicked: chain bypassed, master untouched' }
+  }
+  // The volume ramp: the only route that makes the rig audible, so the fixture returns the level
+  // the backend would have stored rather than echoing the request.
+  if (call.path === '/master') {
+    const asked = Number(body.db)
+    const db = Number.isFinite(asked) ? Math.max(-60, Math.min(0, asked)) : (rig.master ?? -60)
+    rig.master = db
+    return { ok: true, engine: call.engine, db,
+             output: db <= -60 ? 'silent; raise it in steps and listen' : `master at ${db} dB; raise it in steps and listen` }
   }
   if (call.path === '/focus') return { ok: true, engine: call.engine, output: 'brought plugin 1 forward in REAPER' }
   // The rebuild turns knobs at /knob with a normalized value and reads the plugin's own number back;

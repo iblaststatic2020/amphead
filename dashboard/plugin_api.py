@@ -9,6 +9,7 @@ thing.
 from __future__ import annotations
 
 from pathlib import Path
+import math
 import sys
 from typing import Any
 
@@ -28,7 +29,7 @@ _ROOT = Path(__file__).resolve().parent.parent
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-from amphead import demo, port, tones, verdict  # noqa: E402
+from amphead import appdecl, demo, port, tones, verdict  # noqa: E402
 
 #: Which rig a request is talking to. Empty means "the one AMPHEAD_ENGINE names", which is how
 #: the tools and the original pane behave. The second pane sends ?engine=amphead2, so the two
@@ -234,7 +235,8 @@ def state() -> dict[str, Any]:
     try:
         live = RIG.state()
     except port.NoRig:
-        return {"verdict": "NO REAPER INSTALL", "reason": "REAPER is not installed on this machine",
+        reason = appdecl.unavailable_reason() or "REAPER is not installed on this machine"
+        return {"verdict": "NO REAPER INSTALL", "reason": reason,
                 "chain": [], "plugin": {}, "knobs": [], "presets": _presets(), "meter": {"peak": 0.0}}
 
     track_no = 1
@@ -305,7 +307,9 @@ def live_switch(body: dict) -> dict[str, Any]:
     from amphead import tools
 
     on = bool(body.get("on"))
-    db = body.get("master_db", -18)
+    # No level means silent. The Live switch arms and monitors; it never hands back a rig that is
+    # already loud, because the amp model on the track may be hot and speakers are not free.
+    db = body.get("master_db", -60)
     # Input 0: the Live button never repoints the track's input. Whatever the player chose in
     # REAPER stays chosen, which is the only default that cannot break a DI or a stereo pair.
     out = tools.handle_live({"on": on, "confirm": True, "master_db": db,
@@ -323,6 +327,37 @@ def panic(body: dict) -> dict[str, Any]:
     db = body.get("master_db", -60)
     out = tools.handle_panic({"restore": restore, "master_db": db})
     return {"output": out, "ok": not out.startswith("NOT PANICKED"), "restore": restore}
+
+
+@router.post("/master")
+def master_level(body: dict) -> dict[str, Any]:
+    """The player's own volume ramp, one write at a time.
+
+    Boot and Live both leave the master at the floor, so this is the only way the rig gets
+    audible. It is deliberately a separate route from /live: raising the level while a track is
+    already armed is the step that makes feedback possible, and it should be its own deliberate
+    action rather than a side effect of arming.
+    """
+    if demo.enabled():
+        return demo.live_switch({"on": True, "master_db": body.get("db", -60)})
+    from amphead import tools
+
+    try:
+        asked = float(body.get("db"))
+    except (TypeError, ValueError):
+        return {"output": "NO LEVEL: say how many dB", "ok": False}
+    if not math.isfinite(asked):
+        return {"output": "NO LEVEL: say how many dB", "ok": False}
+    db = max(-60.0, min(0.0, asked))
+    try:
+        RIG.set_master(db=db, expect=tools.active_path())
+        level = RIG.master().get("db")
+    except port.NoRig:
+        return {"output": "NOT SET: REAPER is not running", "ok": False}
+    except port.RigError as exc:
+        return {"output": f"NOT SET: {exc}", "ok": False}
+    where = "silent" if float(level or 0) <= -60 else f"master at {level} dB"
+    return {"output": f"{where}; raise it in steps and listen", "ok": True, "db": level}
 
 
 @router.post("/knob")

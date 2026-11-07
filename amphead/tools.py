@@ -13,7 +13,7 @@ from typing import Any
 import math
 import time
 
-from . import port, verdict
+from . import appdecl, port, verdict
 
 TOOLSET = "amphead"
 
@@ -93,15 +93,16 @@ TONE_SCHEMA = _schema(
 
 LIVE_SCHEMA = _schema(
     "amphead_live",
-    "Open or close the guitar's path to the speakers. on=true sets the master to the requested "
-    "level, points the track at the input, arms it and turns input monitoring on; on=false disarms "
-    "and parks the master at -60 dB. Going live is audible, so on=true requires confirm=true.",
+    "Open or close the guitar's path to the speakers. on=true points the track at the input, arms "
+    "it and turns monitoring on, but leaves the master parked at -60 dB: the player raises it "
+    "themselves, so nothing can howl or blow a speaker the moment the amp comes on. on=false "
+    "disarms and parks the master at -60 dB. Going live is audible, so on=true requires confirm=true.",
     {"on": {"type": "boolean", "description": "true goes live, false returns to standby."},
      "confirm": {"type": "boolean",
                  "description": "Required for on=true. Confirms the player wants the amp audible."},
      "master_db": {"type": "number",
-                   "description": "Master level in dB for live playing (default -18, floor -60, "
-                                  "ceiling 0).",
+                   "description": "Master level in dB for live playing (default -60, i.e. silent: "
+                                  "the player ramps it up; floor -60, ceiling 0).",
                    "minimum": -60, "maximum": 0},
      "input": {"type": "string",
                "description": "Track input, counted from 1: \"1\" is the first channel on the "
@@ -115,12 +116,12 @@ PANIC_SCHEMA = _schema(
     "Silence the rig in one call: park the master at -60 dB, disarm the track and bypass every "
     "plugin in the chain, then read all three back and report what is actually true. The meter "
     "keeps working, so the input is still visible while nothing reaches the speakers. restore=true "
-    "puts the chain back and lifts the master to the given level, without arming the track.",
+    "puts the chain back, still silent at -60 dB unless a level is given, and does not arm the track.",
     {"restore": {"type": "boolean",
                  "description": "Undo the panic: un-bypass the chain and lift the master "
                                 "(default false, which silences the rig)."},
      "master_db": {"type": "number",
-                   "description": "Master level used when restoring (default -18).",
+                   "description": "Master level used when restoring (default -60, silent).",
                    "minimum": -60, "maximum": 0},
      "track": {"type": "integer", "description": "Track index, 1 based (default 1).",
                "minimum": 1}},
@@ -143,6 +144,17 @@ def check_reaper_available() -> bool:
         return True
     except port.RigError:
         return False
+
+
+def no_install_reason() -> str:
+    """Why there is no host, in the host's own words (the REAPER application declaration).
+
+    One sentence for the three states that mean "nothing to launch": missing, too old, wrong OS.
+    Falls back to the old line when hermes_platform is not importable, so a bare checkout still
+    explains itself.
+    """
+    return (appdecl.unavailable_reason()
+            or "neither REAPER_EXE nor a standard install path resolved")
 
 
 def _db_level(amplitude: float) -> str:
@@ -222,7 +234,7 @@ def handle_status(args: dict[str, Any], **_kw) -> str:
     try:
         state = RIG.state()
     except port.NoRig:
-        return "NO REAPER INSTALL: neither REAPER_EXE nor a standard install path resolved"
+        return f"NO REAPER INSTALL: {no_install_reason()}"
     if state.get("bridge") != "live":
         label = "REAPER BLOCKED" if state.get("bridge") == "down" else "REAPER NOT RUNNING"
         return (f"{label} | reason={state.get('reason') or 'no heartbeat'} | "
@@ -436,10 +448,10 @@ def handle_live(args: dict[str, Any], **_kw) -> str:
                      ("monitor", payload.get("monitor")), ("master_db", level.get("db"))])
 
     if not args.get("confirm"):
-        return ("REFUSED: going live makes the amp audible. Call again with confirm=true, "
-                "and pick a master_db you can live with (default -18).")
+        return ("REFUSED: going live arms the rig. Call again with confirm=true. "
+                "The master stays parked at -60 dB; raise it yourself once you hear nothing wrong.")
 
-    db = float(args.get("master_db", -18.0))
+    db = float(args.get("master_db", STANDBY_DB))
     db = max(STANDBY_DB, min(0.0, db))
     # Input 0 means "leave the track's input alone". Pointing a player's track at input 1 behind
     # their back is the one write that breaks a rig silently, so it only happens when asked.
@@ -497,7 +509,7 @@ def handle_ready(args: dict[str, Any], **_kw) -> str:
     try:
         state = RIG.state()
     except port.NoRig:
-        return ("verdict=NO REAPER INSTALL | reason=REAPER is not installed on this machine | "
+        return (f"verdict=NO REAPER INSTALL | reason={no_install_reason()} | "
                 "problems=REAPER is missing")
 
     chain: list[dict] = []
@@ -569,7 +581,7 @@ def handle_panic(args: dict[str, Any], **_kw) -> str:
 
     try:
         if restore:
-            db = max(STANDBY_DB, min(0.0, float(args.get("master_db", -18.0))))
+            db = max(STANDBY_DB, min(0.0, float(args.get("master_db", STANDBY_DB))))
             RIG.set_master(db=db, expect=expect)
         else:
             # Master first: it is the one control that cannot fail because a plugin refused it.

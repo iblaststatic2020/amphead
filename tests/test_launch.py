@@ -25,6 +25,7 @@ class FindReaperTests(unittest.TestCase):
 
     def test_missing_install_raises_with_instruction(self):
         with mock.patch.dict(os.environ, {"REAPER_EXE": ""}), \
+             mock.patch.object(launch.appdecl, "located", return_value=None), \
              mock.patch.object(launch, "WINDOWS_CANDIDATES", []), \
              mock.patch.object(launch.shutil, "which", return_value=None):
             with self.assertRaises(launch.NoReaperInstall) as caught:

@@ -247,6 +247,23 @@ class TestTheOriginalFaceIsStillThere(unittest.TestCase):
     so a user who liked the old pane keeps it and the two are side by side instead of one replacing
     the other."""
 
+    def test_both_faces_pay_the_same_meter_cadence(self):
+        """One policy, both panes: hidden stops it, STANDBY is 400 ms, live is 150 ms.
+
+        The reason is a cost, not a look: every meter poll is a file round trip into REAPER, so a
+        face that polls at 150 ms while nobody is looking is the plugin spending a host call for
+        nothing. The shipped face is vendored, but not in this: it reads the same helper.
+        """
+        for source in (face_source(), legacy_source()):
+            with self.subTest(source=source[:40]):
+                self.assertNotIn("refetchInterval: 150 }", source, "a bare 150 ms poll is back")
+                self.assertIn("meterEvery(", source, "the cadence helper is not used")
+                self.assertIn("useOnScreen(", source, "the pane does not know it is hidden")
+        combined = PLUGIN.read_text(encoding="utf-8")
+        self.assertIn("visibilitychange", combined)
+        self.assertIn("METER_IDLE_MS = 400", combined)
+        self.assertIn("METER_MS = 150", combined)
+
     def test_the_shipped_face_is_vendored_whole(self):
         legacy = legacy_source()
         self.assertIn("function AmpFace(", legacy)

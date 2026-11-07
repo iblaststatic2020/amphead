@@ -220,7 +220,7 @@ The pane is the interface. It is a desktop plugin half that ships in this packag
 |---|---|
 | verdict | one word: `READY`, `STANDBY`, `NO SIGNAL`, `CLIPPING`, `DEVICE CLOSED`, `REAPER NOT RUNNING`, `REAPER BUSY`, plus the reason in a sentence |
 | input meter | live peak in dB with a latching clip light |
-| LIVE switch | one button: arm and monitor at -18 dB, or disarm and park the master at -60 dB |
+| LIVE switch | one button: arm and monitor, leaving the master parked at -60 dB so the player ramps it up; or disarm and park the master |
 | chain | the real plugin list on the guitar track, in order, marked on or bypassed |
 | amp | eight knobs as sliders, sitting where the host says they sit, with the host's own read-back beside each one |
 | tones | `clean`, `crunch`, `lead`, and a free-text box that takes "make it crunchier" |

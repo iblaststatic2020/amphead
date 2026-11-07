@@ -58,6 +58,7 @@ TWEAK = ROUTER.routes[("POST", "/tweak")]
 PRESET = ROUTER.routes[("POST", "/preset")]
 FOCUS = ROUTER.routes[("POST", "/focus")]
 INPUT = ROUTER.routes[("POST", "/input")]
+MASTER = ROUTER.routes[("POST", "/master")]
 
 # The project a write names as `expect`: every mutating bridge command carries one, so a write
 # cannot land in a tab nobody meant to touch.
@@ -186,6 +187,44 @@ class TestLiveRoute(unittest.TestCase):
         with mock.patch("amphead.tools.handle_live", return_value="live=True") as handler:
             LIVE({"on": True, "input": "1+2"})
         self.assertEqual(handler.call_args.args[0]["input"], "1+2")
+
+
+class TestMasterRoute(unittest.TestCase):
+    """The player's volume ramp: silent unless they move it, and bounded when they do."""
+
+    def test_live_without_a_level_asks_for_silence(self):
+        # The button no longer sends a level. If the route filled in a comfortable default the rig
+        # would come up loud through the player's speakers, which is the thing being prevented.
+        with mock.patch("amphead.tools.handle_live", return_value="live=True") as handler:
+            LIVE({"on": True})
+        self.assertEqual(handler.call_args.args[0]["master_db"], -60)
+
+    def test_master_clamps_above_unity(self):
+        with mock.patch.object(API.RIG, "set_master", return_value={"db": 0.0}) as set_master, \
+             mock.patch.object(API.RIG, "master", return_value={"db": 0.0}), \
+             mock.patch("amphead.tools.active_path", return_value="C:/x/rig.rpp"):
+            payload = MASTER({"db": 12})
+        self.assertEqual(set_master.call_args.kwargs["db"], 0.0)
+        self.assertTrue(payload["ok"])
+
+    def test_master_clamps_below_the_floor(self):
+        with mock.patch.object(API.RIG, "set_master", return_value={"db": -60.0}) as set_master, \
+             mock.patch.object(API.RIG, "master", return_value={"db": -60.0}), \
+             mock.patch("amphead.tools.active_path", return_value="C:/x/rig.rpp"):
+            payload = MASTER({"db": -200})
+        self.assertEqual(set_master.call_args.kwargs["db"], -60.0)
+        self.assertEqual(payload["db"], -60.0)
+
+    def test_master_without_a_number_answers_in_words(self):
+        payload = MASTER({"db": "louder"})
+        self.assertFalse(payload["ok"])
+        self.assertIn("NO LEVEL", payload["output"])
+
+    def test_master_refuses_a_number_that_is_not_one(self):
+        # NaN survives a naive clamp and would sit in the master as a level nothing can read.
+        payload = MASTER({"db": float("nan")})
+        self.assertFalse(payload["ok"])
+        self.assertIn("NO LEVEL", payload["output"])
 
 
 class TestPanicRoute(unittest.TestCase):

@@ -15,7 +15,13 @@ logger = logging.getLogger(__name__)
 def register(ctx) -> None:
     """Register the tools. Imports stay inside this function so validation can run with the host
     closed and with no bridge, no audio device and no rig file present."""
+    from .amphead import appdecl
     from .amphead.tools import TOOLS, check_reaper_available
+
+    # Name REAPER to the host in its own vocabulary (application declaration). Loaders do not
+    # read plugin YAML for this, so the plugin registers it itself; a host without
+    # hermes_platform returns False and nothing else changes.
+    appdecl.register()
 
     for name, schema, handler, emoji in TOOLS:
         ctx.register_tool(name=name, toolset="amphead", schema=schema, handler=handler,

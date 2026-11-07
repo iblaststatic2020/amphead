@@ -17,7 +17,7 @@ import sys
 import time
 from pathlib import Path
 
-from . import bridge, port
+from . import appdecl, bridge, port
 
 WINDOWS_CANDIDATES = [
     r"C:\Program Files\REAPER (x64)\reaper.exe",
@@ -34,19 +34,27 @@ class NoReaperInstall(port.NoRig):
 
 
 def find_reaper() -> Path:
-    """Locate reaper.exe: env override, then the usual install paths, then PATH."""
+    """Locate reaper.exe: env override, then the application declaration, then our own list.
+
+    The declaration is the host's evaluator doing the looking (install roots, then the uninstall
+    registry), which is how a copy in a non-standard folder is found at all. The hand-written
+    candidates stay as the fallback for a checkout with no hermes_platform, and PATH catches a
+    portable install that someone put on it.
+    """
     override = os.environ.get("REAPER_EXE")
     if override and Path(override).is_file():
         return Path(override)
+    declared = appdecl.located()
+    if declared and Path(declared).is_file():
+        return Path(declared)
     for candidate in WINDOWS_CANDIDATES:
         if Path(candidate).is_file():
             return Path(candidate)
     found = shutil.which("reaper") or shutil.which("reaper.exe")
     if found:
         return Path(found)
-    raise NoReaperInstall(
-        "reaper.exe not found; set REAPER_EXE to its full path"
-    )
+    # Too old is its own sentence: "not installed" would send a player to the installer.
+    raise NoReaperInstall(appdecl.unavailable_reason() or "reaper.exe not found; set REAPER_EXE to its full path")
 
 
 def bridge_alive(timeout: float = 0.6) -> bool:
