@@ -1,0 +1,97 @@
+"""The engine process verbs, driven in memory. No device, no subprocess."""
+
+import io
+import json
+import unittest
+
+try:
+    import numpy as np
+    from amphead.engine2 import ARM_MASTER_DB, SAFE_MASTER_DB
+    from amphead.engine_main import Server, serve
+except ModuleNotFoundError:  # pragma: no cover - the engine is an optional extra
+    np = None
+
+if np is None:  # pragma: no cover
+    raise unittest.SkipTest("numpy is not installed")
+
+
+@unittest.skipIf(np is None, "numpy is not installed")
+class VerbTest(unittest.TestCase):
+    def setUp(self):
+        from amphead.engine2 import Engine
+
+        self.server = Server(Engine(samplerate=48000))
+
+    def test_status_describes_a_disarmed_engine(self):
+        result = self.server.handle({"cmd": "status"})["result"]
+        self.assertEqual(result["engine"], "amphead2")
+        self.assertFalse(result["running"])
+        self.assertFalse(result["armed"])
+        self.assertEqual(result["samplerate"], 48000)
+        self.assertEqual(result["tone"], {"bass": 0.0, "mid": 0.0, "treble": 0.0})
+
+    def test_arm_uses_the_measured_default(self):
+        result = self.server.handle({"cmd": "arm"})["result"]
+        self.assertTrue(result["armed"])
+        self.assertEqual(result["master_db"], ARM_MASTER_DB)
+
+    def test_arm_can_be_overridden(self):
+        self.assertEqual(self.server.handle({"cmd": "arm", "master_db": -12})["result"]["master_db"], -12.0)
+
+    def test_panic_is_a_hard_mute(self):
+        self.server.handle({"cmd": "arm", "master_db": 0})
+        result = self.server.handle({"cmd": "panic"})["result"]
+        self.assertFalse(result["armed"])
+        self.assertEqual(result["master_db"], SAFE_MASTER_DB)
+
+    def test_tone_verbs_persist_and_report(self):
+        self.assertEqual(self.server.handle({"cmd": "tone", "bass": 4})["result"]["bass"], 4.0)
+        result = self.server.handle({"cmd": "status"})["result"]
+        self.assertEqual(result["tone"]["bass"], 4.0)
+        self.assertEqual(result["tone"]["mid"], 0.0)
+
+    def test_gain_refuses_an_unknown_name(self):
+        self.server.handle({"cmd": "gain", "master_db": -6})
+        self.assertEqual(self.server.handle({"cmd": "status"})["result"]["master_db"], -6.0)
+
+    def test_capture_verbs_update_the_chain(self):
+        self.server.handle({"cmd": "clear_capture"})
+        result = self.server.handle({"cmd": "status"})["result"]
+        self.assertIsNone(result["capture"])
+
+    def test_unknown_command_is_an_error_not_a_crash(self):
+        reply = self.server.handle({"cmd": "make_me_a_sandwich"})
+        self.assertFalse(reply["ok"])
+        self.assertIn("unknown command", reply["error"])
+
+    def test_a_failing_verb_reports_and_keeps_the_engine(self):
+        reply = self.server.handle({"cmd": "load_capture", "path": "no-such-file.nam"})
+        self.assertFalse(reply["ok"])
+        self.assertTrue(self.server.handle({"cmd": "status"})["ok"])
+
+    def test_quit_stops_the_loop(self):
+        self.assertTrue(self.server.handle({"cmd": "quit"})["stop"])
+
+
+@unittest.skipIf(np is None, "numpy is not installed")
+class LoopTest(unittest.TestCase):
+    def test_serve_reads_json_lines_and_writes_one_reply_each(self):
+        stdin = io.StringIO('{"cmd":"status"}\n\n{"cmd":"arm"}\n{"cmd":"quit"}\n')
+        stdout = io.StringIO()
+        self.assertEqual(serve(stdin, stdout), 0)
+        lines = [json.loads(line) for line in stdout.getvalue().splitlines()]
+        self.assertEqual(len(lines), 3)
+        self.assertTrue(lines[0]["result"]["engine"] == "amphead2")
+        self.assertTrue(lines[1]["result"]["armed"])
+
+    def test_bad_json_does_not_end_the_loop(self):
+        stdin = io.StringIO("not json\n{\"cmd\":\"status\"}\n")
+        stdout = io.StringIO()
+        serve(stdin, stdout)
+        lines = [json.loads(line) for line in stdout.getvalue().splitlines()]
+        self.assertFalse(lines[0]["ok"])
+        self.assertTrue(lines[1]["ok"])
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -16,6 +16,9 @@ dist/
 *.rpp.bak
 *.reapeaks
 *.nam
+# ... except the tiny graph the engine tests check the maths against
+!tests/fixtures/*.nam
+!tests/fixtures/*.npz
 
 # Engine probe scratch: rendered numpy buffers and saved plugin states
 out/
