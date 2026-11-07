@@ -21,6 +21,16 @@ TOOLSET = "amphead"
 #: The rig this process talks to. Swap AMPHEAD_ENGINE to swap the backend.
 RIG = port.active()
 
+
+def _host() -> str:
+    """What to call the thing that hosts the chain, in the player's words.
+
+    Every sentence below used to say REAPER, which is a lie the moment the engine is the
+    backend: a player told "REAPER is not running" while their rig is silent will look
+    for a window that does not exist.
+    """
+    return str(getattr(RIG, "label", "REAPER"))
+
 # Below this the master is quiet enough that arming cannot howl. Same floor the bridge enforces.
 SAFE_MASTER_DB = port.SAFE_MASTER_DB
 
@@ -213,7 +223,7 @@ def handle_ping(args: dict[str, Any], **_kw) -> str:
     except port.NoRig:
         found = _rig_find()
         where = f"installed at {found}" if found else "no install found"
-        return f"REAPER NOT RUNNING: {where}; call amphead_setup to start it"
+        return f"{_host()} NOT RUNNING: {where}; call amphead_setup to start it"
     except port.OldRig as exc:
         return f"OLD BRIDGE: {exc}"
     except port.RigBlocked as exc:
@@ -221,11 +231,11 @@ def handle_ping(args: dict[str, Any], **_kw) -> str:
         if not _rig_running():
             found = _rig_find()
             where = f"installed at {found}" if found else "no install found"
-            return f"REAPER NOT RUNNING: {where}; call amphead_setup to start it"
-        return f"REAPER BLOCKED: {exc}"
+            return f"{_host()} NOT RUNNING: {where}; call amphead_setup to start it"
+        return f"{_host()} BLOCKED: {exc}"
     except port.RigError as exc:
         if not _rig_running():
-            return "REAPER NOT RUNNING: call amphead_setup to start it"
+            return f"{_host()} NOT RUNNING: call amphead_setup to start it"
         return f"BRIDGE ERROR: {exc}"
     return _fmt([("ok", info.get("ok")), ("proto", info.get("proto")),
                  ("reaper", info.get("version")), ("bridge", info.get("bridge"))])
@@ -237,7 +247,8 @@ def handle_status(args: dict[str, Any], **_kw) -> str:
     except port.NoRig:
         return f"NO REAPER INSTALL: {no_install_reason()}"
     if state.get("bridge") != "live":
-        label = "REAPER BLOCKED" if state.get("bridge") == "down" else "REAPER NOT RUNNING"
+        label = (f"{_host()} BLOCKED" if state.get("bridge") == "down"
+                 else f"{_host()} NOT RUNNING")
         return (f"{label} | reason={state.get('reason') or 'no heartbeat'} | "
                 f"rig={rig_path().as_posix()} | call amphead_setup")
     fields: list[tuple[str, Any]] = [
@@ -292,6 +303,10 @@ def handle_setup(args: dict[str, Any], **_kw) -> str:
         tabs_before = len(RIG.tabs_list())
         opened = RIG.open_rig(path.as_posix(), new="1")
         rig = opened.get("path") or path.as_posix()
+        if getattr(RIG, "name", "reaper") != "reaper":
+            # No tab, no .rpp: naming one would send the player looking for a file that
+            # was never written.
+            rig = str(RIG.project() or getattr(RIG, "label", "the rig"))
         # The guard is on for file-backed tabs, our own rig included: a write must name the tab it
         # intends to touch, so a stale handle can never land on somebody's song.
         lowered = RIG.set_master(SAFE_MASTER_DB, expect=rig)
@@ -324,7 +339,7 @@ def handle_setup(args: dict[str, Any], **_kw) -> str:
     except port.NoRig as exc:
         return f"NO REAPER INSTALL: {exc}"
     return _fmt([
-        ("state", "STANDBY"), ("ui", running.get("ui")), ("rig", path.as_posix()),
+        ("state", "STANDBY"), ("ui", running.get("ui")), ("rig", rig),
         ("tabs", f"{tabs_before}->{tabs_after}"),
         ("master_db", lowered.get("db")),
         ("track_db", track_db),
@@ -674,7 +689,28 @@ def handle_set(args: dict[str, Any], **_kw) -> str:
             unit=args.get("unit"),
         )
     except port.NoRig:
-        return "NOT SET: REAPER is not running, call amphead_setup first"
+        # A rig that hosts its own chain has no REAPER plug-in to poke, but it does have
+        # knobs, and they answer through the same port the rest of this module uses.
+        setter = getattr(RIG, "set_param", None)
+        if setter is None:
+            return f"NOT SET: {_host()} is not running, call amphead_setup first"
+        try:
+            wrote = setter(
+                track=int(args.get("track") or 1), fx=int(args.get("fx") or 0),
+                param=args.get("param"), value=float(args.get("value")),
+                unit=args.get("unit"), mode=str(args.get("mode") or "auto"),
+            )
+        except (AttributeError, TypeError):
+            return f"NOT SET: {_host()} has no knobs to write outside REAPER"
+        except port.RigError as exc:
+            return f"NOT SET: {exc}"
+        return _fmt([
+            ("set", wrote.get("landed")), ("fx", wrote.get("fx_name")),
+            ("param", wrote.get("param_name")),
+            ("wrote", f"{float(args.get('value')):g} ({wrote.get('mode')})"),
+            ("reads_back", wrote.get("fmt")), ("norm", round(float(wrote.get("norm") or 0), 4)),
+            ("clamped", False), ("retried", False),
+        ])
     except rig.WriteRefused as exc:
         # Before ReaperError: a refusal is a rig failure, not "the host would not answer".
         return f"REFUSED: {exc}"

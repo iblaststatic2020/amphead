@@ -8,7 +8,7 @@ knows.
 
 Run it with the interpreter that has numpy and sounddevice:
 
-    python -m amphead.engine_main --samplerate 44100 --blocksize 128
+    python -m amphead.engine_main --samplerate 44100 --blocksize 512
 """
 
 from __future__ import annotations
@@ -263,7 +263,9 @@ def serve(stdin=None, stdout=None) -> int:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="AmpHead 2 engine process")
     parser.add_argument("--samplerate", type=int, default=44100)
-    parser.add_argument("--blocksize", type=int, default=128)
+    parser.add_argument("--blocksize", type=int, default=512,
+                        help="frames per callback (512 is the measured default: same round "
+                             "trip as 128 on kernel streaming, less CPU, no starved blocks)")
     parser.add_argument("--input", type=int, default=None)
     parser.add_argument("--output", type=int, default=None)
     args = parser.parse_args(argv)

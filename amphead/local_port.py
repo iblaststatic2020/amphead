@@ -201,8 +201,13 @@ class AmpHead2Rig:
         return ("absent", f"{LABEL} is not running")
 
     def tabs_list(self, **kw: Any) -> list:
-        # No tabs: the engine holds one chain, and it is always the active one.
-        return []
+        """One chain, always open, always the one you are listening to.
+
+        The pane asks a rig which tab is active and refuses to write without an answer,
+        so the engine answers with itself instead of an empty list: the guard exists to
+        stop a stale handle landing on somebody's song, and there is no song here.
+        """
+        return [{"active": True, "path": str(self.project() or LABEL), "index": 0}]
 
     def track_info(self, track: int = 1, **kw: Any) -> dict:
         got = self._call(cmd="status")
@@ -285,6 +290,37 @@ class AmpHead2Rig:
             })
         return rows
 
+    def set_param(self, track: int = 1, fx: int = 0, param: Any = None, value: float = 0.0,
+                  unit: str | None = None, mode: str = "auto", **kw: Any) -> dict:
+        """Turn one tone knob, then read every knob back and say what the engine holds.
+
+        The pane's write path wants a write it can prove: so this returns the value the
+        engine reports after the write, not the value that was asked for.
+        """
+        if fx != 1:
+            raise EngineRefused(f"{LABEL} only has knobs on the tone stage (stage 1); "
+                                f"a capture and a cabinet have none to turn.")
+        names = ("bass", "mid", "treble")
+        if isinstance(param, int) and not isinstance(param, bool):
+            if not 0 <= param < len(names):
+                raise EngineRefused(f"{LABEL} tone stage has 3 knobs, not {param + 1}")
+            key = names[param]
+        else:
+            key = str(param).strip().lower()
+            if key not in names:
+                raise EngineRefused(f"{LABEL} has no knob called {param!r}; the tone stage "
+                                    f"has Bass, Mid and Treble.")
+        wanted = float(value)
+        if unit and str(unit).lower() in ("norm", "normalized", "0-1"):
+            wanted = (max(0.0, min(1.0, wanted)) - 0.5) * 24.0
+        self._call(cmd="tone", **{key: wanted})
+        rows = {str(row["name"]).lower(): row for row in self.fx_params(track=track, fx=fx)}
+        got = rows[key]
+        return {"fx": 1, "fx_name": "Tone", "param": got["i"], "param_name": got["name"],
+                "raw": got["raw"], "fmt": got["fmt"], "norm": got["norm"],
+                "wanted": wanted, "landed": abs(float(got["raw"]) - wanted) < 0.051,
+                "mode": mode, "unit": unit}
+
     def param_index(self, name: str, track: int = 1, fx: int = 0, **kw: Any) -> int:
         wanted = str(name).strip().lower()
         for row in self.fx_params(track=track, fx=fx):
@@ -313,7 +349,18 @@ class AmpHead2Rig:
         # also have to know that the stream was closed while the rig sat idle.
         if not self._call(cmd="status").get("running"):
             self._call(cmd="start")
-        got = self._call(cmd="arm")
+        # Arming moves the master to the measured default. A player who already asked for
+        # a level in the same breath meant that level, so put it back afterwards.
+        before = self._call(cmd="status").get("master_db")
+        got = dict(self._call(cmd="arm"))
+        try:
+            if before is not None and float(before) > port.SAFE_MASTER_DB + 0.5:
+                if abs(float(before) - float(got.get("master_db") or 0.0)) > 0.01:
+                    # Keep the arm answer (armed, monitor) and take only the level back.
+                    got["master_db"] = self._call(cmd="gain", master_db=float(before)).get(
+                        "master_db")
+        except (TypeError, ValueError):
+            pass
         return {"armed": bool(got.get("armed")), "monitor": bool(got.get("armed")),
                 "master_db": got.get("master_db")}
 
@@ -322,11 +369,17 @@ class AmpHead2Rig:
         return {"armed": bool(got.get("armed")), "master_db": got.get("master_db")}
 
     def fx_bypass(self, track: int = 1, fx: int = 0, on: bool = True, **kw: Any) -> dict:
-        """Turning a stage off is real; turning one back on needs its file again."""
+        """``on`` is bypass-on, as the pane means it: true takes the stage out of the path.
+
+        Taking a stage out is honest and immediate. Putting it back is not: the engine
+        holds a capture and an IR, not a rack of plug-ins, so a stage that was bypassed
+        has to be loaded again rather than switched back on. Saying so beats a chain that
+        reports itself restored while it is still clean.
+        """
         if not 0 <= fx < len(STAGES):
             raise EngineRefused(f"{LABEL} has no stage {fx}")
         name = STAGES[fx]
-        if on:
+        if not on:
             raise EngineRefused(
                 f"{LABEL} cannot switch {name} back on without loading it again: "
                 f"run amphead_capture or amphead_cab, or set the tone knobs."
@@ -380,7 +433,7 @@ class AmpHead2Rig:
             "bridge": "live",
             "rig_tab": True,
             "project": LABEL,
-            "path": str(got.get("capture") or ""),
+            "path": str(got.get("capture") or f"{LABEL} (no project file)"),
             "tracks": 1,
             "device": {
                 "buffer": got.get("blocksize"),
