@@ -357,7 +357,7 @@ the real rules applied to a rig that is not there. It never turns itself on.
 Working and verified against REAPER 7.77: the bridge, the launch and standby rules, the arm safety
 floor, tone application, the live switch, the readiness verdict, panic, the amp face backend, the
 pane with its sliders and status-bar chip, and deep links that only fire while REAPER is on screen.
-393 unit tests, `hermes plugins validate` and `hermes plugins validate --install-deps` both pass.
+426 unit tests, `hermes plugins validate` and `hermes plugins validate --install-deps` both pass.
 
 The demo rig is verified the same way: a live pass through `dashboard.plugin_api` with a throwaway
 home turns the demo on (READY, moving meter, knob tweak, tone load, PANIC to `NO CHAIN`, restore to
@@ -376,6 +376,17 @@ Two host facts that cost real time and are worth knowing before touching the bri
   then ignored, and the readback looks identical to the input.
 - A plugin-written chunk can contain `=` padding in the middle, so strip every `=` before decoding and
   re-pad afterwards.
+
+## Catalog status
+
+`CATALOG_READINESS.md` audits this repo against what Hermes documents a plugin to be and what the
+catalog requires: what the docs allow, why a plugin that fronts another application is a supported
+category, and every gap that blocks or will be raised in review, each with its fix and acceptance
+check. Read it before cutting the catalog PR.
+
+Short version: the plugin qualifies on shape, surfaces and the contest's own wording. The submission
+is blocked on a private repository and a stale pin, and wants an application declaration for REAPER,
+a fuller disclosure, and a test that proves the tools behave with no desktop attached.
 
 ## Layout
 
