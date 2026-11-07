@@ -1516,7 +1516,7 @@ function AmpFace({ rest }) {
   const running = s.running !== false
   const liveLabel = armed
     ? 'STANDBY: disarm and park the master at -60 dB'
-    : 'LIVE: arm and monitor, master stays silent until you raise it'
+    : 'LIVE: arm and monitor at the safe -6 dB, then use the ramp'
   const firstLabel = !running
     ? 'SET UP: open the engine, silent until Live'
     : liveLabel
@@ -1562,6 +1562,15 @@ function AmpFace({ rest }) {
           : silenced
             ? 'RESTORE: un-bypass the chain and lift the master'
             : 'PANIC: silence the rig now'
+      }),
+
+      // Live arms at the floor on purpose, so without this the player is armed and inaudible and
+      // the only honest word for that is broken. The ramp is the deliberate step that makes sound.
+      jsx(MasterRamp, {
+        db: s.master_db,
+        busy,
+        armed,
+        onCommit: (db) => act('/master', { db })
       }),
 
       jsxs('div', {

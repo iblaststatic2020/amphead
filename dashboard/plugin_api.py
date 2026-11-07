@@ -334,8 +334,9 @@ def live_switch(body: dict) -> dict[str, Any]:
         return demo.live_switch(body)
 
     on = bool(body.get("on"))
-    # No level means silent. The Live switch arms and monitors; it never hands back a rig that is
-    # already loud, because the amp model on the track may be hot and speakers are not free.
+    # No level means the tool's own default. REAPER arms at the floor and the player ramps; the
+    # local engine arms at its measured -6 dB, which was set so a -18 dBFS DI peaks at -2.8 dBFS
+    # with no clipped samples. Either way this button never hands back a rig it cannot justify.
     db = body.get("master_db", -60)
     # Input 0: the Live button never repoints the track's input. Whatever the player chose in
     # REAPER stays chosen, which is the only default that cannot break a DI or a stereo pair.
@@ -382,8 +383,6 @@ def master_level(body: dict) -> dict[str, Any]:
     """
     if demo.enabled():
         return demo.live_switch({"on": True, "master_db": body.get("db", -60)})
-    from amphead import tools
-
     try:
         asked = float(body.get("db"))
     except (TypeError, ValueError):
@@ -391,13 +390,17 @@ def master_level(body: dict) -> dict[str, Any]:
     if not math.isfinite(asked):
         return {"output": "NO LEVEL: say how many dB", "ok": False}
     db = max(-60.0, min(0.0, asked))
-    try:
-        RIG.set_master(db=db, expect=tools.active_path())
-        level = RIG.master().get("db")
-    except port.NoRig:
-        return {"output": "NOT SET: REAPER is not running", "ok": False}
-    except port.RigError as exc:
-        return {"output": f"NOT SET: {exc}", "ok": False}
+    # The ramp is the step that makes sound, so it must reach whichever rig the request named.
+    # This one took the module-level RIG, which is REAPER: an Amp 2 drag answered "REAPER is
+    # not running" while the engine held the speakers.
+    with _speaking_to_tools() as tools:
+        try:
+            tools.RIG.set_master(db=db, expect=tools.active_path())
+            level = tools.RIG.master().get("db")
+        except port.NoRig:
+            return {"output": f"NOT SET: {tools.RIG.label} is not running", "ok": False}
+        except port.RigError as exc:
+            return {"output": f"NOT SET: {exc}", "ok": False}
     where = "silent" if float(level or 0) <= -60 else f"master at {level} dB"
     return {"output": f"{where}; raise it in steps and listen", "ok": True, "db": level}
 
@@ -529,12 +532,11 @@ def focus(body: dict) -> dict[str, Any]:
 def preset(body: dict) -> dict[str, Any]:
     if demo.enabled():
         return demo.preset(body)
-    from amphead import tools
-
     query = str(body.get("query") or "").strip()
     if not query:
         return {"output": "NO QUERY: name a sound to load", "ok": False}
-    out = tools.handle_tone({"query": query, "apply": True})
+    with _speaking_to_tools() as tools:
+        out = tools.handle_tone({"query": query, "apply": True})
     # The tool answers with a sentence, and a failure begins with one of these words on the first
     # line. Matching the whole text keeps a working apply whose diff happens to mention "not
     # applied" from being reported as a failure.

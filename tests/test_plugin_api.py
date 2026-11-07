@@ -199,20 +199,28 @@ class TestMasterRoute(unittest.TestCase):
             LIVE({"on": True})
         self.assertEqual(handler.call_args.args[0]["master_db"], -60)
 
+    # The route now hands the write to the rig the request named, so these build the rig they
+    # expect to be used instead of patching the module-level one.
+    def fake_rig(self, seen):
+        rig = mock.Mock()
+        rig.set_master.side_effect = lambda db, expect=None: seen.append(db) or {"db": db}
+        rig.master.side_effect = lambda: {"db": seen[-1]}
+        return rig
+
     def test_master_clamps_above_unity(self):
-        with mock.patch.object(API.RIG, "set_master", return_value={"db": 0.0}) as set_master, \
-             mock.patch.object(API.RIG, "master", return_value={"db": 0.0}), \
+        seen = []
+        with mock.patch.object(API.port, "choose", lambda name=None: self.fake_rig(seen)), \
              mock.patch("amphead.tools.active_path", return_value="C:/x/rig.rpp"):
             payload = MASTER({"db": 12})
-        self.assertEqual(set_master.call_args.kwargs["db"], 0.0)
+        self.assertEqual(seen, [0.0])
         self.assertTrue(payload["ok"])
 
     def test_master_clamps_below_the_floor(self):
-        with mock.patch.object(API.RIG, "set_master", return_value={"db": -60.0}) as set_master, \
-             mock.patch.object(API.RIG, "master", return_value={"db": -60.0}), \
+        seen = []
+        with mock.patch.object(API.port, "choose", lambda name=None: self.fake_rig(seen)), \
              mock.patch("amphead.tools.active_path", return_value="C:/x/rig.rpp"):
             payload = MASTER({"db": -200})
-        self.assertEqual(set_master.call_args.kwargs["db"], -60.0)
+        self.assertEqual(seen, [-60.0])
         self.assertEqual(payload["db"], -60.0)
 
     def test_master_without_a_number_answers_in_words(self):
@@ -624,6 +632,19 @@ class TestTheSecondFaceWritesToItsOwnRig(unittest.TestCase):
             API._ENGINE.set("amphead2")
             TWEAK({"param": "Bass", "value": 3})
         self.assertIs(seen["rig"], engine)
+
+    def test_the_master_ramp_reaches_the_engine(self):
+        """The ramp is the step that makes sound, so it is the worst place to answer for REAPER."""
+        engine = mock.Mock()
+        engine.set_master.return_value = {"db": -14.0}
+        engine.master.return_value = {"db": -14.0}
+
+        with mock.patch.object(API.port, "choose", lambda name=None: engine), \
+             mock.patch("amphead.tools.active_path", return_value="AmpHead 2"):
+            API._ENGINE.set("amphead2")
+            out = MASTER({"db": -14})
+        self.assertTrue(out["ok"])
+        self.assertEqual(engine.set_master.call_args.kwargs["db"], -14.0)
 
     def test_setup_is_a_route_of_its_own(self):
         """Amp 2 has no REAPER to open, so the pane needs a door that starts the engine."""
