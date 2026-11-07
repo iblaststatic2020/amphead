@@ -15,3 +15,4 @@ provides_tools:
   - amphead_build
   - amphead_preset
   - amphead_ab
+requires_hermes: ">=0.22.0"

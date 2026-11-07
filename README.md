@@ -323,12 +323,44 @@ still arriving while nothing reaches the speakers. `restore=true` un-bypasses th
 master, and deliberately leaves the track disarmed, so the Live switch stays the only way back to
 sound.
 
+## Watch it without a rig
+
+A judge, or anyone who has no DAW, no interface and no guitar, can still see the thing work. On the
+verdicts where there is nothing to play with (`REAPER NOT RUNNING`, `NO REAPER INSTALL`, `BRIDGE
+GONE`, `REAPER BUSY`, `TWO REAPER`, `RIG TAB CLOSED`) the pane offers **see it work**, which swaps
+its source for a canned rig (`amphead/demo.py`): a made-up session, the plugin's own slider moves, a
+meter that runs, a tone load, a panic and a restore. The row then reads **demo rig, not your
+hardware** with a leave button, and the status chip says `demo` rather than printing a level it did
+not measure. It answers through the same `verdict.judge` as the real path, so what a visitor sees is
+the real rules applied to a rig that is not there. It never turns itself on.
+
+## Honest limits
+
+- **Windows only at 0.1.0.** The launcher, the window handling and the resource-path install are
+  Windows specific. macOS and Linux are unbuilt, not broken.
+- **It needs REAPER installed.** It can launch REAPER, it cannot install it, and nothing works while
+  a modal dialog owns REAPER's main thread.
+- **No DSP, no amp model, no tuner.** It does not process audio and does not try to sound like
+  anything by itself. Tone comes from the NAM captures and IRs you already have.
+- **Latency is REAPER's.** The number it reports is what REAPER says the device is doing, not a
+  measurement this plugin makes.
+- **It does not touch your songs.** Every write is guarded to the rig tab it created, inside its own
+  undo block. The only saves are to that tab's own file, on teardown.
+- **Silence on the meter is ambiguous.** It reads the rig track's own peaks, so a disarmed input, a
+  muted track, a closed device and a guitar still hanging on its stand all read the same -60 dB. The
+  verdict names the state instead of trusting the meter.
+
 ## Status
 
 Working and verified against REAPER 7.77: the bridge, the launch and standby rules, the arm safety
 floor, tone application, the live switch, the readiness verdict, panic, the amp face backend, the
 pane with its sliders and status-bar chip, and deep links that only fire while REAPER is on screen.
-302 unit tests, `hermes plugins validate` passes.
+393 unit tests, `hermes plugins validate` and `hermes plugins validate --install-deps` both pass.
+
+The demo rig is verified the same way: a live pass through `dashboard.plugin_api` with a throwaway
+home turns the demo on (READY, moving meter, knob tweak, tone load, PANIC to `NO CHAIN`, restore to
+READY) and off again (`REAPER NOT RUNNING`), and the pane's own button was clicked in the preview
+harness to prove the face flips.
 
 Verified in a fresh Hermes session: `amphead_live` reported `live=True | armed=True | monitor=True |
 master_db=-20.0 | input=1 | clips_at=11.61`, and `amphead_status` read back `device=open`,
