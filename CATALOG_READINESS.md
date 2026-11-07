@@ -169,7 +169,7 @@ first`, and with a rig open it reads `REFUSED`, so the test pins "a named state 
 rather than one spelling. It also greps the package for a real `input(` call, so a handler added
 later cannot reintroduce a prompt.
 
-### G4. Tool handlers return prose, not JSON
+### G4. Tool handlers return prose, not JSON — **done**
 
 `T:115` says "Handlers **MUST** return a JSON string (via `json.dumps()`), never raw dicts", and
 the plugin guide's tool example does the same. `amphead/tools.py` has zero `json.dumps` calls and
@@ -178,11 +178,31 @@ fine, and the validator does not check it, so this is a convention gap rather th
 Still, a reviewer who reads `T` will notice, and structured returns would let the pane and the agent
 share one shape.
 
-Fix, if time allows before the freeze: return `json.dumps({...})` with a `summary` field carrying
-today's sentence, so nothing regresses visually. Otherwise document the deviation in the PR
-description and leave it for v0.2.
+**Done, at the boundary.** `amphead/tools.py` now has `json_answer()`, `call_shape()` and
+`json_tools()`; `__init__.py` registers `json_tools()`, so what the host and the model receive is one
+JSON string per call:
 
-### G5. Data paths are hand-rolled instead of `plugin_data_dir()`
+```json
+{"tool": "amphead_tone", "ok": true, "summary": "changed=9 | already there=1 | 1.11s",
+ "fields": {"changed": "9", "already there": "1"}}
+```
+
+The handlers themselves still return the sentence. That is deliberate, not an oversight: the panes,
+the log, the demo transcript and 80-odd assertions are written against that sentence, and rewriting
+every one of them to reach into a dict to rebuild the same line before the freeze buys nothing a
+player can see. The guide's rule is about what a tool call answers, and it now answers in JSON.
+
+`tests/test_tool_json.py` pins it: the registered set is the same set of tools, `__init__.py` wires
+`json_tools()` and not `TOOLS`, the wrapper passes arguments through untouched and does not alter the
+sentence, a refusal comes back `ok: false`, a sentence with no numbers has no `fields`, and a cold
+subprocess calling the registered `amphead_status` handler parses as JSON with a non-empty summary.
+
+Known edge: `ok` is decided by the sentence's first word (`REFUSED`, `NOT`, `CANNOT`, `ERROR`,
+`NO `), because a handler that returns prose cannot also return a status code. A new failure word
+that is not on that list reads as `ok: true` while saying it failed. `json_answer` keeps the list in
+one place for that reason.
+
+### G5. Data paths are hand-rolled instead of `plugin_data_dir()` — **done**
 
 `P:1160-1178` says runtime state must never go in the plugin directory and names the sanctioned
 home: `plugin_data_dir("amphead")`, which "survives both and follows the active profile". We do not
@@ -192,9 +212,21 @@ write inside the plugin tree, so the hard rule is satisfied, but two locations a
 `get_hermes_home()` is documented. Two profiles on one machine share the rig, the log and the
 snapshots.
 
-Fix: `rig.data_dir()` returns `plugin_data_dir("amphead")`, with a one-time migration that copies
-an existing rig directory if the new one is empty. Tests already isolate via `AMPHEAD_LOG`, so this
-is a small change, but it touches every write path and needs the suite green before the freeze.
+**Done.** `rig.data_dir()` asks `plugins.plugin_storage.plugin_data_dir("amphead")` first, which
+resolves the active profile on each call, so two profiles on one machine now get two rigs, two logs
+and two sets of snapshots. The import sits inside the function, so the package still imports with
+the host closed (a test run, a checkout without Hermes); when it cannot be imported, or an older host
+refuses the name, the old `%LOCALAPPDATA%/hermes/amphead` path answers instead and nothing raises.
+`AMPHEAD_HOME` still wins outright, which is what the tests use.
+
+A first run on an existing install copies the old folder into the new home once, and only when the
+new home is empty. The old copy is left where it is: quietly deleting a rig someone has been playing
+through is worse than a stale directory, and they may still open it with an older build.
+
+`TheHostOwnsTheFolder` in `tests/test_rig_path.py` covers the seam, the copy, the do-not-overwrite
+case and the env override, using a stand-in `plugins.plugin_storage` module so the test does not need
+Hermes installed. The pre-existing default-path test now pins the fallback explicitly by patching
+`_host_data_dir` to `None`, which is the case it was always describing.
 
 ### G6. The meter polls every 150 ms
 
@@ -264,9 +296,9 @@ Non-blocking, before or after the PR depending on the freeze:
 
 | # | Item | Done when |
 |---|---|---|
-| 6 | G5 profile-aware data dir | `rig.data_dir()` returns `plugin_data_dir("amphead")`; suite green; migration tested |
+| 6 | G5 profile-aware data dir | ~~`rig.data_dir()` returns `plugin_data_dir("amphead")`; suite green; migration tested~~ **done** |
 | 7 | G6 meter policy | ~~meter pauses when the pane is hidden; STANDBY interval 400 ms; reason documented~~ **done** |
-| 8 | G4 JSON handlers | `amphead_tone` and `amphead_ready` return `json.dumps` with a `summary` string; live tone proof still shows the same sentence |
+| 8 | G4 JSON handlers | ~~registered handlers return `json.dumps` with `summary`; live tone proof still shows the same sentence~~ **done at the boundary** |
 | 9 | G7 unsupported OS | covered by G1 on non-Windows hosts |
 
 ## 7. Deliberately out of scope for v0

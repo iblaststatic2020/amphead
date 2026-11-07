@@ -6,6 +6,7 @@ Nothing here touches REAPER at import time: the bridge is contacted inside handl
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 from typing import Any
@@ -867,3 +868,45 @@ TOOLS = (
     ("amphead_preset", PRESET_SCHEMA, handle_preset, "🎸"),
     ("amphead_ab", AB_SCHEMA, handle_ab, "🔀"),
 )
+
+# ---- the shape the host sees -------------------------------------------------------------
+# The plugin guide asks a handler to return a JSON string; the panes, the tests and the sentences a
+# player reads are all built on the handler returning a line of prose. Both are true at once: the
+# handlers above keep answering the way they always did, and the function the host registers wraps
+# that answer in JSON. Nothing a person reads changes, and the agent gets named fields instead of a
+# pipe-delimited line it would have to parse.
+FAILURE_WORDS = ("REFUSED", "NOT", "CANNOT", "ERROR", "NO ")
+
+
+def json_answer(name: str, summary: str) -> str:
+    """One JSON string: the tool, the sentence, whether it failed, and the numbers it carried."""
+    payload: dict[str, Any] = {
+        "tool": name,
+        "ok": not summary.strip().upper().startswith(FAILURE_WORDS),
+        "summary": summary,
+    }
+    fields: dict[str, str] = {}
+    for part in summary.split("|"):
+        key, sep, value = part.partition("=")
+        key = key.strip()
+        if sep and key and len(key) <= 40 and "\n" not in key:
+            fields[key] = value.strip()
+    if fields:
+        payload["fields"] = fields
+    return json.dumps(payload, ensure_ascii=False)
+
+
+def call_shape(name: str, handler):
+    """The handler the host registers: the same work, answered as one JSON string."""
+
+    def call(args: dict[str, Any]) -> str:
+        return json_answer(name, handler(args))
+
+    call.__name__ = f"{name}_json"
+    call.__doc__ = handler.__doc__
+    return call
+
+
+def json_tools() -> list[tuple[str, dict, Any, str]]:
+    """TOOLS, with each handler wrapped. The raw handlers stay as they are for the panes."""
+    return [(name, schema, call_shape(name, handler), emoji) for name, schema, handler, emoji in TOOLS]

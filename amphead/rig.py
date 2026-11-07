@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 from dataclasses import dataclass, asdict
 from pathlib import Path
 import time
@@ -286,12 +287,68 @@ class RigRefused(bridge.CommandFailed):
     """The rig could not be built as asked, and nothing is left half-built."""
 
 
+#: The name the host's storage convention knows this plugin by.
+PLUGIN_NAME = "amphead"
+
+
+def _host_data_dir() -> Path | None:
+    """``<hermes home>/plugin-data/amphead``, when the host library is importable.
+
+    ``plugin_data_dir()`` resolves the active profile on every call, which is the whole point: the
+    hand-built path this replaces put two profiles on one machine into the same rig, log and
+    snapshots. The import stays inside the function so the package still imports with the host
+    closed (a test run, a checkout without Hermes), where the appdata fallback answers instead.
+    """
+    try:
+        from plugins.plugin_storage import plugin_data_dir
+    except ImportError:
+        return None
+    try:
+        return plugin_data_dir(PLUGIN_NAME)
+    except Exception:  # an older host without the seam, or a refused name: fall back, never raise
+        return None
+
+
+def _legacy_data_dir() -> Path:
+    """The path this module used to build by hand, kept as the fallback and as the migration source."""
+    base = os.environ.get("LOCALAPPDATA") or (Path.home() / "AppData" / "Local")
+    return Path(base) / "hermes" / "amphead"
+
+
+def _inherit_legacy_home(target: Path) -> None:
+    """Copy a pre-profile home into the new one, once, and leave the old copy where it is.
+
+    Someone who has been playing through this plugin has a rig tab, snapshots and a log in the old
+    folder. Making them find it again, or silently starting with an empty home while their rig file
+    sits one directory over, is the kind of thing that reads as data loss. So: copy if the new home
+    is empty, keep the original (deleting a player's files to tidy up is worse than a stale folder),
+    and never raise into a caller that only asked where to write.
+    """
+    legacy = _legacy_data_dir()
+    try:
+        if legacy == target or not legacy.is_dir():
+            return
+        if any(target.iterdir()):
+            return
+        shutil.copytree(legacy, target, dirs_exist_ok=True)
+    except OSError:
+        return
+
+
 def data_dir() -> Path:
+    """Where amphead keeps its state: rig tab, snapshots, log and demo flag, one folder.
+
+    AMPHEAD_HOME wins outright: the tests point it at a scratch directory and expect nothing else
+    to answer. Otherwise the host's per-plugin data directory, then the legacy appdata path.
+    """
     env = os.environ.get("AMPHEAD_HOME")
     if env:
         return Path(env)
-    base = os.environ.get("LOCALAPPDATA") or (Path.home() / "AppData" / "Local")
-    return Path(base) / "hermes" / "amphead"
+    target = _host_data_dir()
+    if target is None:
+        return _legacy_data_dir()
+    _inherit_legacy_home(target)
+    return target
 
 
 #: The rig tab's file name. One name, because the status readout and the file that gets saved
