@@ -1,0 +1,47 @@
+name: amphead
+repo: https://github.com/iblaststatic2020/hermes-reaper-amp
+sha: f707b22e2389f55c161332fabf65557fa58da1f0
+title: AmpHead
+description: >-
+  Turns a REAPER session into a guitar rig the agent can build, hold and verify: it launches the host
+  minimized, makes its own project tab, loads the amp and drive, sets the knobs, then parks the
+  master at -60 dB and stops in standby until the player flips the Live switch. Every write is read
+  back from the plugin and compared as a number, and a tone request in plain words ("an amp that
+  sounds like blink182", "I want to sound like AC/DC") resolves to a saved NAM capture plus IR and
+  reports what it loaded. A desktop pane shows the live input meter, the real chain, every knob the
+  plugin publishes and a READY / NO SIGNAL / CLIPPING verdict. Disclosure — installs a Lua bridge
+  into the REAPER resource path (appending to __startup.lua, with a backup and an uninstall that
+  restores it), launches REAPER, creates and closes its own project tab, arms and monitors a track,
+  writes plugin parameters, lowers the master fader, and saves the rig to its own .rpp under the
+  Hermes data folder; it never saves, renames or overwrites the user's song projects, never touches
+  audio samples, needs REAPER 7 running locally, and makes no network calls. Windows only in v0.
+maintainer: iblaststatic2020
+tier: community
+category: tools
+requires_hermes: ">=0.22.0"
+docs_url: https://github.com/iblaststatic2020/hermes-reaper-amp#readme
+version: "0.1.0"
+readme: true
+platforms:
+  - windows
+known_issues:
+  - REAPER 7 must be installed; the plugin refuses rather than guessing a path when it cannot find it.
+  - No DSP and no tuner. Latency is REAPER's, reported in ms with >15 ms called out as too slow to play through.
+  - Amp choice cannot be a parameter write on the NAM builds, so "load this capture" switches a saved REAPER FX preset and verifies the capture name by read-back.
+capabilities:
+  provides_tools:
+    - amphead_ping
+    - amphead_status
+    - amphead_setup
+    - amphead_teardown
+    - amphead_tone
+    - amphead_live
+    - amphead_panic
+    - amphead_ready
+    - amphead_set
+    - amphead_build
+    - amphead_preset
+    - amphead_ab
+  provides_hooks: []
+  provides_middleware: []
+  requires_env: []

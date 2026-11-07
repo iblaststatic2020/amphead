@@ -37,9 +37,11 @@ That mapping is a small cue table, not a list of magic words: "crunchier" and "c
 stems, "more gain" is checked before "gain", and a request that names no sound ("something darker") is
 not guessed at. Those fall through to the second path, because amp choice is not a knob: NAM Universal
 keeps the loaded amp inside its state chunk, so a different amp is a different saved preset.
-`amphead/tones.py` holds eight archetypes (pop punk, modern metal, hard rock, lead, clean, edge of
-breakup, stoner fuzz, bass), each pointing at a preset in the library plus the knob deltas that push it
-toward the request.
+`amphead/tones.py` holds nine archetypes (pop punk, pop punk hot, modern metal, AC/DC, hard rock,
+lead, clean, edge of breakup, stoner fuzz, bass), each pointing at a preset in the library plus the
+knob deltas that push it toward the request. Artist, song and amp words route: "sound like AC/DC",
+"angus young", "back in black" and "plexi" all land on the JMP capture through a Greenback, while
+"hard rock" and "guns n roses" stay on the generic rig.
 
 ```
 python -m amphead.tones --list
