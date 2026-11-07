@@ -1,10 +1,12 @@
 """The amp face backend, tested without FastAPI or REAPER.
 
-The route functions are plain coroutines, so the file is imported with a stub `fastapi` module
-and the decorated functions are called directly. Nothing here needs a gateway or a guitar.
+The route functions are plain functions, not coroutines: FastAPI runs a sync endpoint in its
+threadpool, so a slow or missing REAPER costs a worker thread instead of freezing the gateway.
+The file is imported with a stub `fastapi` module so the decorated functions are called
+directly. Nothing here needs a gateway or a guitar.
 """
 
-import asyncio
+import inspect
 import sys
 import types
 import unittest
@@ -127,7 +129,7 @@ class TestState(unittest.TestCase):
              mock.patch.object(API.bridge, "master", return_value={"db": -20.0}), \
              mock.patch.object(API, "_chain", return_value=[{"name": "VST3: NAM Universal", "enabled": True}]), \
              mock.patch.object(API, "_knobs", return_value=[{"name": "Bass", "value": "4.4"}]):
-            payload = asyncio.run(STATE())
+            payload = STATE()
         self.assertEqual(payload["verdict"], "READY")
         for key in ("chain", "knobs", "presets", "device", "master_db", "project"):
             self.assertIn(key, payload)
@@ -135,13 +137,13 @@ class TestState(unittest.TestCase):
 
     def test_no_reaper_install_is_a_sentence_not_a_crash(self):
         with mock.patch.object(API.launch, "state", side_effect=API.launch.NoReaperInstall("gone")):
-            payload = asyncio.run(STATE())
+            payload = STATE()
         self.assertEqual(payload["verdict"], "NO REAPER INSTALL")
         self.assertIn("not installed", payload["reason"])
 
     def test_meter_is_cheap_and_survives_a_dead_bridge(self):
         with mock.patch.object(API.bridge, "meter", side_effect=API.bridge.NoReaper("down")):
-            payload = asyncio.run(METER())
+            payload = METER()
         self.assertEqual(payload, {"l": 0.0, "r": 0.0, "clip": False, "live": False})
 
 
@@ -150,14 +152,14 @@ class TestLiveRoute(unittest.TestCase):
 
     def test_live_button_leaves_the_input_alone_by_default(self):
         with mock.patch("amphead.tools.handle_live", return_value="live=True") as handler:
-            payload = asyncio.run(LIVE({"on": True, "master_db": -20}))
+            payload = LIVE({"on": True, "master_db": -20})
         self.assertEqual(handler.call_args.args[0]["input"], "0")
         self.assertEqual(handler.call_args.args[0]["master_db"], -20)
         self.assertTrue(payload["on"])
 
     def test_live_button_still_passes_an_explicit_input_through(self):
         with mock.patch("amphead.tools.handle_live", return_value="live=True") as handler:
-            asyncio.run(LIVE({"on": True, "input": "1+2"}))
+            LIVE({"on": True, "input": "1+2"})
         self.assertEqual(handler.call_args.args[0]["input"], "1+2")
 
 
@@ -167,7 +169,7 @@ class TestPanicRoute(unittest.TestCase):
     def test_panic_passes_the_call_through_and_keeps_the_words(self):
         said = "panicked=True | master_db=-60.0 | bypassed=1"
         with mock.patch("amphead.tools.handle_panic", return_value=said) as handler:
-            payload = asyncio.run(PANIC({"restore": False}))
+            payload = PANIC({"restore": False})
         handler.assert_called_once_with({"restore": False, "master_db": -60})
         self.assertEqual(payload["output"], said)
         self.assertTrue(payload["ok"])
@@ -175,14 +177,14 @@ class TestPanicRoute(unittest.TestCase):
 
     def test_restore_is_forwarded_with_the_level(self):
         with mock.patch("amphead.tools.handle_panic", return_value="panicked=False") as handler:
-            payload = asyncio.run(PANIC({"restore": True, "master_db": -24}))
+            payload = PANIC({"restore": True, "master_db": -24})
         handler.assert_called_once_with({"restore": True, "master_db": -24})
         self.assertTrue(payload["restore"])
 
     def test_a_rig_that_was_never_up_is_not_reported_as_ok(self):
         with mock.patch("amphead.tools.handle_panic",
                         return_value="NOT PANICKED: REAPER is not running, so nothing can reach the speakers anyway"):
-            payload = asyncio.run(PANIC({}))
+            payload = PANIC({})
         self.assertFalse(payload["ok"])
 
 
@@ -192,7 +194,7 @@ class TestFocusRoute(unittest.TestCase):
     def test_a_hidden_reaper_is_told_in_words_and_nothing_is_focused(self):
         with mock.patch.object(API.launch, "ui_visible", return_value=False), \
              mock.patch.object(API.bridge, "fx_focus") as focus:
-            payload = asyncio.run(FOCUS({"fx": 0}))
+            payload = FOCUS({"fx": 0})
         focus.assert_not_called()
         self.assertFalse(payload["ok"])
         self.assertIn("not showing", payload["output"])
@@ -201,7 +203,7 @@ class TestFocusRoute(unittest.TestCase):
         with mock.patch.object(API.launch, "ui_visible", return_value=True), \
              mock.patch.object(API.bridge, "fx_focus",
                                return_value={"fx": "VST3: NAM Universal"}) as focus:
-            payload = asyncio.run(FOCUS({"fx": 0}))
+            payload = FOCUS({"fx": 0})
         focus.assert_called_once_with(1, 0)
         self.assertTrue(payload["ok"])
         self.assertIn("NAM Universal", payload["output"])
@@ -209,7 +211,7 @@ class TestFocusRoute(unittest.TestCase):
     def test_a_refused_focus_is_not_ok(self):
         with mock.patch.object(API.launch, "ui_visible", return_value=True), \
              mock.patch.object(API.bridge, "fx_focus", side_effect=API.bridge.ReaperError("no fx 7")):
-            self.assertFalse(asyncio.run(FOCUS({"fx": 7}))["ok"])
+            self.assertFalse(FOCUS({"fx": 7})["ok"])
 
 
 class TestUiVisible(unittest.TestCase):
@@ -253,7 +255,7 @@ class TestParkedMaster(unittest.TestCase):
              mock.patch.object(API.bridge, "master", return_value={"db": -60.0}), \
              mock.patch.object(API, "_chain", return_value=[{"name": "NAM", "enabled": True}]), \
              mock.patch.object(API, "_knobs", return_value=[]):
-            payload = asyncio.run(STATE())
+            payload = STATE()
         self.assertEqual(payload["verdict"], "STANDBY")
         self.assertEqual(payload["master_db"], -60.0)
 
@@ -281,7 +283,7 @@ class TestTweakRoute(unittest.TestCase):
     def test_a_slider_write_goes_through_the_chat_handler(self):
         said = "Amplifier Bass [#5] -> 0.25 | reads_back=0.25 | one undo point"
         with mock.patch("amphead.tools.handle_set", return_value=said) as handler:
-            payload = asyncio.run(TWEAK({"param": 5, "value": 0.25, "mode": "norm"}))
+            payload = TWEAK({"param": 5, "value": 0.25, "mode": "norm"})
         args = handler.call_args.args[0]
         self.assertEqual((args["param"], args["value"], args["mode"]), (5, 0.25, "norm"))
         self.assertTrue(payload["ok"])
@@ -289,21 +291,21 @@ class TestTweakRoute(unittest.TestCase):
 
     def test_a_write_with_no_knob_named_is_refused_before_the_host(self):
         with mock.patch("amphead.tools.handle_set") as handler:
-            payload = asyncio.run(TWEAK({"value": 0.3}))
+            payload = TWEAK({"value": 0.3})
         handler.assert_not_called()
         self.assertFalse(payload["ok"])
         self.assertIn("NO PARAM", payload["output"])
 
     def test_a_refused_write_is_reported_as_not_ok(self):
         with mock.patch("amphead.tools.handle_set", return_value="REFUSED: that knob does not exist"):
-            self.assertFalse(asyncio.run(TWEAK({"param": 5, "value": 0.3}))["ok"])
+            self.assertFalse(TWEAK({"param": 5, "value": 0.3})["ok"])
 
 
 class TestPresetRoute(unittest.TestCase):
     def test_preset_applies_through_the_tone_handler(self):
         said = "preset=crunch | changed=9 | already there=1 | 1.11s | one undo point"
         with mock.patch("amphead.tools.handle_tone", return_value=said) as handler:
-            payload = asyncio.run(PRESET({"query": "make it crunchier"}))
+            payload = PRESET({"query": "make it crunchier"})
         self.assertTrue(payload["ok"])
         self.assertEqual(handler.call_args.args[0]["query"], "make it crunchier")
         self.assertTrue(handler.call_args.args[0]["apply"])
@@ -311,13 +313,30 @@ class TestPresetRoute(unittest.TestCase):
     def test_a_preset_that_matches_nothing_is_not_ok(self):
         with mock.patch("amphead.tools.handle_tone",
                         return_value="NO MATCH: no sound in the library answers to ..."):
-            self.assertFalse(asyncio.run(PRESET({"query": "wobble"}))["ok"])
+            self.assertFalse(PRESET({"query": "wobble"})["ok"])
 
     def test_an_empty_preset_request_never_reaches_the_host(self):
         with mock.patch("amphead.tools.handle_tone") as handler:
-            payload = asyncio.run(PRESET({"query": "  "}))
+            payload = PRESET({"query": "  "})
         handler.assert_not_called()
         self.assertFalse(payload["ok"])
+
+
+class TestRoutesStayOffTheEventLoop(unittest.TestCase):
+    """A route declared `async def` blocks the whole gateway while the bridge waits.
+
+    With REAPER closed every call here burned its full timeout inside the event loop that the
+    desktop app shares, so health checks took seconds and every list in the app timed out. The
+    fix is that these stay plain functions: FastAPI then runs them in a threadpool.
+    """
+
+    def test_no_route_is_a_coroutine(self):
+        for method, path in (("GET", "/state"), ("GET", "/meter"), ("POST", "/live"),
+                             ("POST", "/panic"), ("POST", "/tweak"), ("POST", "/focus"),
+                             ("POST", "/preset")):
+            route = ROUTER.routes[(method, path)]
+            self.assertFalse(inspect.iscoroutinefunction(route),
+                             f"{method} {path} is async: it will block the gateway's event loop")
 
 
 if __name__ == "__main__":

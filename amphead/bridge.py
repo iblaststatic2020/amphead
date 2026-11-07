@@ -150,13 +150,28 @@ class _Lock:
         self.fd = None
 
 
+_PROC_TTL = 2.0
+_PROC_SEEN: tuple[float, bool] = (0.0, False)
+
+
 def _process_running() -> bool:
-    """Is a reaper.exe alive? Imported lazily: launch imports this module."""
+    """Is a reaper.exe alive? Imported lazily: launch imports this module.
+
+    Cached for a couple of seconds because the answer costs a process listing, and the pane asks
+    it ten times a second while REAPER is closed. Long enough to make polling cheap, short enough
+    that a REAPER the player just started is noticed on the next retry.
+    """
+    global _PROC_SEEN
+    stamp, known = _PROC_SEEN
+    if time.monotonic() - stamp < _PROC_TTL:
+        return known
     try:
         from . import launch
-        return bool(launch.running())
+        known = bool(launch.running())
     except Exception:
-        return False
+        known = False
+    _PROC_SEEN = (time.monotonic(), known)
+    return known
 
 
 def liveness(root: str | os.PathLike | None = None) -> tuple[str, str]:
@@ -226,6 +241,17 @@ def call(
     if not base.is_dir():
         raise NoReaper(f"bridge directory missing: {base}")
     out.mkdir(parents=True, exist_ok=True)
+
+    # Nobody can answer when nobody is servicing the bridge, so do not spend the whole timeout
+    # finding that out. The pane polls /state every four seconds; with REAPER closed each poll
+    # used to sit here for the full timeout, which held the dashboard's event loop shut. Only a
+    # host that is definitely absent short-circuits: a live host whose script is stalled still
+    # waits, so it is reported as blocked rather than missing.
+    age = _alive_age(base)
+    if age is None or age > HEARTBEAT_MAX_AGE:
+        kind, sentence = liveness(base)
+        if kind in {"not-running", "not-loaded"}:
+            raise NoReaper(sentence)
 
     rid = uuid.uuid4().hex[:12]
     parts = [rid, cmd.upper()]

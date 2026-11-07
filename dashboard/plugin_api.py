@@ -16,6 +16,11 @@ from fastapi import APIRouter
 
 router = APIRouter()
 
+# These routes are deliberately plain `def`, not `async def`. Every one of them talks to REAPER
+# through a blocking bridge call, and FastAPI runs a sync endpoint in its threadpool: a slow or
+# absent bridge then costs a worker thread instead of stalling the event loop the whole desktop
+# app shares. An `async def` here blocks every other request in the gateway while it waits.
+
 # The package lives beside this file's parent (dashboard/ sits inside the plugin root).
 _ROOT = Path(__file__).resolve().parent.parent
 if str(_ROOT) not in sys.path:
@@ -111,7 +116,7 @@ def _presets() -> list[dict]:
 
 
 @router.get("/state")
-async def state() -> dict[str, Any]:
+def state() -> dict[str, Any]:
     try:
         live = launch.state()
     except launch.NoReaperInstall:
@@ -161,7 +166,7 @@ async def state() -> dict[str, Any]:
 
 
 @router.get("/meter")
-async def meter() -> dict[str, Any]:
+def meter() -> dict[str, Any]:
     try:
         reading = bridge.meter(1)
     except bridge.ReaperError:
@@ -171,7 +176,7 @@ async def meter() -> dict[str, Any]:
 
 
 @router.post("/live")
-async def live_switch(body: dict) -> dict[str, Any]:
+def live_switch(body: dict) -> dict[str, Any]:
     from amphead import tools
 
     on = bool(body.get("on"))
@@ -184,7 +189,7 @@ async def live_switch(body: dict) -> dict[str, Any]:
 
 
 @router.post("/panic")
-async def panic(body: dict) -> dict[str, Any]:
+def panic(body: dict) -> dict[str, Any]:
     from amphead import tools
 
     restore = bool(body.get("restore"))
@@ -194,7 +199,7 @@ async def panic(body: dict) -> dict[str, Any]:
 
 
 @router.post("/tweak")
-async def tweak(body: dict) -> dict[str, Any]:
+def tweak(body: dict) -> dict[str, Any]:
     """One knob, written the same way chat writes it: resolved by name, read back, one undo group."""
     from amphead import tools
 
@@ -214,7 +219,7 @@ async def tweak(body: dict) -> dict[str, Any]:
 
 
 @router.post("/focus")
-async def focus(body: dict) -> dict[str, Any]:
+def focus(body: dict) -> dict[str, Any]:
     """Bring one plugin to the front, but only while REAPER's window is actually showing."""
     fx = body.get("fx", 0)
     track = int(body.get("track") or 1)
@@ -231,7 +236,7 @@ async def focus(body: dict) -> dict[str, Any]:
 
 
 @router.post("/preset")
-async def preset(body: dict) -> dict[str, Any]:
+def preset(body: dict) -> dict[str, Any]:
     from amphead import tools
 
     query = str(body.get("query") or "").strip()

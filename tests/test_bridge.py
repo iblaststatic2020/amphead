@@ -6,6 +6,7 @@ bridge, a wrong project, a batch that stops halfway, a write whose read-back lie
 
 from __future__ import annotations
 
+import os
 import tempfile
 import threading
 import time
@@ -50,6 +51,62 @@ class TestClosed(BridgeCase):
     def test_closed_reaper_is_noreaper(self):
         with self.assertRaises(bridge.NoReaper):
             self.call("PING", timeout=0.3)
+
+
+class TestClosedIsFast(BridgeCase):
+    """A host that is not there must not cost a full timeout.
+
+    The pane polls /state every four seconds. When that poll sat out the whole timeout with
+    REAPER closed, the gateway's event loop was blocked a third of every cycle, health checks
+    took seconds, and every list in the desktop app timed out.
+    """
+
+    mode = "closed"
+
+    def test_a_call_with_no_bridge_fails_without_waiting_the_timeout(self):
+        (self.root / "alive").unlink(missing_ok=True)
+        with mock.patch.object(bridge, "_process_running", return_value=False):
+            started = time.monotonic()
+            with self.assertRaises(bridge.NoReaper):
+                bridge.call("PING", root=self.root, timeout=3.0)
+            spent = time.monotonic() - started
+        self.assertLess(spent, 1.0, f"a dead bridge took {spent:.2f}s to say so")
+
+    def test_a_stale_heartbeat_with_no_process_also_fails_fast(self):
+        (self.root / "alive").write_text("1", encoding="utf-8")
+        old = time.time() - 600
+        os.utime(self.root / "alive", (old, old))
+        with mock.patch.object(bridge, "_process_running", return_value=False):
+            started = time.monotonic()
+            with self.assertRaises(bridge.NoReaper):
+                bridge.call("PING", root=self.root, timeout=3.0)
+            spent = time.monotonic() - started
+        self.assertLess(spent, 1.0, f"a stale heartbeat took {spent:.2f}s to say so")
+
+
+class TestProcessCheckIsCached(unittest.TestCase):
+    """Answering "is reaper.exe alive" costs a process listing, and the pane asks constantly."""
+
+    def test_repeated_asks_within_the_window_read_the_process_once(self):
+        from amphead import launch
+
+        bridge._PROC_SEEN = (0.0, False)
+        with mock.patch.object(launch, "running", return_value=False) as probe:
+            self.assertFalse(bridge._process_running())
+            self.assertFalse(bridge._process_running())
+            self.assertFalse(bridge._process_running())
+        self.assertEqual(probe.call_count, 1)
+        bridge._PROC_SEEN = (0.0, False)
+
+    def test_the_answer_is_rechecked_after_the_window(self):
+        from amphead import launch
+
+        bridge._PROC_SEEN = (0.0, False)
+        with mock.patch.object(launch, "running", return_value=True):
+            bridge._process_running()
+            bridge._PROC_SEEN = (time.monotonic() - bridge._PROC_TTL - 1, False)
+            self.assertTrue(bridge._process_running())
+        bridge._PROC_SEEN = (0.0, False)
 
 
 class TestBlocked(BridgeCase):
