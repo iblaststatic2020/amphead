@@ -1,9 +1,11 @@
 """Turn a plain-language tone request into a NAM preset and push it into the live plugin.
 
-The library is whatever sits in WaveMind's NAMU folder: nine saved .preset documents over 2,287
+The library is whatever sits in WaveMind's NAMU folder: ten saved .preset documents over 2,186
 captured amps. There is no audio matching here and there never will be from a filename, so the
 mapping is a curated table of archetypes, each pointing at the preset in this library that carries
-that sound, plus the knob moves that push it closer.
+that sound, plus the knob moves that push it closer. An archetype that needs a capture the library
+does not have as a saved document gets one built by a script in tools/ and the preset checked in
+alongside it, because amp choice lives in the state chunk and not on a knob.
 """
 
 from __future__ import annotations
@@ -71,10 +73,25 @@ ARCHETYPES: tuple[Archetype, ...] = (
              "the vocal, and the bass comes down so the low end belongs to the bass guitar."),
     ),
     Archetype(
+        key="acdc",
+        title="AC/DC: Angus and Malcolm, JMP through Greenbacks",
+        preset="acdc_plexi.preset",
+        keywords=("ac/dc", "acdc", "ac dc", "angus", "malcolm", "young brothers", "back in black",
+                  "highway to hell", "let there be rock", "powerage", "thunderstruck", "dirty deeds",
+                  "whole lotta rosie", "tnt", "plexi", "jtm45", "jtm 45", "super lead", "superlead",
+                  "greenback", "sg into marshall"),
+        tweaks={},
+        why=("A JMP 2203 captured raw and vintage, gain kept down at 3 so the crunch comes from the "
+             "power section and the strings still ring separately. Bass pulled to 2.8 because the "
+             "brothers never let the guitar own the low end, mids at 6.8 to carry the riff, one "
+             "Greenback 4x12 and no pedal in front, which is the whole sound. Add the Oomph only if "
+             "it feels thin on headphones."),
+    ),
+    Archetype(
         key="hard-rock",
-        title="Hard rock and classic crunch (AC/DC, Guns N' Roses, 80s Marshall)",
+        title="Hard rock and classic crunch (Guns N' Roses, 80s Marshall)",
         preset="morningwood.preset",
-        keywords=("hard rock", "classic rock", "rock", "acdc", "ac/dc", "gnr", "guns", "marshall",
+        keywords=("hard rock", "classic rock", "rock", "gnr", "guns", "marshall",
                   "slash", "80s", "crunch", "riff"),
         tweaks={"amp_mid": 0.5, "amp_treble": 0.2},
         why=("Morning Wood with a Vintage 30 behind it. Gain sits around 4 so the low strings stay "

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sys
 import unittest
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -22,7 +23,7 @@ class RoutingTest(unittest.TestCase):
         self.check("blink-182", "pop-punk")
         self.check("green day dookie", "pop-punk")
         self.check("qotsa fuzz", "stoner-fuzz")
-        self.check("acdc crunch", "hard-rock")
+        self.check("acdc crunch", "acdc")
         self.check("satriani lead", "lead")
         self.check("ampeg bass", "bass")
 
@@ -40,6 +41,21 @@ class RoutingTest(unittest.TestCase):
         arch, ranked = tones.best("give me a nice amp tone")
         self.assertIsNone(arch)
         self.assertTrue(ranked, "ranking should still offer candidates")
+
+    def test_saying_the_band_name_alone_is_enough(self):
+        self.check("I want to sound like AC/DC", "acdc")
+        self.check("make it sound like ac dc", "acdc")
+
+    def test_acdc_songs_and_players_reach_the_acdc_rig(self):
+        for query in ("angus young", "back in black", "highway to hell", "let there be rock",
+                      "malcolm young rhythm", "thunderstruck", "a 1979 marshall plexi",
+                      "sg into a super lead", "greenback crunch"):
+            self.check(query, "acdc")
+
+    def test_generic_hard_rock_stays_on_the_generic_rig(self):
+        self.check("hard rock", "hard-rock")
+        self.check("guns n roses", "hard-rock")
+        self.check("80s marshall", "hard-rock")
 
     def test_every_archetype_points_at_a_real_preset(self):
         for arch in tones.ARCHETYPES:
@@ -66,6 +82,29 @@ class PresetDocumentTest(unittest.TestCase):
         root = tones.root_of(arch)
         self.assertTrue(root["amp"].endswith(".nam"))
         self.assertTrue(root["ir"].endswith((".wav", ".wmir")))
+
+    def test_the_acdc_rig_actually_exists_on_disk(self):
+        # A preset that names a missing capture or IR loads silently and sounds like nothing, so the
+        # paths are checked here rather than discovered at the amp.
+        arch = next(a for a in tones.ARCHETYPES if a.key == "acdc")
+        root = ET.fromstring(tones.xml_for(arch)[0].encode("utf-8"))
+        capture = Path("C:/" + root.attrib["amp_profile"].replace("\\", "/"))
+        cab = tones.NAMU / "IR" / root.attrib["impulse_file1"].replace("\\", "/")
+        self.assertTrue(capture.is_file(), capture)
+        self.assertTrue(cab.is_file(), cab)
+
+    def test_the_acdc_rig_is_a_marshall_with_the_gain_down(self):
+        arch = next(a for a in tones.ARCHETYPES if a.key == "acdc")
+        xml, changed = tones.xml_for(arch)
+        self.assertEqual(changed, {}, "the acdc preset carries its own knobs, not deltas")
+        root = ET.fromstring(xml.encode("utf-8"))
+        self.assertIn("Marshall", root.attrib["amp_profile"])
+        self.assertIn("Greenback", root.attrib["impulse_file1"])
+        knobs = {p.attrib["id"]: float(p.attrib["value"]) for p in root.findall("PARAM")}
+        self.assertLessEqual(knobs["amp_pre_gain"], 3.5)
+        self.assertLess(knobs["amp_bass"], 3.5)
+        self.assertGreater(knobs["amp_mid"], 6.0)
+        self.assertEqual(knobs["pedal_active"], 0.0)
 
 
 if __name__ == "__main__":
