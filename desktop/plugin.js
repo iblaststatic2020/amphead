@@ -291,12 +291,11 @@ function Knob({ knob, busy, onTurn, size }) {
     })
   }
 
-  // An On/Off parameter is a knob with two places to be, not a switch beside the knobs, and the
-  // input socket is a knob with one place per socket. A stepped knob snaps to its nearest stop as
-  // the finger moves, so it can never be left at 0.47 with no meaning, and a tap without a drag
-  // steps to the next one, which is what a footswitch does.
-  const isBool = knob.bool === true
-  const steps = isBool ? 2 : (Number(knob.steps) > 1 ? Math.round(Number(knob.steps)) : 0)
+  // A knob with a handful of places to be, like the input socket on a three-input interface,
+  // snaps to its nearest stop as the finger moves so it can never be left at 0.47 with no meaning,
+  // and a tap without a drag steps to the next one. A parameter with exactly two positions is not
+  // a knob at all: it is a Switch, because two states read better as a lever than as an angle.
+  const steps = Number(knob.steps) > 1 ? Math.round(Number(knob.steps)) : 0
   const snap = (value) => (steps > 1 ? Math.round(value * (steps - 1)) / (steps - 1) : value)
   const nextStop = () => (steps > 1 ? ((Math.round(cur.current * (steps - 1)) + 1) % steps) / (steps - 1) : 0)
   const move = (next, final) => {
@@ -404,12 +403,114 @@ function Knob({ knob, busy, onTurn, size }) {
   })
 }
 
+// A parameter with two positions is a lever, not a knob with two stops. A switch says which of two
+// states it is in from across the pane: the cap sits at the top for on, at the bottom for off, and
+// the word under it is the reading the plugin itself gives. A range belongs on a knob.
+function Switch({ knob, busy, onTurn }) {
+  const [on, setOn] = useState(knob.norm >= 0.5)
+  const [shown, setShown] = useState(knob.value)
+  const [working, setWorking] = useState(false)
+  const settled = useRef(0)
+
+  // The face follows the rig, but not while a flip is in flight or has just landed: a poll that
+  // arrives mid-write would drag the cap back under the finger.
+  useEffect(() => {
+    if (working || Date.now() < settled.current) return
+    setOn(knob.norm >= 0.5)
+    setShown(knob.value)
+  }, [knob.norm, knob.value, working])
+
+  const flip = async () => {
+    if (busy || working) return
+    const before = on
+    const next = before ? 0 : 1
+    // Move first, write second: a switch that waits for REAPER feels broken, and a refused write
+    // puts the cap back where it was instead of leaving a lie on the panel.
+    setOn(next === 1)
+    setWorking(true)
+    try {
+      const answer = await onTurn(knob, next, true)
+      if (answer && answer.ok) {
+        settled.current = Date.now() + 1500
+        if (answer.value) setShown(answer.value)
+        if (typeof answer.norm === 'number') setOn(answer.norm >= 0.5)
+      } else {
+        setOn(before)
+        if (answer && answer.output) setShown(String(answer.output))
+      }
+    } catch (err) {
+      setOn(before)
+      setShown(`no answer: ${err && err.message ? err.message : err}`)
+    } finally {
+      setWorking(false)
+    }
+  }
+
+  return jsxs('div', {
+    className: 'flex flex-col items-center gap-1',
+    children: [
+      jsx('button', {
+        type: 'button',
+        role: 'switch',
+        'aria-checked': on,
+        'aria-label': `${knob.name}, ${shown}`,
+        disabled: busy || working,
+        onClick: flip,
+        onKeyDown: (event) => {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault()
+            flip()
+          }
+        },
+        className: 'relative shrink-0 rounded-full outline-none disabled:opacity-60',
+        style: {
+          width: 28,
+          height: 46,
+          cursor: busy ? 'default' : 'pointer',
+          background: 'linear-gradient(180deg, #100d0a 0%, #1d1915 100%)',
+          border: '1px solid rgba(0,0,0,0.8)',
+          boxShadow: 'inset 0 2px 5px rgba(0,0,0,0.85), 0 1px 1px rgba(255,255,255,0.06)',
+          touchAction: 'none'
+        },
+        children: jsx('span', {
+          className: 'absolute rounded-full',
+          style: {
+            left: 3,
+            right: 3,
+            height: 16,
+            top: on ? 4 : 26,
+            background: on
+              ? 'linear-gradient(180deg, #ffcf8d 0%, #e08a2b 100%)'
+              : 'linear-gradient(180deg, #6d6459 0%, #37312a 100%)',
+            boxShadow: on
+              ? '0 0 6px rgba(255,179,71,0.55), 0 1px 2px rgba(0,0,0,0.7)'
+              : '0 1px 2px rgba(0,0,0,0.7)',
+            transition: 'top 110ms ease, background 110ms ease'
+          }
+        })
+      }),
+      jsx('span', {
+        className: 'w-full truncate text-center text-[0.5625rem] leading-tight',
+        style: { color: FACE, opacity: 0.75 },
+        children: shortName(knob.name)
+      }),
+      jsx('span', {
+        className: 'max-w-full truncate text-center text-[0.5rem] tabular-nums',
+        style: { color: working ? '#ffb347' : FACE_DIM },
+        children: shown
+      })
+    ]
+  })
+}
+
 function KnobGrid({ group, busy, onTurn, size }) {
   return jsxs('div', {
     // Three across, like a panel: tone stack in one row, the gains under it. A wrapping flex row
     // would put four knobs on a line in the pane and read as an arbitrary heap instead of a panel.
     className: 'grid grid-cols-3 justify-items-center gap-x-1 gap-y-2.5',
-    children: group.knobs.map((k) => jsx(Knob, { knob: k, busy, onTurn, size }, k.index ?? k.name))
+    children: group.knobs.map((k) => (k.bool === true
+      ? jsx(Switch, { knob: k, busy, onTurn }, k.index ?? k.name)
+      : jsx(Knob, { knob: k, busy, onTurn, size }, k.index ?? k.name)))
   })
 }
 
@@ -870,7 +971,11 @@ function AmpFace({ rest }) {
           children: jsxs('div', {
             className: 'flex flex-col items-center gap-1',
             children: [
-              jsx(Knob, { knob: socketKnob, busy, size: 'lg', onTurn: turnInput }),
+              // Two sockets is two positions, which is a switch; anything with more places to be
+              // is a knob that steps. The control follows the count instead of hard-coding either.
+              socket.count === 2
+                ? jsx(Switch, { knob: socketKnob, busy, onTurn: turnInput })
+                : jsx(Knob, { knob: socketKnob, busy, size: 'lg', onTurn: turnInput }),
               jsx('div', {
                 className: 'text-[0.5625rem] leading-snug',
                 style: { color: FACE_DIM },

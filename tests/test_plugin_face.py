@@ -40,17 +40,40 @@ class TestFaceMatchesVerdicts(unittest.TestCase):
         self.assertEqual([], missing, f"the face has no colour for: {missing}")
 
     def test_a_stepped_knob_snaps_to_its_stops(self):
-        """Switches and the input socket are knobs with a fixed set of places to be: the turn snaps
-        to the nearest stop, a tap steps to the next, and no drag can leave one at 0.47."""
+        """A knob with a few places to be snaps to the nearest stop, a tap steps to the next, and
+        no drag can leave one at 0.47."""
         source = face_source()
-        knob = source[source.index("function Knob("):source.index("function KnobGrid(")]
-        self.assertIn("const isBool = knob.bool === true", knob)
-        self.assertIn("const steps = isBool ? 2 :", knob)
+        knob = source[source.index("function Knob("):source.index("function Switch(")]
+        self.assertNotIn("isBool", knob, "a two-position parameter is a switch, not a knob")
         self.assertIn("Math.round(value * (steps - 1)) / (steps - 1)", knob, "the turn must snap")
         self.assertIn("if (steps > 1 && !moved.current)", knob, "a tap has to step it")
         self.assertIn("move(nextStop(), true)", knob, "the tap and the Enter key share one stop")
 
-    def test_the_input_socket_is_a_knob_and_says_it_is_not_a_track_number(self):
+    def test_a_two_position_parameter_is_a_switch(self):
+        """Healthier to read than to turn: a switch shows its state without being touched, so the
+        cap sits at one end, it moves under the finger before the write, and a refused write puts
+        it back instead of leaving a lie on the panel."""
+        source = face_source()
+        switch = source[source.index("function Switch("):source.index("function KnobGrid(")]
+        self.assertIn("role: 'switch'", switch)
+        self.assertIn("'aria-checked': on", switch)
+        self.assertIn("const next = before ? 0 : 1", switch)
+        self.assertIn("setOn(next === 1)", switch, "the lever moves before REAPER answers")
+        self.assertIn("setOn(before)", switch, "a refusal has to put the cap back")
+        self.assertIn("top: on ? 4 : 26", switch, "the cap has to sit at one end or the other")
+        # The grid picks the control by what the parameter is, not by how it was drawn before.
+        self.assertIn("k.bool === true", source)
+        self.assertIn("? jsx(Switch, { knob: k, busy, onTurn }", source)
+
+    def test_the_socket_is_a_switch_at_two_sockets_and_a_knob_beyond(self):
+        """His interface has two sockets, so the socket control is a two-position switch; a
+        three-input interface would get the stepping knob instead."""
+        source = face_source()
+        self.assertIn("socket.count === 2", source)
+        self.assertIn("? jsx(Switch, { knob: socketKnob, busy, onTurn: turnInput })", source)
+        self.assertIn(": jsx(Knob, { knob: socketKnob, busy, size: 'lg', onTurn: turnInput })", source)
+
+    def test_the_input_socket_says_it_is_not_a_track_number(self):
         """The pane offers the socket, in the interface's own name, and says in place that a track
         number and an input number are different numbers."""
         source = face_source()
