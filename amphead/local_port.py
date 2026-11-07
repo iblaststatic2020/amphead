@@ -83,18 +83,37 @@ class EngineClient:
     def running(self) -> bool:
         return self._proc is not None and self._proc.poll() is None
 
+    def check_env(self) -> None:
+        """Ask the engine's interpreter whether it can host the engine.
+
+        The import has to happen over there. Hermes runs the plugin in its own Python,
+        which has neither numpy nor PortAudio, so testing this process would refuse a
+        perfectly good engine venv and tell the player to install what they already have.
+        """
+        try:
+            probe = subprocess.run(
+                [self.python, "-c", "import numpy, sounddevice"],
+                cwd=str(Path(__file__).resolve().parent.parent),
+                capture_output=True, text=True, timeout=60,
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise EngineNotInstalled(
+                f"{LABEL} cannot run {self.python} ({type(exc).__name__}: {exc}). "
+                f"Point AMPHEAD_ENGINE_PYTHON at an interpreter with numpy and sounddevice."
+            ) from exc
+        if probe.returncode:
+            lines = [ln for ln in (probe.stderr or "").strip().splitlines() if ln.strip()]
+            reason = lines[-1] if lines else f"exit {probe.returncode}"
+            raise EngineNotInstalled(
+                f"{LABEL} needs numpy and sounddevice in {self.python}, and that "
+                f"interpreter cannot import them ({reason}). Install them there, or point "
+                f"AMPHEAD_ENGINE_PYTHON at one that has them."
+            )
+
     def start(self) -> None:
         if self.running:
             return
-        try:
-            import numpy  # noqa: F401
-            import sounddevice  # noqa: F401
-        except Exception as exc:
-            raise EngineNotInstalled(
-                f"{LABEL} needs numpy and sounddevice in {self.python}, and this one cannot "
-                f"import them ({type(exc).__name__}: {exc}). Install them there, or point "
-                f"AMPHEAD_ENGINE_PYTHON at an interpreter that has them."
-            ) from exc
+        self.check_env()
         self._proc = subprocess.Popen(
             [self.python, "-m", "amphead.engine_main"],
             cwd=str(Path(__file__).resolve().parent.parent),
@@ -492,14 +511,7 @@ class AmpHead2Rig:
         return False
 
     def install(self, **kw: Any) -> Any:
-        try:
-            import sounddevice  # noqa: F401
-        except Exception as exc:
-            raise EngineNotInstalled(
-                f"{LABEL} has no installer: it needs numpy and sounddevice in "
-                f"{self.client.python} ({type(exc).__name__}: {exc}). "
-                f"pip install numpy sounddevice, then run setup."
-            ) from exc
+        self.client.check_env()
         return type("Installed", (), {"bridge_path": self.client.python,
                                       "startup_action": "nothing to install"})()
 

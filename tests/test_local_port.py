@@ -6,7 +6,10 @@ process. These tests replace that process with a dictionary so the pane-facing a
 opening an interface or making a sound.
 """
 
+import os
+import subprocess
 import unittest
+from unittest import mock
 
 from amphead import local_port, port
 
@@ -125,6 +128,55 @@ class BypassTest(unittest.TestCase):
         """Reporting a stage as restored while it is still clean is the bug worth refusing."""
         with self.assertRaises(local_port.EngineRefused):
             rig().fx_bypass(fx=0, on=False)
+
+
+class InterpreterTest(unittest.TestCase):
+    def test_an_explicit_interpreter_wins_over_everything(self):
+        self.assertEqual(local_port.engine_python("C:/elsewhere/python.exe"),
+                         "C:/elsewhere/python.exe")
+
+    def test_the_environment_can_name_the_interpreter(self):
+        os.environ["AMPHEAD_ENGINE_PYTHON"] = "C:/said/python.exe"
+        try:
+            self.assertEqual(local_port.engine_python(), "C:/said/python.exe")
+        finally:
+            del os.environ["AMPHEAD_ENGINE_PYTHON"]
+
+    def test_a_venv_beside_the_plugin_is_found_without_being_configured(self):
+        """The pane runs in Hermes's Python, so the venv has to be discoverable, not typed."""
+        os.environ.pop("AMPHEAD_ENGINE_PYTHON", None)
+        found = local_port.engine_python()
+        self.assertTrue(os.path.isfile(found))
+
+    def test_the_capability_check_runs_in_the_engine_not_here(self):
+        """A rig must not refuse because the pane's own Python is thin."""
+        said = {}
+
+        class Fake(subprocess.CompletedProcess):
+            def __init__(self, *a, **k):
+                pass
+
+        def fake_run(argv, **kw):
+            said["argv"] = argv
+            said["cwd"] = kw.get("cwd")
+            return subprocess.CompletedProcess(argv, 0, "", "")
+
+        with mock.patch.object(local_port.subprocess, "run", fake_run):
+            local_port.EngineClient(python="C:/engine/python.exe").check_env()
+        self.assertEqual(said["argv"][0], "C:/engine/python.exe")
+        self.assertIn("sounddevice", said["argv"][-1])
+
+    def test_a_thin_engine_says_what_is_missing_and_where(self):
+        def fake_run(argv, **kw):
+            return subprocess.CompletedProcess(
+                argv, 1, "", "ModuleNotFoundError: No module named 'sounddevice'")
+
+        with mock.patch.object(local_port.subprocess, "run", fake_run):
+            with self.assertRaises(local_port.EngineNotInstalled) as caught:
+                local_port.EngineClient(python="C:/engine/python.exe").check_env()
+        said = str(caught.exception)
+        self.assertIn("C:/engine/python.exe", said)
+        self.assertIn("sounddevice", said)
 
 
 class ArmTest(unittest.TestCase):
