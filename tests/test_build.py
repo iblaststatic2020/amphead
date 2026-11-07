@@ -61,12 +61,12 @@ class TestBuild(BuildCase):
 
     def test_input_is_stored_and_read_back(self):
         out = self.build(input="1")
-        self.assertEqual(out.input, 1)
+        self.assertEqual(out.input, 0, "input 1 is the first channel, which REAPER stores as 0")
 
     def test_input_defaults_to_input_1(self):
         """A track with no input reads like a dead cable, so the build picks input 1 unasked."""
         out = self.build()
-        self.assertEqual(out.input, 1)
+        self.assertEqual(out.input, 0, "the default is the first channel, stored as 0")
 
     def test_input_none_still_builds_a_track_with_no_input(self):
         out = self.build(input="none")
@@ -128,7 +128,7 @@ class TestBuildTool(BuildCase):
         out = tools.handle_build({"amp": "RigSculpt", "input": "1", "start_db": -10})
         self.assertTrue(out.startswith("built=True"), out)
         self.assertIn("RigSculpt", out)
-        self.assertIn("input=1", out)
+        self.assertIn("input=input 1", out)
         self.assertIn("-10", out)
 
     def test_tool_says_the_player_arms(self):
@@ -137,7 +137,7 @@ class TestBuildTool(BuildCase):
         out = tools.handle_build({"amp": "RigSculpt"})
         self.assertIn("armed=False", out)
         self.assertIn("the player flips Live", out)
-        self.assertIn("input=1", out)
+        self.assertIn("input=input 1", out)
 
     def test_tool_refuses_a_bad_amp_without_pretending(self):
         from amphead import tools

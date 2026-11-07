@@ -122,10 +122,12 @@ def judge(state: dict, track: dict, reading: dict,
                           "in the mixer, or flip LIVE to be sure the rig is what you hear.",
                 "problems": ["the track is muted"]}
 
-    if "recinput" in track and int(float(track.get("recinput") or 0)) == 0:
+    # Below zero is no input. Zero is the FIRST input, and reading it as "none" told a player with
+    # a guitar in channel 1 that the track had no input selected.
+    if "recinput" in track and int(float(track.get("recinput"))) < 0:
         return {"verdict": NO_INPUT,
                 "reason": "the track is armed but pointed at no input, so nothing can arrive",
-                "problems": ["recinput is 0 (no input selected)"]}
+                "problems": ["recinput is -1 (no input selected)"]}
 
     peak = _peak(reading)
     if clip_of(reading):

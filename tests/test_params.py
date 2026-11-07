@@ -60,11 +60,25 @@ class TestParamIndex(unittest.TestCase):
 
 
 class TestInputEncoding(unittest.TestCase):
+    """REAPER counts mono inputs from zero and everything a person says counts from one, so "1"
+    has to store 0. Getting that wrong pointed a guitar in channel 1 at channel 2."""
+
     def test_none(self):
-        self.assertEqual(bridge.input_encoding("none", 2), 0)
+        self.assertEqual(bridge.input_encoding("none", 2), bridge.INPUT_NONE)
+
+    def test_first_input_is_zero(self):
+        self.assertEqual(bridge.input_encoding("1", 2), 0)
+        self.assertEqual(bridge.input_encoding("input 1", 2), 0)
+        self.assertEqual(bridge.input_encoding(1, 2), 0)
 
     def test_mono_channel(self):
-        self.assertEqual(bridge.input_encoding("in 2", 2), 2)
+        self.assertEqual(bridge.input_encoding("in 2", 2), 1)
+
+    def test_describe_counts_from_one(self):
+        self.assertEqual(bridge.describe_input(0), "input 1")
+        self.assertEqual(bridge.describe_input(1.0), "input 2")
+        self.assertEqual(bridge.describe_input(-1), "none")
+        self.assertEqual(bridge.describe_input(bridge.INPUT_PAIR_BASE), "stereo 1/2")
 
     def test_stereo_pair(self):
         self.assertEqual(bridge.input_encoding("1-2", 2), bridge.INPUT_PAIR_BASE)

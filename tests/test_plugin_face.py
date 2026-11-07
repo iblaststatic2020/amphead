@@ -39,6 +39,16 @@ class TestFaceMatchesVerdicts(unittest.TestCase):
         missing = [word for word in words if not re.search(rf"^\s*['\"]?{re.escape(word)}['\"]?:", table, re.M)]
         self.assertEqual([], missing, f"the face has no colour for: {missing}")
 
+    def test_an_on_off_parameter_is_a_knob_with_two_ends(self):
+        """The face draws the plugin's switches as knobs, and an On/Off knob snaps to one of its
+        two ends so a drag can never leave it at a meaningless in-between."""
+        source = face_source()
+        knob = source[source.index("function Knob("):source.index("function KnobGrid(")]
+        self.assertIn("const isBool = knob.bool === true", knob)
+        self.assertIn("isBool ? (clamped >= 0.5 ? 1 : 0) : clamped", knob, "the turn must snap")
+        self.assertIn("if (isBool && !moved.current)", knob, "a tap has to flip it")
+        self.assertIn("move(isBool ? 1 : value + step, true)", knob, "the arrow keys snap too")
+
     def test_the_face_stays_reachable(self):
         """Four doors, one face: the route, the sidebar row, the command, the pane, the chip."""
         source = face_source()

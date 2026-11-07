@@ -414,14 +414,15 @@ COMMANDS.SET_INPUT = function(args)
   local want = tonumber(args.input)
   if want == nil then return err("need input=") end
   -- REAPER stores any number you hand I_RECINPUT, including values that select nothing, so
-  -- the range check is ours: 0 = none, 1..N = mono channel, 1024.. = stereo pair.
+  -- the range check is ours. Mono channels are counted from zero here: 0 is the first input,
+  -- 1 the second, which is why python subtracts one before it gets this far.
   local inputs = reaper.GetNumAudioInputs()
   local max_pair = 1024 + math.max(0, math.floor(inputs / 2) - 1)
-  local valid = (want == 0) or (want >= 1 and want <= inputs) or (want >= 1024 and want <= max_pair)
+  local valid = (want < 0) or (want >= 0 and want < inputs) or (want >= 1024 and want <= max_pair)
   if not valid then
     return err(string.format(
-      "input %s is not available on this device (%d inputs): 0 = none, 1..%d = mono channel, 1024..%d = stereo pair",
-      tostring(want), inputs, inputs, max_pair),
+      "input %s is not available on this device (%d inputs): below 0 = none, 0..%d = mono channel counted from zero, 1024..%d = stereo pair",
+      tostring(want), inputs, math.max(0, inputs - 1), max_pair),
       { { "inputs", tostring(inputs) }, { "requested", tostring(want) } })
   end
   local own = open_undo("Hermes: set input")

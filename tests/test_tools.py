@@ -170,15 +170,16 @@ class TestSetup(unittest.TestCase):
                          "every write must name the tab it targets")
 
     def test_setup_points_a_rig_with_no_input_at_input_1(self):
-        """recinput 0 reads in the verdict like a dead cable, so setup picks input 1 for it."""
+        """No input (REAPER stores that below zero) reads like a dead cable, so setup picks the
+        first channel for it."""
         calls: list[dict] = []
 
         def set_input(**kwargs):
             calls.append(kwargs)
-            return {"recinput": "1", "applied": True}
+            return {"recinput": "0", "applied": True}
 
-        infos = [{"recinput": 0.0, "armed": True, "monitor": True},
-                 {"recinput": 1.0, "armed": True, "monitor": True}]
+        infos = [{"recinput": -1.0, "armed": True, "monitor": True},
+                 {"recinput": 0.0, "armed": True, "monitor": True}]
 
         with mock.patch.object(tools.launch, "find_reaper", return_value=Path("C:/reaper.exe")), \
              mock.patch.object(tools.launch, "ensure_running", return_value={"ui": "minimized"}), \
@@ -190,7 +191,7 @@ class TestSetup(unittest.TestCase):
              mock.patch.object(tools.bridge, "set_input", side_effect=set_input):
             out = tools.handle_setup({})
 
-        self.assertIn("input=1 (set to 1 by setup)", out)
+        self.assertIn("input=input 1 (setup pointed it at the first input)", out)
         self.assertEqual(len(calls), 1)
         self.assertEqual(calls[0].get("spec"), 1)
         self.assertEqual(calls[0].get("expect"), self.rig.as_posix(),
@@ -204,13 +205,13 @@ class TestSetup(unittest.TestCase):
              mock.patch.object(tools.bridge, "call", return_value={"db": -60.0}), \
              mock.patch.object(tools.bridge, "tabs_list", side_effect=[["a"], ["a", "b"]]), \
              mock.patch.object(tools.bridge, "track_info",
-                               return_value={"recinput": 2.0, "armed": True, "monitor": True}), \
+                               return_value={"recinput": 1.0, "armed": True, "monitor": True}), \
              mock.patch.object(tools.bridge, "set_input",
                                side_effect=AssertionError("setup must not retarget a live input")):
             out = tools.handle_setup({})
 
-        self.assertIn("input=2", out)
-        self.assertNotIn("set to 1", out)
+        self.assertIn("input=input 2", out)
+        self.assertNotIn("pointed it at", out)
 
     def test_setup_repairs_the_install_before_it_touches_the_rig(self) -> None:
         """A pane on a rebuilt resource folder has to fix itself; telling the player to run
@@ -362,7 +363,7 @@ class TestLive(unittest.TestCase):
              mock.patch.object(tools.bridge, "master", return_value={"db": -20.0}), \
              mock.patch.object(tools.bridge, "set_input", return_value={"ok": True}) as set_input, \
              mock.patch.object(tools.bridge, "track_info",
-                               return_value={"recinput": "3", "armed": True, "monitor": True}), \
+                               return_value={"recinput": "2", "armed": True, "monitor": True}), \
              mock.patch.object(tools.bridge, "arm",
                                return_value={"armed": True, "monitor": True}) as arm, \
              mock.patch.object(tools.launch, "ensure_audio",
@@ -373,8 +374,9 @@ class TestLive(unittest.TestCase):
         self.assertIn("master_db=-20.0", out)
         self.assertIn("clips_at=11.6", out)
         self.assertIn("input_changed=False", out)
-        # The default keeps whatever input REAPER already had and reports it back.
-        self.assertIn("input=3", out)
+        # The default keeps whatever input REAPER already had and reports it back the way a
+        # person counts it, not as the zero-based number the host stores.
+        self.assertIn("input=input 3", out)
         set_input.assert_not_called()
         self.assertTrue(arm.call_args.kwargs["allow_loud"])
 

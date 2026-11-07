@@ -380,7 +380,8 @@ def build_rig(
     ops.append(("FX_ADD", {"track": built_track, "name": amp}))
     spec = None
     # A rig whose track has no input is indistinguishable from a broken cable, so the build picks
-    # input 1 (mono, channel 1) unless told otherwise; input="none" builds a track with no input.
+    # the first input (mono channel 1, which REAPER stores as 0) unless told otherwise;
+    # input="none" builds a track with no input at all.
     wanted = DEFAULT_INPUT if input is None else input
     if str(wanted) not in ("0", "none", ""):
         try:

@@ -16,7 +16,7 @@ def live(bridge_state="live", out_ms=11.6, closed=False):
                        "closed": closed}}
 
 
-def track(armed=True, monitor=True, recinput=1):
+def track(armed=True, monitor=True, recinput=0):
     return {"armed": armed, "monitor": monitor, "recinput": recinput}
 
 
@@ -47,7 +47,7 @@ class TestJudge(unittest.TestCase):
         self.assertEqual(out["problems"], ["the track is not armed"])
 
     def test_armed_with_no_input_says_no_input(self):
-        out = verdict.judge(live(), track(recinput=0), read(0.0), CHAIN)
+        out = verdict.judge(live(), track(recinput=-1), read(0.0), CHAIN)
         self.assertEqual(out["verdict"], "NO INPUT")
         self.assertIn("recinput", out["problems"][0])
 
@@ -111,7 +111,7 @@ class TestReadyTool(unittest.TestCase):
              mock.patch.object(tools.bridge, "meter", return_value=read(0.2)) as meter:
             out = tools.handle_ready({"settle_ms": 0})
         self.assertIn("verdict=READY", out)
-        self.assertIn("input=1", out)
+        self.assertIn("input=input 1", out)
         self.assertIn("live_fx=1", out)
         self.assertIn("peak_db=-14.0", out)
         self.assertEqual(meter.call_count, 1)
@@ -271,7 +271,7 @@ class TestReadyOverTheWire(unittest.TestCase):
         patcher.start()
         self.addCleanup(patcher.stop)
 
-    def arm(self, recinput=1):
+    def arm(self, recinput=0):
         track = self.fake.tracks[0]
         track["armed"] = True
         track["monitor"] = True
@@ -294,7 +294,7 @@ class TestReadyOverTheWire(unittest.TestCase):
         self.assertIn("verdict=STANDBY", tools.handle_ready({"settle_ms": 0}))
 
     def test_no_input_over_the_wire_says_no_input(self):
-        self.arm(recinput=0)
+        self.arm(recinput=-1)
         self.assertIn("verdict=NO INPUT", tools.handle_ready({"settle_ms": 0}))
 
     def test_a_bypassed_fx_is_named_as_a_problem(self):

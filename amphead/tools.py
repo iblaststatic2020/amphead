@@ -103,8 +103,9 @@ LIVE_SCHEMA = _schema(
                                   "ceiling 0).",
                    "minimum": -60, "maximum": 0},
      "input": {"type": "string",
-               "description": "Track input: \"0\" (default) leaves whatever input REAPER already has, "
-                              "\"1\" for mono input 1, \"1+2\" for a stereo pair, \"none\" to clear it."},
+               "description": "Track input, counted from 1: \"1\" is the first channel on the "
+                              "interface. Omit to leave whatever input REAPER already has, \"stereo\" "
+                              "or \"1-2\" for a stereo pair, \"none\" to clear it."},
      "track": {"type": "integer", "description": "Track index, 1 based (default 1).", "minimum": 1}},
 )
 
@@ -151,6 +152,15 @@ def _whole(value: Any) -> Any:
     except (TypeError, ValueError):
         return value
     return int(number) if number.is_integer() else value
+
+
+def _no_input(value: Any) -> bool:
+    """True when the track is pointed at nothing. REAPER stores that as a negative number, and a
+    missing reading is the same thing as far as a player is concerned."""
+    try:
+        return int(float(value)) < 0
+    except (TypeError, ValueError):
+        return True
 
 
 def _fmt(fields: list[tuple[str, Any]]) -> str:
@@ -245,17 +255,19 @@ def handle_setup(args: dict[str, Any], **_kw) -> str:
         # Report the track as it actually is, not as the plan says it should be: the template arms
         # and monitors so the chain is testable, and the parked master is what keeps that silent.
         info = bridge.track_info(1)
-        # A rig built before the default existed carries recinput 0, which reads in the verdict as
-        # "no input selected" and looks to a player like a dead cable. Setup points it at input 1.
-        input_line = _whole(info.get("recinput"))
+        # A track pointed at no input reads in the verdict as a dead cable, and looks to a player
+        # like a broken lead. Setup points a rig that has none at the first input, and reports the
+        # input the way a person counts it, never as the zero REAPER stores for channel one.
+        held = info.get("recinput")
+        input_line = bridge.describe_input(held)
         repaired = False
-        if str(input_line) in ("0", "0.0"):
+        if _no_input(held):
             try:
                 bridge.set_input(track=1, spec=1, expect=rig)
-                input_line = _whole(bridge.track_info(1).get("recinput"))
+                input_line = bridge.describe_input(bridge.track_info(1).get("recinput"))
                 repaired = True
             except bridge.ReaperError as exc:
-                input_line = f"still 0 (refused: {exc})"
+                input_line = f"none (refused: {exc})"
     except bridge.ReaperError as exc:
         return f"SETUP FAILED: {exc}"
     except launch.NoReaperInstall as exc:
@@ -264,7 +276,7 @@ def handle_setup(args: dict[str, Any], **_kw) -> str:
         ("state", "STANDBY"), ("ui", running.get("ui")), ("rig", path.as_posix()),
         ("tabs", f"{tabs_before}->{tabs_after}"),
         ("master_db", lowered.get("db")),
-        ("input", f"{input_line} (set to 1 by setup)" if repaired else input_line),
+        ("input", f"{input_line} (setup pointed it at the first input)" if repaired else input_line),
         ("armed", f"{info.get('armed')} (silent: master parked at {lowered.get('db')} dB)"),
         ("monitor", info.get("monitor")),
         ("next", "the player flips Live; setup never raises the master"),
@@ -419,7 +431,7 @@ def handle_live(args: dict[str, Any], **_kw) -> str:
 
     return _fmt([("live", True), ("track", track), ("armed", armed.get("armed")),
                  ("monitor", armed.get("monitor")), ("master_db", level.get("db")),
-                 ("input", _whole(now.get("recinput", spec if retarget else "unchanged"))),
+                 ("input", bridge.describe_input(now.get("recinput", spec if retarget else ""))),
                  ("input_changed", retarget),
                  ("clips_at", device.get("output_latency_ms"))])
 
@@ -498,7 +510,7 @@ def handle_ready(args: dict[str, Any], **_kw) -> str:
     if state.get("bridge") == "live":
         fields += [("track", track), ("armed", bool(info.get("armed"))),
                    ("monitor", bool(info.get("monitor"))),
-                   ("input", _whole(info.get("recinput"))),
+                   ("input", bridge.describe_input(info.get("recinput"))),
                    ("chain", len(chain)), ("live_fx", len([f for f in chain if f["enabled"]])),
                    ("peak_db", _db_level(max(reading.get("l") or 0.0, reading.get("r") or 0.0))),
                    ("out_ms", (state.get("device") or {}).get("latency_out_ms") or 0.0)]
@@ -637,8 +649,10 @@ BUILD_SCHEMA = _schema(
     {"amp": {"type": "string",
              "description": "Plugin name to load, as REAPER knows it (default 'NAM Universal')."},
      "input": {"type": ["string", "integer"],
-               "description": "Recording input: 1..N for a mono channel, '1+2' for a stereo pair, "
-                              "'none' for no input. Omit to leave the input decision alone."},
+               "description": "Recording input, counted the way the interface's own front panel "
+                              "counts: 1 is the first channel. 1..N for a mono channel, 'stereo' or "
+                              "'1-2' for the first stereo pair, 'none' for no input. Omit to leave "
+                              "the input decision alone."},
      "track_name": {"type": "string", "description": "Name for the new track (default Gtr)."},
      "start_db": {"type": "number", "description": "Starting track level in dB (default -6)."},
      "arm": {"type": "boolean",
@@ -675,7 +689,7 @@ def handle_build(args: dict[str, Any], **_kw) -> str:
         ("built", True), ("rig", built.path), ("track", f"{built.track} {built.track_name}"),
         ("amp", f"{built.amp} at fx {built.amp_index}"), ("chain", len(built.chain)),
         ("db", built.db), ("armed", built.armed), ("monitor", built.monitor),
-        ("input", built.input if built.input is not None else "none (as asked)"),
+        ("input", bridge.describe_input(built.input) if built.input is not None else "none (as asked)"),
         ("seconds", built.seconds),
     ]
     if built.pre_fx:

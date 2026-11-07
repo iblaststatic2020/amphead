@@ -449,26 +449,53 @@ def arm(track: int = 1, monitor: bool = True, allow_loud: bool = False, **kwargs
     return payload
 
 
-INPUT_NONE = 0
+# REAPER counts mono hardware inputs from zero: I_RECINPUT 0 is the FIRST input, 1 is the second,
+# 1024 + n is the stereo pair starting at channel n, and anything below zero is no input at all.
+# Everywhere a person reads an input it is counted from one, so the off-by-one lives here.
+INPUT_NONE = -1
 INPUT_PAIR_BASE = 1024
 
 
 def input_encoding(spec: str | int, inputs: int = 2) -> int:
-    """Turn "1", "in 2", "stereo", "none" or a raw number into REAPER's I_RECINPUT value."""
+    """Turn "1", "in 2", "stereo", "none" or a 1-based number into REAPER's I_RECINPUT value.
+
+    "1" is the first input and stores 0. A raw value already in REAPER's own ranges (negative, or
+    at or above the stereo base) is passed through untouched, because that is a caller who read it
+    back out of the host and is handing it back.
+    """
     if isinstance(spec, int):
-        return spec
-    text = str(spec).strip().lower()
-    if text in {"", "none", "off", "no input"}:
+        if spec < 0 or spec >= INPUT_PAIR_BASE:
+            return spec
+        value = spec
+    else:
+        text = str(spec).strip().lower()
+        if text in {"", "none", "off", "no input"}:
+            return INPUT_NONE
+        if text in {"stereo", "stereo 1", "1-2", "in 1-2"}:
+            return INPUT_PAIR_BASE
+        digits = "".join(ch for ch in text if ch.isdigit())
+        if not digits:
+            raise ValueError(f"cannot read an input from {spec!r}")
+        value = int(digits)
+    if value == 0:
         return INPUT_NONE
-    if text in {"stereo", "stereo 1", "1-2", "in 1-2"}:
-        return INPUT_PAIR_BASE
-    digits = "".join(ch for ch in text if ch.isdigit())
-    if not digits:
-        raise ValueError(f"cannot read an input from {spec!r}")
-    value = int(digits)
-    if value > inputs and value < INPUT_PAIR_BASE:
+    if value < 0 or value > inputs:
         raise ValueError(f"input {value} does not exist on a {inputs}-input device")
-    return value
+    return value - 1
+
+
+def describe_input(value: Any) -> str:
+    """The input the way a person counts it, so no readout ever shows REAPER's raw encoding."""
+    try:
+        raw = int(float(value))
+    except (TypeError, ValueError):
+        return "unknown"
+    if raw < 0:
+        return "none"
+    if raw >= INPUT_PAIR_BASE:
+        left = raw - INPUT_PAIR_BASE
+        return f"stereo {left + 1}/{left + 2}"
+    return f"input {raw + 1}"
 
 
 def set_input(track: int = 1, spec: str | int = 1, **kwargs) -> dict:

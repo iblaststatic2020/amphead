@@ -232,6 +232,7 @@ function Knob({ knob, busy, onTurn, size }) {
   const sent_at = useRef(0)
   const flight = useRef({ busy: false, queued: null })
   const settled = useRef(0)
+  const moved = useRef(false)
 
   useEffect(() => {
     if (dragging || Date.now() < settled.current) return
@@ -290,11 +291,16 @@ function Knob({ knob, busy, onTurn, size }) {
     })
   }
 
+  // An On/Off parameter is a knob with two places to be, not a switch beside the knobs. It snaps to
+  // the nearer end as the finger moves, so it can never be left at 0.47, and a click without a drag
+  // flips it, which is what a footswitch does.
+  const isBool = knob.bool === true
   const move = (next, final) => {
     const clamped = Math.min(1, Math.max(0, next))
-    cur.current = clamped
-    setValue(clamped)
-    if (final || Date.now() - sent_at.current >= SEND_MS) push(clamped, final)
+    const landed = isBool ? (clamped >= 0.5 ? 1 : 0) : clamped
+    cur.current = landed
+    setValue(landed)
+    if (final || Date.now() - sent_at.current >= SEND_MS) push(landed, final)
   }
 
   return jsxs('div', {
@@ -312,6 +318,7 @@ function Knob({ knob, busy, onTurn, size }) {
           if (busy) return
           event.currentTarget.setPointerCapture(event.pointerId)
           finger.current = event.clientY
+          moved.current = false
           setDragging(true)
         },
         onPointerMove: (event) => {
@@ -320,11 +327,17 @@ function Knob({ knob, busy, onTurn, size }) {
           // tightens the rest of the turn instead of teleporting the knob.
           const dy = finger.current - event.clientY
           finger.current = event.clientY
+          if (dy !== 0) moved.current = true
           move(cur.current + dy / (event.shiftKey ? TRAVEL * 5 : TRAVEL), false)
         },
         onPointerUp: () => {
           if (!dragging) return
           setDragging(false)
+          // A tap on an On/Off knob is a flip; a drag already landed on one end, so it writes that.
+          if (isBool && !moved.current) {
+            move(cur.current >= 0.5 ? 0 : 1, true)
+            return
+          }
           move(cur.current, true)
         },
         onPointerCancel: () => {
@@ -337,10 +350,13 @@ function Knob({ knob, busy, onTurn, size }) {
           const step = event.shiftKey ? 0.1 : 0.02
           if (event.key === 'ArrowUp' || event.key === 'ArrowRight') {
             event.preventDefault()
-            move(value + step, true)
+            move(isBool ? 1 : value + step, true)
           } else if (event.key === 'ArrowDown' || event.key === 'ArrowLeft') {
             event.preventDefault()
-            move(value - step, true)
+            move(isBool ? 0 : value - step, true)
+          } else if (isBool && (event.key === 'Enter' || event.key === ' ')) {
+            event.preventDefault()
+            move(value >= 0.5 ? 0 : 1, true)
           }
         },
         className: 'relative shrink-0 select-none rounded-full outline-none',

@@ -59,9 +59,14 @@ def _knobs(track: int) -> list[dict]:
         name = str(param.get("name") or "").strip()
         if not name:
             continue
+        reading = _pretty(str(param.get("fmt") or ""))
         picked.append({"index": int(param["i"]), "name": name,
                        "section": _section(name),
-                       "value": _pretty(str(param.get("fmt") or "")),
+                       # The host's own reading decides what is a switch: a parameter that says
+                       # On or Off has two places to be, and the face draws it as a knob that
+                       # snaps between them rather than one that can sit at 0.47.
+                       "bool": reading in {"On", "Off"},
+                       "value": reading,
                        "norm": round(float(param.get("norm") or 0.0), 4),
                        "raw": param.get("raw")})
     # The amp's own tone controls come first, then the plugin's own switches, in the plugin's order

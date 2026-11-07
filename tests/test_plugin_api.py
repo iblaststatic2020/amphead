@@ -287,6 +287,20 @@ class TestKnobs(unittest.TestCase):
             knobs = API._knobs(1)
         self.assertEqual([k["value"] for k in knobs], ["Vintage", "Off"])
 
+    def test_an_on_off_parameter_is_marked_as_a_two_position_knob(self):
+        """On/Off is decided by the host's own word, so a knob that says Off snaps between two
+        ends instead of sitting at 0.47 with no meaning."""
+        params = [
+            {"i": 1, "name": "Pedal Bypass", "fmt": "Off", "norm": 0.0, "raw": 0.0},
+            {"i": 2, "name": "Amplifier Bass", "fmt": "4.4", "norm": 0.44, "raw": 4.4},
+            {"i": 3, "name": "HD Mode", "fmt": "On", "norm": 1.0, "raw": 1.0},
+        ]
+        with mock.patch.object(API.bridge, "fx_params", return_value=params):
+            knobs = {k["name"]: k for k in API._knobs(1)}
+        self.assertTrue(knobs["Pedal Bypass"]["bool"])
+        self.assertTrue(knobs["HD Mode"]["bool"])
+        self.assertFalse(knobs["Amplifier Bass"]["bool"])
+
     def test_a_nameless_parameter_is_skipped_rather_than_shown_blank(self):
         params = [{"i": 1, "name": "", "fmt": "0", "norm": 0.0}, {"i": 2, "name": "Input Gain", "fmt": "0", "norm": 0.0}]
         with mock.patch.object(API.bridge, "fx_params", return_value=params):
