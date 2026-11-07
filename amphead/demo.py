@@ -56,8 +56,16 @@ _DEMO: dict[str, Any] = {}
 
 
 def _path() -> Path:
-    home = os.environ.get("HERMES_HOME") or str(Path.home() / ".hermes")
-    return Path(home) / "plugin-data" / "amphead" / "demo.json"
+    """Next to the rig, not in a home of its own.
+
+    This used to answer ``$HERMES_HOME/plugin-data/amphead/demo.json``, a folder nothing else in
+    the repo reads, so the pane's switch and the tool's switch could disagree, and on a box where
+    HERMES_HOME is unset it wrote into a stale ``~/.hermes``. The demo flag is amphead state, so
+    it lives where the rest of amphead's state lives.
+    """
+    from . import rig as rig_module
+
+    return rig_module.data_dir() / "demo.json"
 
 
 def enabled() -> bool:

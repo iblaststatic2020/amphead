@@ -22,12 +22,18 @@ STATE_KEYS = {"verdict", "reason", "project", "device", "master_db", "ui", "arme
 
 
 class DemoHome(unittest.TestCase):
-    """Each test gets its own HERMES_HOME so a switch written by one cannot leak into the next."""
+    """Each test gets its own AMPHEAD_HOME so a switch written by one cannot leak into the next.
+
+    Isolating on HERMES_HOME used to work only because the demo flag kept a home of its own; the
+    flag now lives in ``rig.data_dir()`` like the rest of amphead's state, so the test moves the
+    data dir instead of the Hermes one.
+    """
 
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
         self.home = Path(self.tmp.name)
-        self.env = mock.patch.dict(os.environ, {"HERMES_HOME": str(self.home)}, clear=False)
+        self.env = mock.patch.dict(os.environ, {"AMPHEAD_HOME": str(self.home),
+                                                "HERMES_HOME": str(self.home)}, clear=False)
         self.env.start()
         os.environ.pop("AMPHEAD_DEMO", None)
         demo.reset()
