@@ -1,0 +1,9 @@
+# Keep every tracked file LF in the repo and in the checkout. Without this, a Windows install of the
+# plugin lands CRLF files, and the next `hermes plugins update` stashes the whole tree as "local
+# changes" and refuses to re-apply them, which looks like a conflict and is only line endings.
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.wav binary
+*.nam binary
