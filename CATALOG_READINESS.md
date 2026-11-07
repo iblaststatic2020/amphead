@@ -197,10 +197,12 @@ player can see. The guide's rule is about what a tool call answers, and it now a
 sentence, a refusal comes back `ok: false`, a sentence with no numbers has no `fields`, and a cold
 subprocess calling the registered `amphead_status` handler parses as JSON with a non-empty summary.
 
-Known edge: `ok` is decided by the sentence's first word (`REFUSED`, `NOT`, `CANNOT`, `ERROR`,
-`NO `), because a handler that returns prose cannot also return a status code. A new failure word
-that is not on that list reads as `ok: true` while saying it failed. `json_answer` keeps the list in
-one place for that reason.
+`ok` is a judgement on prose, so it is made on the opening clause (everything before the first
+colon, where every handler puts its verdict): a leading `REFUSED`/`NOT`/`CANNOT`/`ERROR`/`NO `, or
+`NOT` inside that clause, reads as `ok: false`. That covers `REAPER NOT RUNNING: installed at ...`,
+which begins with a product name rather than a failure word, without letting a caveat later in a
+passing sentence flip it. A handler that invents a new way to say no will read as `ok: true` until
+the word joins `FAILURE_WORDS`; that list and `_ok()` are the one place to change.
 
 ### G5. Data paths are hand-rolled instead of `plugin_data_dir()` — **done**
 

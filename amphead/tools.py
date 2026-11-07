@@ -878,11 +878,26 @@ TOOLS = (
 FAILURE_WORDS = ("REFUSED", "NOT", "CANNOT", "ERROR", "NO ")
 
 
+def _ok(summary: str) -> bool:
+    """Whether a sentence reports success, judged on its opening clause.
+
+    A handler returns prose, so the only signal available is the words it leads with. The opening
+    clause (everything before the first colon) is where every handler puts its verdict, and looking
+    only there keeps a caveat later in the sentence ("... nothing is clipping, nothing is NOT
+    parked") from flipping the answer. `REAPER NOT RUNNING: installed at ...` is a failed ping even
+    though it does not begin with a failure word, which is why NOT is read inside the clause too.
+    """
+    clause = summary.strip().split(":")[0].upper()
+    if clause.startswith(FAILURE_WORDS):
+        return False
+    return " NOT " not in f" {clause} "
+
+
 def json_answer(name: str, summary: str) -> str:
     """One JSON string: the tool, the sentence, whether it failed, and the numbers it carried."""
     payload: dict[str, Any] = {
         "tool": name,
-        "ok": not summary.strip().upper().startswith(FAILURE_WORDS),
+        "ok": _ok(summary),
         "summary": summary,
     }
     fields: dict[str, str] = {}

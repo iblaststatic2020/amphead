@@ -63,6 +63,14 @@ class EveryToolAnswersInJson(unittest.TestCase):
                 self.assertFalse(payload["ok"], sentence)
                 self.assertEqual(payload["summary"], sentence)
 
+    def test_a_verdict_inside_the_opening_clause_still_counts(self):
+        """`REAPER NOT RUNNING: installed at ...` is a failed ping, not a successful one."""
+        payload = json.loads(tools.json_answer(
+            "amphead_ping", "REAPER NOT RUNNING: installed at C:\\Program Files\\REAPER; call amphead_setup"))
+        self.assertFalse(payload["ok"])
+        passing = json.loads(tools.json_answer("amphead_ready", "READY: everything is fine, nothing is parked"))
+        self.assertTrue(passing["ok"])
+
     def test_a_sentence_with_no_numbers_has_no_fields(self):
         payload = json.loads(tools.json_answer("amphead_ready", "READY: nothing is clipping"))
         self.assertNotIn("fields", payload)
