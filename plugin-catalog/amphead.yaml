@@ -1,6 +1,6 @@
 name: amphead
 repo: https://github.com/iblaststatic2020/hermes-reaper-amp
-sha: f707b22e2389f55c161332fabf65557fa58da1f0
+sha: be15998a5f7e711e243c665806a65ca0650c4268
 title: AmpHead
 description: >-
   Turns a REAPER session into a guitar rig the agent can build, hold and verify: it launches the host
@@ -28,7 +28,7 @@ tier: community
 category: tools
 requires_hermes: ">=0.22.0"
 docs_url: https://github.com/iblaststatic2020/hermes-reaper-amp#readme
-version: "0.1.0"
+version: "1.0.0"
 readme: true
 platforms:
   - windows
