@@ -10,6 +10,12 @@ AmpHead runs on one of two rigs:
 Everything above this file (tools, verdict, presets, the pane) talks to ``Rig``.
 That is the seam: swapping the whole backend is one environment variable,
 ``AMPHEAD_ENGINE``, and nothing above has to know which one answered.
+
+One rule holds for every rig, including the demo: a rig never comes up armed. Its
+track answers ``armed`` false and its master sits at ``SAFE_MASTER_DB`` until a
+person presses LIVE. Nothing may pass a live guitar into the user's speakers just
+because a window was opened, and a second implementation is exactly where that
+promise would otherwise be forgotten.
 """
 
 from __future__ import annotations

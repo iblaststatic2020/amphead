@@ -69,12 +69,28 @@ class TestTheRigItShows(DemoHome):
         self.assertEqual(set(state["device"]), {"buffer", "rate", "out_ms", "closed"})
         self.assertTrue(state["demo"])
 
-    def test_a_visitor_arrives_at_a_rig_that_is_ready(self):
+    def test_a_visitor_arrives_at_a_rig_that_is_parked_and_says_so(self):
+        """The demo is the first thing a stranger opens, so it must open disarmed at the floor.
+
+        Armed at -20 dB on open would pass a live guitar into a stranger's speakers because they
+        double-clicked a plugin. The chain, the knobs and the meter still show what working looks
+        like; what is missing is a person pressing LIVE.
+        """
         state = demo.state()
-        self.assertEqual(state["verdict"], verdict.READY, state["reason"])
-        self.assertEqual(state["problems"], [])
+        self.assertEqual(state["verdict"], verdict.STANDBY, state["reason"])
+        self.assertFalse(state["armed"])
+        self.assertFalse(state["monitor"])
+        self.assertAlmostEqual(float(state["master_db"]), demo.PARKED_MASTER_DB, places=1)
         self.assertEqual(len(state["chain"]), 1)
         self.assertEqual(len(state["knobs"]), 8)
+
+    def test_one_press_of_live_makes_it_the_rig_the_screenshots_show(self):
+        demo.live_switch({"on": True})
+        state = demo.state()
+        self.assertEqual(state["verdict"], verdict.READY, state["reason"])
+        self.assertTrue(state["armed"])
+        self.assertTrue(state["monitor"])
+        self.assertEqual(state["problems"], [])
         # The latency a player reads has to be the rig's own number, not a zero left by a key typo.
         self.assertIn("11.61 ms", state["reason"])
         self.assertAlmostEqual(state["device"]["out_ms"], 11.61, places=2)
@@ -141,6 +157,9 @@ class TestHandsOn(DemoHome):
         self.assertFalse(demo.tweak({"value": 0.5})["ok"])
 
     def test_panic_bypasses_the_chain_and_restore_brings_it_back(self):
+        # Armed first: an unarmed rig is STANDBY whatever the chain says, and that is the more
+        # basic fact, so it would hide the bypass this test is about.
+        demo.live_switch({"on": True})
         demo.panic({"restore": False})
         state = demo.state()
         self.assertEqual(state["verdict"], verdict.NO_CHAIN, state["reason"])

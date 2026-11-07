@@ -116,6 +116,32 @@ class TestFaceMatchesVerdicts(unittest.TestCase):
                         "the demo has to claim the chip before a level does")
         self.assertLess(chip.index("const text"), chip.index("dB`"))
 
+    def test_the_meter_panel_says_words_when_no_rig_is_answering(self):
+        """The chip got this right first; the panel beside it still printed -60.0 dB with no rig.
+
+        A number is a claim that something was measured. With the amp closed the meter reads zero,
+        and "-60.0 dB" reads as a quiet rig rather than no rig, which is the exact doubt the chip
+        was changed to remove. Both faces are held to it, because the surface they draw is the same
+        surface whether or not the copy above them is the one that ships.
+        """
+        for name, source in (("shipped", face_source()), ("original", legacy_source())):
+            panel = source[source.index("function Meter("):]
+            panel = panel[:panel.index("\n}\n")]
+            self.assertIn("function Meter({ peak, clip, live })", panel, name)
+            self.assertIn("const hot = !!clip && live", panel,
+                          f"{name}: the clip lamp must not light on a meter that measured nothing")
+            # The number sits behind the live check however the ternary is laid out, and the
+            # words are the fallback, never the other way round.
+            self.assertIn("db.toFixed(1)} dB", panel, name)
+            self.assertLess(panel.index("live ?"), panel.index("db.toFixed(1)} dB"), name)
+            # The words say what the missing number means. They do not repeat the verdict above:
+            # the pane already says STANDBY twice, and a third copy in the meter is clutter.
+            self.assertIn("'not measuring'", panel, name)
+            self.assertGreater(panel.index("'not measuring'"), panel.index("db.toFixed(1)} dB"), name)
+            self.assertEqual(source.count("jsx(Meter, { peak, clip, live }),"), 1,
+                             f"{name}: the meter panel is drawn once, and it must be told whether "
+                             f"a rig is answering")
+
     def test_every_verdict_word_has_a_chip_word(self):
         source = face_source()
         start = source.index("const CHIP_WORD = {")

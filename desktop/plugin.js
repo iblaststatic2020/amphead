@@ -145,9 +145,10 @@ function Panel({ title, caption, children, className }) {
 // the number beside it and the CLIP light are the same reading spelled out.
 const SEG_DB = [0, -3, -6, -9, -12, -15, -18, -21, -24, -27, -30, -33, -36, -39, -42, -45, -50, -60]
 
-function Meter({ peak, clip }) {
+function Meter({ peak, clip, live }) {
   const db = toDb(peak)
-  const lit = SEG_DB.filter((floor) => db >= floor).length
+  const hot = !!clip && live
+  const lit = live ? SEG_DB.filter((floor) => db >= floor).length : 0
   return jsxs('div', {
     className: 'rounded-md px-2 py-1.5',
     style: { background: WELL, border: '1px solid rgba(255,255,255,0.05)' },
@@ -166,15 +167,15 @@ function Meter({ peak, clip }) {
               jsx('span', {
                 className: 'rounded-sm px-1 text-[0.5rem] font-semibold uppercase tracking-[0.12em]',
                 style: {
-                  color: clip ? '#1a1512' : 'rgba(240,226,200,0.25)',
-                  background: clip ? '#ff6b5a' : 'rgba(255,255,255,0.06)'
+                  color: hot ? '#1a1512' : 'rgba(240,226,200,0.25)',
+                  background: hot ? '#ff6b5a' : 'rgba(255,255,255,0.06)'
                 },
                 children: 'clip'
               }),
               jsx('span', {
                 className: 'text-[0.625rem] tabular-nums',
-                style: { color: clip ? '#ff6b5a' : FACE },
-                children: `${db.toFixed(1)} dB`
+                style: { color: hot ? '#ff6b5a' : FACE },
+                children: live ? `${db.toFixed(1)} dB` : 'not measuring'
               })
             ]
           })
@@ -809,6 +810,9 @@ function AmpFace({ rest }) {
   const s = state.data || {}
   const reading = meter.data || {}
   const peak = Math.max(reading.l || 0, reading.r || 0)
+  // A dB number is a claim that something was measured. With no rig the meter reads zero, and
+  // "-60.0 dB" reads as a quiet amp rather than no amp, so the panel says words instead.
+  const live = !!reading.live
   useEffect(() => {
     // Latch the clip light like hardware: it stays lit until the input has been quiet for a moment.
     if (reading.clip) clipped.current = true
@@ -935,7 +939,7 @@ function AmpFace({ rest }) {
         ]
       }),
 
-      jsx(Meter, { peak, clip }),
+      jsx(Meter, { peak, clip, live }),
 
       jsxs('div', {
         className: 'flex flex-col gap-1.5',
@@ -1220,9 +1224,10 @@ function Row({ label, children }) {
   })
 }
 
-function Meter({ peak, clip }) {
+function Meter({ peak, clip, live }) {
   const db = toDb(peak)
-  const width = Math.max(0, Math.min(100, ((db + 60) / 60) * 100))
+  const hot = !!clip && live
+  const width = live ? Math.max(0, Math.min(100, ((db + 60) / 60) * 100)) : 0
   return jsxs('div', {
     className: 'flex flex-col gap-1',
     children: [
@@ -1232,8 +1237,10 @@ function Meter({ peak, clip }) {
           jsx('span', { className: 'text-[0.6875rem] uppercase tracking-wide', style: MUTED, children: 'input' }),
           jsx('span', {
             className: 'text-xs tabular-nums',
-            style: clip ? VERDICT_COLOR.CLIPPING : SECOND,
-            children: `${db.toFixed(1)} dB${clip ? '  CLIPPED' : ''}`
+            style: hot ? VERDICT_COLOR.CLIPPING : SECOND,
+            children: live
+              ? `${db.toFixed(1)} dB${hot ? '  CLIPPED' : ''}`
+              : 'not measuring'
           })
         ]
       }),
@@ -1242,7 +1249,7 @@ function Meter({ peak, clip }) {
         style: { background: 'var(--ui-stroke-secondary)' },
         children: jsx('div', {
           className: 'h-full rounded-full transition-[width] duration-75',
-          style: { width: `${width}%`, background: clip ? 'var(--ui-danger, var(--ui-accent))' : 'var(--ui-accent)' }
+          style: { width: `${width}%`, background: hot ? 'var(--ui-danger, var(--ui-accent))' : 'var(--ui-accent)' }
         })
       })
     ]
@@ -1343,6 +1350,9 @@ function AmpFace({ rest }) {
   const s = state.data || {}
   const reading = meter.data || {}
   const peak = Math.max(reading.l || 0, reading.r || 0)
+  // A dB number is a claim that something was measured. With no rig the meter reads zero, and
+  // "-60.0 dB" reads as a quiet amp rather than no amp, so the panel says words instead.
+  const live = !!reading.live
   useEffect(() => {
     // Latch the clip light like hardware: it stays lit until the input has been quiet for a moment.
     if (reading.clip) clipped.current = true
@@ -1396,7 +1406,7 @@ function AmpFace({ rest }) {
         ]
       }),
 
-      jsx(Meter, { peak, clip }),
+      jsx(Meter, { peak, clip, live }),
 
       jsx('button', {
         type: 'button',

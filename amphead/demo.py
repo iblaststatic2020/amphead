@@ -94,10 +94,17 @@ def set_enabled(on: bool) -> bool:
 
 
 def reset() -> None:
-    """Back to the rig as it boots: armed, monitoring, chain live, master at -20 dB."""
+    """Back to the rig as it boots: disarmed, monitoring off, chain loaded, master parked.
+
+    It does not boot armed and it does not boot at a level you can hear. A rig that comes up armed
+    is a rig that passes a live guitar into someone's speakers the moment the pane opens, and the
+    demo is the first thing a stranger opens. The chain is loaded and the meter moves, so the face
+    still shows what it looks like working; you have to press LIVE to arm it.
+    """
     _DEMO["knobs"] = {name: value for name, _index, value in KNOBS}
-    _DEMO["master_db"] = LIVE_MASTER_DB
-    _DEMO["armed"] = True
+    _DEMO["master_db"] = PARKED_MASTER_DB
+    _DEMO["armed"] = False
+    _DEMO["monitor"] = False
     _DEMO["mute"] = False
     _DEMO["bypass"] = False
     _DEMO["amp"] = AMP
@@ -153,7 +160,7 @@ def _judged() -> tuple[dict, dict, list[dict]]:
     rig = _rig()
     live = {"bridge": "live", "project": PROJECT, "path": "", "tracks": 1, "instances": 1,
             "rig_tab": True, "device": dict(DEVICE)}
-    track = {"armed": rig["armed"], "monitor": True, "mute": rig["mute"],
+    track = {"armed": rig["armed"], "monitor": bool(rig["monitor"]), "mute": rig["mute"],
              "recinput": float(rig["input"] - 1)}
     chain = _chain()
     sample = meter()
@@ -173,7 +180,7 @@ def state() -> dict[str, Any]:
         "master_db": rig["master_db"],
         "ui": "hidden",
         "armed": rig["armed"],
-        "monitor": True,
+        "monitor": bool(rig["monitor"]),
         "problems": judged["problems"],
         "chain": chain,
         "plugin": {"name": _rig()["amp"], "enabled": not _rig()["bypass"]},
@@ -264,8 +271,10 @@ def live_switch(body: dict) -> dict[str, Any]:
     rig = _rig()
     on = bool(body.get("on"))
     rig["armed"] = on
+    rig["monitor"] = on
     rig["master_db"] = LIVE_MASTER_DB if on else PARKED_MASTER_DB
-    spoken = "LIVE: armed and monitoring" if on else "STANDBY: armed off, master parked"
+    spoken = ("LIVE: armed and monitoring" if on
+              else "STANDBY: armed off, monitoring off, master parked")
     return {"output": f"{spoken} (demo rig)", "on": on}
 
 
