@@ -3,6 +3,7 @@
 import io
 import json
 import unittest
+from unittest import mock
 
 try:
     import numpy as np
@@ -29,6 +30,14 @@ class VerbTest(unittest.TestCase):
         self.assertFalse(result["armed"])
         self.assertEqual(result["samplerate"], 48000)
         self.assertEqual(result["tone"], {"bass": 0.0, "mid": 0.0, "treble": 0.0})
+
+    def test_starting_opens_the_device_without_raising_the_master(self):
+        """A started engine that says armed:false has to be silent, not merely quiet."""
+        with mock.patch.object(type(self.server.engine), "start", return_value="test"):
+            self.server.handle({"cmd": "start"})
+        status = self.server.handle({"cmd": "status"})["result"]
+        self.assertFalse(status["armed"])
+        self.assertEqual(status["master_db"], SAFE_MASTER_DB)
 
     def test_arm_uses_the_measured_default(self):
         result = self.server.handle({"cmd": "arm"})["result"]

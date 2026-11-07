@@ -76,7 +76,9 @@ class Server:
             if kw.get(key) is not None:
                 setattr(engine, key, int(kw[key]))
         mode = engine.start()
-        engine.update(master_db=ARM_MASTER_DB, armed=False)
+        # Started means an open device, not a live amp: the master stays at the floor
+        # until arm() asks for a level, so "armed: false" is silent rather than quiet.
+        engine.update(master_db=SAFE_MASTER_DB, armed=False)
         return {"mode": mode, "latency_ms": engine.latency_ms, "last_error": engine.last_error}
 
     def stop(self) -> dict:
