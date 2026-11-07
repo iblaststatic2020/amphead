@@ -356,8 +356,12 @@ network calls.
 
 ## Honest limits
 
-- **Windows only at 0.1.0.** The launcher, the window handling and the resource-path install are
-  Windows specific. macOS and Linux are unbuilt, not broken.
+- **Windows is the only platform I have run it on.** REAPER is one application on three platforms,
+  so the plugin treats it that way: the resource directory is `%APPDATA%\REAPER`,
+  `~/Library/Application Support/REAPER` or `$XDG_CONFIG_HOME/REAPER`, REAPER is started with
+  `open` on macOS and directly on Linux, stopped by signal, and found through the same declaration
+  on all three. That code has unit tests on this host and has not been run against a real macOS or
+  Linux install. Window hiding stays Windows only, so the window appears there instead.
 - **It needs REAPER installed.** It can launch REAPER, it cannot install it, and nothing works while
   a modal dialog owns REAPER's main thread.
 - **No DSP, no amp model, no tuner.** It does not process audio and does not try to sound like

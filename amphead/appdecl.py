@@ -45,6 +45,24 @@ RAW_APP: dict[str, Any] = {
         # REAPER's exe carries a PE version resource; nothing else on Windows has one reliably.
         "version": {"kind": "pe_resource"},
     },
+    # REAPER ships as a normal .app bundle, and its Info.plist carries the version. Same
+    # product, same ReaScript bridge, same resource directory layout under ~/Library.
+    "darwin": {
+        "presence": "bundle",
+        "location": [{"kind": "app_bundle", "name": "REAPER"}],
+        "version": {"kind": "plist"},
+    },
+    # The Linux build is a bare executable. It has no version source we can read from a file
+    # (the vocabulary allows that for linux alone), so presence is the whole check.
+    "linux": {
+        "presence": "executable",
+        "location": [
+            "/opt/REAPER/reaper",
+            "~/REAPER/reaper",
+            "/usr/local/REAPER/reaper",
+        ],
+        "version": {"kind": "none"},
+    },
 }
 
 RAW_REQUIRES: dict[str, Any] = {"app": True, "min_version": MIN_VERSION}
@@ -129,8 +147,8 @@ def sentence(found: dict[str, Any] | None = None) -> str:
         return (f"REAPER {version or 'version unreadable'} is older than {MIN_VERSION}; "
                 f"update it, then ask again")
     if st == "unsupported_os":
-        return ("AmpHead drives REAPER on Windows only at 0.1.0; "
-                f"this host is {sys.platform}, where the launch path is unbuilt")
+        return (f"AmpHead drives REAPER on Windows, macOS and Linux; this host reports "
+                f"{sys.platform}, which is none of the three")
     if st == "unknown":
         return "REAPER_EXE or a standard install path did not resolve"
     return f"REAPER state={st}"

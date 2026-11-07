@@ -79,9 +79,57 @@ def _powershell(script: str, timeout: float = 30.0) -> str:
     return result.stdout
 
 
+def _posix_pids() -> list[int]:
+    """Live REAPER process ids on macOS or Linux. Empty when none, or when pgrep is absent.
+
+    ``pgrep -x`` matches the whole process name, and ``-i`` covers the macOS binary being
+    ``REAPER`` while the Linux one is ``reaper``. Exit code 1 is "no match", not a failure.
+    """
+    for argv in (["pgrep", "-x", "-i", "reaper"], ["pgrep", "-x", "REAPER"], ["pgrep", "-x", "reaper"]):
+        try:
+            result = subprocess.run(argv, capture_output=True, text=True, timeout=10)
+        except (OSError, subprocess.SubprocessError):
+            continue
+        if result.returncode == 0:
+            return [int(x) for x in result.stdout.split() if x.isdigit()]
+        if result.returncode == 1:
+            return []
+    return []
+
+
+def _start_posix(exe: Path) -> int | None:
+    """Launch REAPER on macOS or Linux.
+
+    macOS resolves to an ``.app`` bundle, which is started with ``open``; Linux is a bare
+    executable started directly. Neither platform is asked to hide its window: on macOS that
+    needs accessibility permission, so the honest behaviour is "the window appears".
+    """
+    if sys.platform == "darwin":
+        result = subprocess.run(["open", "-na", str(exe)], capture_output=True, text=True, timeout=30)
+        if result.returncode != 0:
+            raise NoReaperInstall(f"could not start REAPER: {result.stderr.strip()[:200]}")
+        pids = _posix_pids()
+        return pids[0] if pids else None
+    try:
+        proc = subprocess.Popen(
+            [str(exe)],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+    except OSError as exc:
+        raise NoReaperInstall(f"could not start REAPER: {exc}") from exc
+    return proc.pid
+
+
 def start(minimized: bool = True, hidden_desktop: bool = False) -> int | None:
-    """Launch REAPER. Default minimized: no window, no focus steal, taskbar icon only."""
+    """Launch REAPER. Default minimized: no window, no focus steal, taskbar icon only.
+
+    Minimizing is Windows-only; elsewhere the window appears and ``minimize_window()`` says so.
+    """
     exe = find_reaper()
+    if sys.platform != "win32":
+        return _start_posix(exe)
     if hidden_desktop:
         if not HIDDEN_LAUNCHER.is_file():
             raise NoReaperInstall(f"missing launcher script: {HIDDEN_LAUNCHER}")
@@ -147,6 +195,8 @@ def minimize_window(max_wait: float = 20.0) -> bool:
     alone does not stick: it re-shows the window a moment after launch. This waits for the
     window to exist and minimizes it, which does stick.
     """
+    if sys.platform != "win32":
+        return False                # no window steering off Windows; the window simply shows
     out = _powershell(_MINIMIZE_PS.format(max_wait), timeout=max_wait + 20)
     return out.strip().endswith("minimized")
 
@@ -313,9 +363,9 @@ def state() -> dict:
 
 
 def _running() -> bool:
-    """Is a reaper.exe alive right now? Used by stop() and by ensure_running()."""
+    """Is a REAPER process alive right now? Used by stop() and by ensure_running()."""
     if sys.platform != "win32":
-        return False
+        return bool(_posix_pids())
     try:
         out = _powershell("if (Get-Process -Name reaper -ErrorAction SilentlyContinue) { 'yes' } else { 'no' }")
     except NoReaperInstall:
@@ -330,14 +380,15 @@ _INSTANCES: tuple[float, int] = (0.0, 0)
 
 
 def instances(ttl: float = 5.0) -> int:
-    """How many reaper.exe processes are alive. 0 means none (or not checked on this platform)."""
+    """How many REAPER processes are alive. 0 means none."""
     global _INSTANCES
     stamp, count = _INSTANCES
     if time.monotonic() - stamp < ttl:
         return count
     if sys.platform != "win32":
-        _INSTANCES = (time.monotonic(), 0)
-        return 0
+        count = len(_posix_pids())
+        _INSTANCES = (time.monotonic(), count)
+        return count
     try:
         out = _powershell(
             "@(Get-Process -Name reaper -ErrorAction SilentlyContinue).Count")
@@ -373,7 +424,28 @@ def stop(pid: int | None = None, wait: float = 10.0) -> bool:
     call this, and raising there would turn a clean state into a failed boot.
     """
     if sys.platform != "win32":
-        raise NoReaperInstall("stopping REAPER is Windows-only for now")
+        # SIGTERM first, then SIGKILL: REAPER flushes its config on a normal signal, and a
+        # killed instance is the case that leaves the audio device wedged.
+        import signal
+
+        targets = [int(pid)] if pid else _posix_pids()
+        for target in targets:
+            try:
+                os.kill(target, signal.SIGTERM)
+            except OSError:
+                pass
+        deadline = time.time() + wait
+        while time.time() < deadline:
+            if not _running():
+                return True
+            time.sleep(0.25)
+        for target in targets:
+            try:
+                os.kill(target, signal.SIGKILL)
+            except OSError:
+                pass
+        time.sleep(0.5)
+        return not _running()
     if pid:
         script = (
             f"if (Get-Process -Id {int(pid)} -ErrorAction SilentlyContinue) "

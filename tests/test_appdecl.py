@@ -152,7 +152,8 @@ class SentenceTests(unittest.TestCase):
     def test_unsupported_os_names_this_platform_instead_of_a_traceback(self):
         said = appdecl.sentence({"state": "unsupported_os"})
         self.assertIn(sys.platform, said)
-        self.assertIn("Windows only", said)
+        for platform in ("Windows", "macOS", "Linux"):
+            self.assertIn(platform, said)
 
     def test_unreadable_version_still_produces_a_sentence(self):
         said = appdecl.sentence({"state": "version_too_old", "version": None})

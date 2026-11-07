@@ -112,13 +112,9 @@ def resource_path(explicit: str | os.PathLike | None = None) -> Path:
     portable install that disagrees with this function is exactly the case the warning
     in ``install()`` exists for.
     """
-    if explicit is not None:
-        return Path(explicit)
-    env = os.environ.get("REAPER_RESOURCE_PATH")
-    if env:
-        return Path(env)
-    appdata = os.environ.get("APPDATA") or (Path.home() / "AppData" / "Roaming")
-    return Path(appdata) / "REAPER"
+    from .paths import resource_path as _resource_path
+
+    return _resource_path(explicit)
 
 
 def bridge_dir(resource: Path | None = None) -> Path:

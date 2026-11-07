@@ -69,8 +69,9 @@ def bridge_root(root: str | os.PathLike | None = None) -> Path:
     env = os.environ.get("HERMES_REAPER_BRIDGE")
     if env:
         return Path(env)
-    appdata = os.environ.get("APPDATA") or (Path.home() / "AppData" / "Roaming")
-    return Path(appdata) / "REAPER" / "Scripts" / "hermes_bridge"
+    from .paths import bridge_dir
+
+    return bridge_dir()
 
 
 def _enc(value: Any) -> str:

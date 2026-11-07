@@ -32,9 +32,12 @@ version: "1.0.0"
 readme: true
 platforms:
   - windows
+  - macos
+  - linux
 known_issues:
   - REAPER 7 must be installed; the plugin refuses rather than guessing a path when it cannot find it.
   - No DSP and no tuner. Latency is REAPER's, reported in ms with >15 ms called out as too slow to play through.
+  - Tested on Windows only. macOS and Linux take the same ReaScript bridge and their own resource paths, but have not been run by the author, and window hiding is Windows only.
   - Amp choice cannot be a parameter write on the NAM builds, so "load this capture" switches a saved REAPER FX preset and verifies the capture name by read-back.
 capabilities:
   provides_tools:
