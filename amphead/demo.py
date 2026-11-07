@@ -108,7 +108,8 @@ def _knobs() -> list[dict]:
     out = []
     for name, index, _start in KNOBS:
         norm = float(rig["knobs"][name])
-        out.append({"index": index, "name": name, "value": _db(round(norm * 10.0, 2)),
+        out.append({"index": index, "name": name, "section": "amp" if name.lower().startswith("amplifier") else "other",
+                    "value": _db(round(norm * 10.0, 2)),
                     "norm": round(norm, 4), "raw": round(norm * 10.0, 4)})
     return out
 
@@ -158,6 +159,7 @@ def state() -> dict[str, Any]:
         "monitor": True,
         "problems": judged["problems"],
         "chain": chain,
+        "plugin": {"name": _rig()["amp"], "enabled": not _rig()["bypass"]},
         "knobs": _knobs(),
         "presets": [{"key": key, "title": about} for key, about in _PRESETS],
         "demo": True,
@@ -189,8 +191,14 @@ def tweak(body: dict) -> dict[str, Any]:
     except (TypeError, ValueError):
         return {"output": f"NOT SET: {body.get('value')!r} is not a number", "ok": False}
     norm = value if body.get("mode", "norm") != "raw" else value / 10.0
+    clamped = norm < 0.0 or norm > 1.0
     rig["knobs"][name] = min(1.0, max(0.0, norm))
-    return {"output": f"set {name} to {_db(round(rig['knobs'][name] * 10.0, 2))} (demo rig)", "ok": True}
+    landed = float(rig["knobs"][name])
+    # The drag path reads `norm` and `value` off the answer, so the demo must answer in the same
+    # shape a live plugin does or a knob on the demo rig would only move on the next poll.
+    return {"output": f"set {name} to {_db(round(landed * 10.0, 2))} (demo rig)", "ok": True,
+            "norm": round(landed, 4), "value": _db(round(landed * 10.0, 2)),
+            "raw": round(landed * 10.0, 4), "clamped": clamped, "param": name}
 
 
 def preset(body: dict) -> dict[str, Any]:

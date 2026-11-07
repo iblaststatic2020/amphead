@@ -13,6 +13,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+from amphead import rig
+
 ROOT = Path(__file__).resolve().parent.parent
 
 
@@ -269,14 +271,86 @@ class TestKnobs(unittest.TestCase):
         ]
         with mock.patch.object(API.bridge, "fx_params", return_value=params):
             knobs = API._knobs(1)
-        self.assertEqual([k["name"] for k in knobs], ["Amplifier Bass", "Input Gain"])
-        self.assertEqual([k["index"] for k in knobs], [5, 2])
+        # Every control the plugin has, amp first, in the plugin's own order within each section:
+        # the pane is meant to be the VST's own face, not a shortlist this file invented.
+        self.assertEqual([k["name"] for k in knobs], ["Amplifier Bass", "Pedal Bypass", "Input Gain"])
+        self.assertEqual([k["index"] for k in knobs], [5, 9, 2])
+        self.assertEqual([k["section"] for k in knobs], ["amp", "pedal", "other"])
         self.assertEqual(knobs[0]["norm"], 0.44)
         self.assertEqual(knobs[0]["value"], "4.4")
+
+    def test_every_parameter_is_shown_even_a_word_valued_one(self):
+        """A switch reads "Off", and hiding it would leave the face disagreeing with the VST."""
+        params = [{"i": 1, "name": "Amplifier Voicing", "fmt": "Vintage", "norm": 0.33, "raw": 2.0},
+                  {"i": 2, "name": "Pedal Bypass", "fmt": "Off", "norm": 0.0, "raw": 0.0}]
+        with mock.patch.object(API.bridge, "fx_params", return_value=params):
+            knobs = API._knobs(1)
+        self.assertEqual([k["value"] for k in knobs], ["Vintage", "Off"])
+
+    def test_a_nameless_parameter_is_skipped_rather_than_shown_blank(self):
+        params = [{"i": 1, "name": "", "fmt": "0", "norm": 0.0}, {"i": 2, "name": "Input Gain", "fmt": "0", "norm": 0.0}]
+        with mock.patch.object(API.bridge, "fx_params", return_value=params):
+            self.assertEqual([k["name"] for k in API._knobs(1)], ["Input Gain"])
 
     def test_a_failed_read_is_an_empty_list_not_a_crash(self):
         with mock.patch.object(API.bridge, "fx_params", side_effect=API.bridge.ReaperError("no fx")):
             self.assertEqual(API._knobs(1), [])
+
+
+class TestKnobRoute(unittest.TestCase):
+    """The drag path: one write, the plugin's own reading, and nothing else behind it."""
+
+    def test_a_turn_answers_in_the_plugins_units(self):
+        done = mock.Mock(norm=0.3137, fmt="6.25", written=0.3137, clamped=False,
+                         retried=False, param_name="Amplifier Bass")
+        done.sentence.return_value = "Amplifier Bass = 6.25"
+        with mock.patch("amphead.rig.set_param", return_value=done) as write:
+            payload = API.knob({"param": 5, "value": 0.31, "mode": "norm"})
+        write.assert_called_once()
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["value"], "6.25")
+        self.assertAlmostEqual(payload["norm"], 0.3137)
+        self.assertEqual(payload["param"], "Amplifier Bass")
+
+    def test_a_turn_never_lists_the_chain_or_the_meter(self):
+        """A drag asks ten times a second, so the route must not pay for the face's state."""
+        with mock.patch.object(API.bridge, "fx_list", side_effect=AssertionError("chain read")), \
+             mock.patch.object(API.bridge, "meter", side_effect=AssertionError("meter read")), \
+             mock.patch.object(API.bridge, "track_info", side_effect=AssertionError("track read")):
+            done = mock.Mock(norm=0.5, fmt="0.5", written=0.5, clamped=False, retried=False,
+                             param_name="Amplifier Mid")
+            done.sentence.return_value = "ok"
+            with mock.patch("amphead.rig.set_param", return_value=done):
+                payload = API.knob({"param": 3, "value": 0.5, "mode": "norm"})
+        self.assertTrue(payload["ok"], payload)
+
+    def test_a_clamped_turn_says_so(self):
+        done = mock.Mock(norm=1.0, fmt="10", written=1.0, clamped=True, retried=False,
+                         param_name="Amplifier Treble")
+        done.sentence.return_value = "Amplifier Treble = 10 | clamped from 1.2"
+        with mock.patch("amphead.rig.set_param", return_value=done):
+            payload = API.knob({"param": 4, "value": 1.2, "mode": "norm"})
+        self.assertTrue(payload["ok"])
+        self.assertTrue(payload["clamped"])
+        self.assertAlmostEqual(payload["norm"], 1.0)
+
+    def test_a_turn_with_no_reaper_answers_in_words(self):
+        with mock.patch("amphead.rig.set_param", side_effect=API.bridge.NoReaper()):
+            payload = API.knob({"param": 3, "value": 0.5})
+        self.assertFalse(payload["ok"])
+        self.assertIn("REAPER is not running", payload["output"])
+
+    def test_a_refusal_is_not_a_crash(self):
+        with mock.patch("amphead.rig.set_param", side_effect=rig.WriteRefused("no proof")):
+            payload = API.knob({"param": 3, "value": 0.5})
+        self.assertFalse(payload["ok"])
+        self.assertIn("REFUSED", payload["output"])
+
+    def test_a_turn_with_no_knob_named_is_refused_before_the_host(self):
+        with mock.patch("amphead.rig.set_param") as write:
+            payload = API.knob({"value": 0.3})
+        write.assert_not_called()
+        self.assertIn("NO PARAM", payload["output"])
 
 
 class TestTweakRoute(unittest.TestCase):

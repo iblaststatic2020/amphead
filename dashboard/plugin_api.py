@@ -29,9 +29,6 @@ if str(_ROOT) not in sys.path:
 from amphead import bridge, demo, launch, tones, verdict  # noqa: E402
 
 FLOOR = verdict.FLOOR  # -60 dB, the same floor the rig boots and parks at
-WANTED = ("gain", "bass", "mid", "treble", "oomph", "sparkle", "blend", "gate", "volume")
-
-
 def _device(state: dict) -> dict:
     device = state.get("device") or {}
     return {
@@ -43,9 +40,14 @@ def _device(state: dict) -> dict:
 
 
 def _knobs(track: int) -> list[dict]:
-    """The controls worth showing, with the numbers a slider needs as well as the words a player reads.
+    """Every control the plugin on the track actually has, in the order the plugin draws them.
 
-    `index` is what /tweak writes, because two parameters can share a name and a slider must not
+    Not a shortlist. The pane is meant to be the plugin's own face, so the knob set on screen is
+    the knob set in the VST: two amps can be compared control for control, and nothing the plugin
+    exposes is hidden behind a keyword list this file made up. `value` is the plugin's own formatted
+    reading, which is the only number worth trusting when the question is "is this the tone".
+
+    `index` is what /knob writes, because two parameters can share a name and a slider must not
     guess which twin it belongs to.
     """
     try:
@@ -54,19 +56,41 @@ def _knobs(track: int) -> list[dict]:
         return []
     picked = []
     for param in params:
-        name = str(param.get("name") or "")
-        low = name.lower()
-        if "pedal" in low or "instigator" in low:
+        name = str(param.get("name") or "").strip()
+        if not name:
             continue
-        if any(word in low for word in WANTED):
-            picked.append({"index": int(param["i"]), "name": name,
-                           "value": _pretty(str(param.get("fmt") or "")),
-                           "norm": round(float(param.get("norm") or 0.0), 4),
-                           "raw": param.get("raw")})
-    # The amp's own tone controls come first: they are what the player came for, and the face
-    # shows only eight rows.
-    picked.sort(key=lambda k: 0 if "amplifier" in k["name"].lower() else 1)
-    return picked[:8]
+        picked.append({"index": int(param["i"]), "name": name,
+                       "section": _section(name),
+                       "value": _pretty(str(param.get("fmt") or "")),
+                       "norm": round(float(param.get("norm") or 0.0), 4),
+                       "raw": param.get("raw")})
+    # The amp's own tone controls come first, then the plugin's own switches, in the plugin's order
+    # inside each: that is the order the VST face reads in, top left to bottom right.
+    order = {"amp": 0, "pedal": 1, "other": 2}
+    picked.sort(key=lambda k: order[k["section"]])
+    return picked
+
+
+def _section(name: str) -> str:
+    """Which half of the plugin a knob belongs to, decided by the plugin's own prefixes."""
+    low = name.lower()
+    if low.startswith("amplifier"):
+        return "amp"
+    if low.startswith("pedal") or "instigator" in low:
+        return "pedal"
+    return "other"
+
+
+def _plugin(track: int) -> dict:
+    """The plugin the knobs belong to, so the face can name it instead of implying it."""
+    try:
+        chain = bridge.fx_list(track)
+    except bridge.ReaperError:
+        return {}
+    if not chain:
+        return {}
+    first = chain[0]
+    return {"name": str(first.get("name") or ""), "enabled": bool(first.get("enabled", True))}
 
 
 def _pretty(value: str) -> str:
@@ -125,7 +149,7 @@ def state() -> dict[str, Any]:
         live = launch.state()
     except launch.NoReaperInstall:
         return {"verdict": "NO REAPER INSTALL", "reason": "REAPER is not installed on this machine",
-                "chain": [], "knobs": [], "presets": _presets(), "meter": {"peak": 0.0}}
+                "chain": [], "plugin": {}, "knobs": [], "presets": _presets(), "meter": {"peak": 0.0}}
 
     track_no = 1
     track = _track(track_no) if live.get("bridge") == "live" else {}
@@ -164,6 +188,9 @@ def state() -> dict[str, Any]:
         "monitor": bool(track.get("monitor")),
         "problems": judged["problems"],
         "chain": chain or [],
+        # The plugin's own identity and its own full knob set: the face names the amp it is showing
+        # and shows every control that amp has, so "true tone" is checkable against the VST.
+        "plugin": _plugin(track_no) if live.get("bridge") == "live" else {},
         "knobs": _knobs(track_no) if live.get("bridge") == "live" else [],
         "presets": _presets(),
         "demo": False,
@@ -207,6 +234,41 @@ def panic(body: dict) -> dict[str, Any]:
     db = body.get("master_db", -60)
     out = tools.handle_panic({"restore": restore, "master_db": db})
     return {"output": out, "ok": not out.startswith("NOT PANICKED"), "restore": restore}
+
+
+@router.post("/knob")
+def knob(body: dict) -> dict[str, Any]:
+    """One knob turn, answered in the plugin's own units, and nothing else.
+
+    /tweak is the chat-shaped write: it goes through the tool handler, formats a paragraph and
+    then the pane throws the paragraph away. A drag needs the opposite: one bridge write, the
+    number the plugin reads back, no chain listing and no meter, because the face asks ten times
+    a second while a finger is moving. Nothing here touches the state cache.
+    """
+    if demo.enabled():
+        return demo.tweak(body)
+    from amphead import rig
+
+    param = body.get("param")
+    if param is None or param == "":
+        return {"output": "NO PARAM: say which knob to turn", "ok": False}
+    if body.get("value") is None:
+        return {"output": "NO VALUE: say what to set it to", "ok": False}
+    try:
+        done = rig.set_param(
+            body.get("fx", 0), param, float(body["value"]),
+            track=int(body.get("track") or 1),
+            mode=str(body.get("mode") or "norm"),
+        )
+    except bridge.NoReaper:
+        return {"output": "NOT SET: REAPER is not running", "ok": False}
+    except rig.WriteRefused as exc:
+        return {"output": f"REFUSED: {exc}", "ok": False}
+    except (bridge.ReaperError, LookupError, TypeError, ValueError) as exc:
+        return {"output": f"NOT SET: {exc}", "ok": False}
+    return {"output": done.sentence(), "ok": True, "norm": done.norm, "value": done.fmt,
+            "raw": done.written, "clamped": done.clamped, "retried": done.retried,
+            "param": done.param_name}
 
 
 @router.post("/tweak")

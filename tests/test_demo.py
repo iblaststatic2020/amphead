@@ -18,7 +18,7 @@ from amphead import demo, verdict  # noqa: E402
 # Every key the pane reads. A demo payload missing one of these breaks the face in a way tests of
 # the real path would never catch, because the real path is the one that gets exercised.
 STATE_KEYS = {"verdict", "reason", "project", "device", "master_db", "ui", "armed", "monitor",
-              "problems", "chain", "knobs", "presets", "demo"}
+              "problems", "chain", "plugin", "knobs", "presets", "demo"}
 
 
 class DemoHome(unittest.TestCase):

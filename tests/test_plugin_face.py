@@ -76,7 +76,59 @@ class TestFaceMatchesVerdicts(unittest.TestCase):
         """The amp's knobs and the host's knobs collide by name, so the split must stay explicit."""
         source = face_source()
         self.assertIn("const isAmpKnob = (name) => /^amplifier\\s/i.test(name || '')", source)
-        self.assertIn("function groups(knobs)", source)
+        # The split now comes from the backend's `section`, read off the plugin's own parameter
+        # names, so the pane groups knobs the way the VST draws them.
+        self.assertIn("function groups(knobs, plugin)", source)
+        self.assertIn("pick('pedal')", source)
+
+    def test_the_pane_names_the_plugin_it_is_showing(self):
+        """A knob set is only checkable against a VST if the pane says which VST it is."""
+        source = face_source()
+        self.assertIn("const plugin = s.plugin || {}", source)
+        self.assertIn("`the model in ${named}`", source)
+
+class TestTheKnobKeepsUp(unittest.TestCase):
+    """A knob has to stay where it was put, and say where that is in the plugin's own units."""
+
+    def knob_source(self) -> str:
+        source = face_source()
+        start = source.index("function Knob({ knob, busy, onTurn, size }) {")
+        return source[start:source.index("function KnobGrid(", start)]
+
+    def test_the_reading_is_the_plugins_number_not_a_word(self):
+        block = self.knob_source()
+        self.assertNotIn("'turning'", block,
+                         "the pane must keep showing the plugin's reading while a finger is down")
+        self.assertIn("children: shown", block)
+
+    def test_the_poll_cannot_yank_the_knob_back(self):
+        """The sticky feel was the 1.5 s state poll overwriting the finger, mid-gesture."""
+        block = self.knob_source()
+        self.assertIn("if (dragging || Date.now() < settled.current) return", block)
+        self.assertIn("settled.current = Date.now() + 1500", block)
+
+    def test_a_turn_does_not_lock_the_face(self):
+        """A knob turn must not go through `act`, which sets busy and refetches everything."""
+        source = face_source()
+        self.assertIn("onTurn: turnKnob", source)
+        self.assertNotIn("act('/tweak'", source, "the knob still posts through the chat-shaped route")
+        self.assertIn("rest('/knob'", source)
+        start = source.index("async function turnKnob(")
+        end = source.index("async function act(", start)
+        self.assertNotIn("setBusy(true)", source[start:end])
+
+    def test_shift_is_a_finer_turn_and_steps_stay_relative(self):
+        block = self.knob_source()
+        self.assertIn("event.shiftKey ? TRAVEL * 5 : TRAVEL", block,
+                      "shift must travel five times further for the same movement")
+        self.assertIn("const dy = finger.current - event.clientY", block,
+                      "steps must come from the pixel delta, or shift mid-drag teleports the knob")
+
+    def test_one_write_at_a_time_with_the_newest_position_winning(self):
+        block = self.knob_source()
+        self.assertIn("if (order.busy) {", block)
+        self.assertIn("order.queued = { next, final }", block)
+
 
 class TestTheDemoIsReachable(unittest.TestCase):
     """A visitor with no DAW must be able to see the plugin work, from inside the pane."""

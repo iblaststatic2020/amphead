@@ -85,12 +85,19 @@ const CHIP_WORD = {
 // amp group without creating a false twin.
 const isAmpKnob = (name) => /^amplifier\s/i.test(name || '')
 const shortName = (name) => String(name || 'knob').replace(/^amplifier\s+/i, '')
-function groups(knobs) {
-  const amp = knobs.filter((k) => isAmpKnob(k.name))
-  const hostKnobs = knobs.filter((k) => !isAmpKnob(k.name))
+// The plugin's own halves, in the plugin's own order. `section` comes from the backend, which reads
+// it off the parameter names the plugin publishes, so the pane groups knobs the way the VST does
+// instead of inventing "amp" and "host" from a regex of its own.
+function groups(knobs, plugin) {
+  const named = plugin && plugin.name ? plugin.name : 'the plugin'
+  const pick = (section) => knobs.filter((k) => (k.section || (isAmpKnob(k.name) ? 'amp' : 'other')) === section)
+  const amp = pick('amp')
+  const pedal = pick('pedal')
+  const other = pick('other')
   return [
-    amp.length ? { key: 'amp', title: 'amp', caption: 'the model', knobs: amp } : null,
-    hostKnobs.length ? { key: 'host', title: 'host', caption: 'the plugin around it', knobs: hostKnobs } : null
+    amp.length ? { key: 'amp', title: 'amp', caption: `the model in ${named}`, knobs: amp } : null,
+    pedal.length ? { key: 'pedal', title: 'pedal', caption: 'in front of the amp', knobs: pedal } : null,
+    other.length ? { key: 'other', title: 'plugin', caption: `the rest of ${named}`, knobs: other } : null
   ].filter(Boolean)
 }
 
@@ -205,16 +212,35 @@ function Meter({ peak, clip }) {
 const MIN_ANGLE = -135
 const MAX_ANGLE = 135
 
-// The knob is the amp's knob: drag up or down to turn it, arrow keys to nudge it. It holds the
-// finger's position while dragging (the state poll must not fight the drag) and commits once,
-// through /tweak, which resolves the knob by index and reads it back in the plugin's own units.
-function Knob({ knob, busy, onCommit, size }) {
+// A knob is the amp's knob: drag up or down to turn it, hold shift for a fifth of the travel,
+// arrow keys to nudge it. A turn is sent every 80 ms while the finger moves and once more when it
+// lifts, and the answer carries the number the plugin reads back in its own units, so the reading
+// under the knob is the plugin's number and not a percentage this pane invented.
+//
+// The poll is held off while a finger is down and for a moment after a turn lands. That is the
+// whole bug: the 1.5 s poll used to arrive mid-gesture or straight after release and put the old
+// value back, which read as a sticky knob that would not stay where it was put.
+const TRAVEL = 130   // pixels for the full range
+const SEND_MS = 80
+
+function Knob({ knob, busy, onTurn, size }) {
   const [value, setValue] = useState(typeof knob.norm === 'number' ? knob.norm : null)
+  const [shown, setShown] = useState(knob.value)
   const [dragging, setDragging] = useState(false)
-  const origin = useRef({ y: 0, value: 0 })
+  const cur = useRef(typeof knob.norm === 'number' ? knob.norm : 0)
+  const finger = useRef(0)
+  const sent_at = useRef(0)
+  const flight = useRef({ busy: false, queued: null })
+  const settled = useRef(0)
+
   useEffect(() => {
-    if (!dragging && typeof knob.norm === 'number') setValue(knob.norm)
-  }, [knob.norm, dragging])
+    if (dragging || Date.now() < settled.current) return
+    if (typeof knob.norm === 'number') {
+      setValue(knob.norm)
+      cur.current = knob.norm
+    }
+    setShown(knob.value)
+  }, [knob.norm, knob.value, dragging])
 
   if (value === null) {
     return jsxs('div', {
@@ -236,9 +262,39 @@ function Knob({ knob, busy, onCommit, size }) {
 
   const diameter = size === 'lg' ? 50 : 42
   const angle = MIN_ANGLE + value * (MAX_ANGLE - MIN_ANGLE)
-  const turn = (next) => {
-    setValue(next)
-    onCommit(knob, next)
+
+  // One write at a time per knob: a drag makes more positions than the bridge can answer, and
+  // queueing every one would land the knob somewhere the finger never was. The newest wins.
+  const push = (next, final) => {
+    const order = flight.current
+    if (order.busy) {
+      order.queued = { next, final }
+      return
+    }
+    order.busy = true
+    sent_at.current = Date.now()
+    Promise.resolve(onTurn(knob, next, final)).then((answer) => {
+      if (answer && answer.ok) {
+        settled.current = Date.now() + 1500
+        if (answer.value) setShown(answer.value)
+        if (final && typeof answer.norm === 'number') {
+          cur.current = answer.norm
+          setValue(answer.norm)
+        }
+      }
+    }).catch(() => {}).finally(() => {
+      order.busy = false
+      const queued = order.queued
+      order.queued = null
+      if (queued) push(queued.next, queued.final)
+    })
+  }
+
+  const move = (next, final) => {
+    const clamped = Math.min(1, Math.max(0, next))
+    cur.current = clamped
+    setValue(clamped)
+    if (final || Date.now() - sent_at.current >= SEND_MS) push(clamped, final)
   }
 
   return jsxs('div', {
@@ -255,28 +311,36 @@ function Knob({ knob, busy, onCommit, size }) {
         onPointerDown: (event) => {
           if (busy) return
           event.currentTarget.setPointerCapture(event.pointerId)
-          origin.current = { y: event.clientY, value }
+          finger.current = event.clientY
           setDragging(true)
         },
         onPointerMove: (event) => {
           if (!dragging) return
-          const dy = origin.current.y - event.clientY
-          setValue(Math.min(1, Math.max(0, origin.current.value + dy / 130)))
+          // Step from the pixel delta, not from a running total, so pressing shift mid-drag
+          // tightens the rest of the turn instead of teleporting the knob.
+          const dy = finger.current - event.clientY
+          finger.current = event.clientY
+          move(cur.current + dy / (event.shiftKey ? TRAVEL * 5 : TRAVEL), false)
         },
         onPointerUp: () => {
           if (!dragging) return
           setDragging(false)
-          onCommit(knob, value)
+          move(cur.current, true)
+        },
+        onPointerCancel: () => {
+          if (!dragging) return
+          setDragging(false)
+          move(cur.current, true)
         },
         onKeyDown: (event) => {
           if (busy) return
           const step = event.shiftKey ? 0.1 : 0.02
           if (event.key === 'ArrowUp' || event.key === 'ArrowRight') {
             event.preventDefault()
-            turn(Math.min(1, value + step))
+            move(value + step, true)
           } else if (event.key === 'ArrowDown' || event.key === 'ArrowLeft') {
             event.preventDefault()
-            turn(Math.max(0, value - step))
+            move(value - step, true)
           }
         },
         className: 'relative shrink-0 select-none rounded-full outline-none',
@@ -314,18 +378,18 @@ function Knob({ knob, busy, onCommit, size }) {
       jsx('span', {
         className: 'max-w-full truncate text-center text-[0.5rem] tabular-nums',
         style: { color: dragging ? '#ffb347' : FACE_DIM },
-        children: dragging ? 'turning' : knob.value
+        children: shown
       })
     ]
   })
 }
 
-function KnobGrid({ group, busy, onCommit, size }) {
+function KnobGrid({ group, busy, onTurn, size }) {
   return jsxs('div', {
     // Three across, like a panel: tone stack in one row, the gains under it. A wrapping flex row
     // would put four knobs on a line in the pane and read as an arbitrary heap instead of a panel.
     className: 'grid grid-cols-3 justify-items-center gap-x-1 gap-y-2.5',
-    children: group.knobs.map((k) => jsx(Knob, { knob: k, busy, onCommit, size }, k.index ?? k.name))
+    children: group.knobs.map((k) => jsx(Knob, { knob: k, busy, onTurn, size }, k.index ?? k.name))
   })
 }
 
@@ -637,7 +701,27 @@ function AmpFace({ rest }) {
   const chain = s.chain || []
   const silenced = chain.length > 0 && chain.every((fx) => !fx.enabled)
   const problems = s.problems || []
-  const [ampGroup, hostGroup] = groups(s.knobs || [])
+  const plugin = s.plugin || {}
+  const [ampGroup, pedalGroup, hostGroup] = groups(s.knobs || [], plugin)
+
+  // A knob turn is its own path: cheap, answered in the plugin's units, and deliberately not
+  // wrapped in `act`, because `act` sets `busy` for the whole face and refetches the state. That
+  // was the other half of the sticky knob: releasing one knob greyed out every other control.
+  async function turnKnob(knob, value, final) {
+    try {
+      const answer = await rest('/knob', { method: 'POST', body: { param: knob.index, value, mode: 'norm' } })
+      if (answer && answer.ok === false) {
+        setSaid(String(answer.output || 'that knob would not move').split('\n')[0])
+      } else if (final) {
+        client.invalidateQueries({ queryKey: ['amphead', 'state'] })
+      }
+      return answer
+    } catch (err) {
+      const line = `that knob would not move: ${err && err.message ? err.message : err}`
+      setSaid(line)
+      return { ok: false, output: line }
+    }
+  }
 
   async function act(path, body) {
     setBusy(true)
@@ -735,18 +819,30 @@ function AmpFace({ rest }) {
             group: ampGroup,
             busy,
             size: 'lg',
-            onCommit: (knob, value) => act('/tweak', { param: knob.index, value, mode: 'norm' })
+            onTurn: turnKnob
           })
         })
         : jsx(Panel, {
           title: 'amp',
-          caption: 'not loaded',
+          caption: plugin.name ? `${plugin.name}, no model loaded` : 'not loaded',
           children: jsx('div', {
             className: 'text-[0.625rem]',
             style: { color: FACE_DIM },
             children: 'no amp in the chain yet'
           })
         }),
+
+      pedalGroup
+        ? jsx(Panel, {
+          title: pedalGroup.title,
+          caption: pedalGroup.caption,
+          children: jsx(KnobGrid, {
+            group: pedalGroup,
+            busy,
+            onTurn: turnKnob
+          })
+        })
+        : null,
 
       hostGroup
         ? jsx(Panel, {
@@ -755,7 +851,7 @@ function AmpFace({ rest }) {
           children: jsx(KnobGrid, {
             group: hostGroup,
             busy,
-            onCommit: (knob, value) => act('/tweak', { param: knob.index, value, mode: 'norm' })
+            onTurn: turnKnob
           })
         })
         : null,
