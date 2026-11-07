@@ -7,7 +7,6 @@ half-done.
 """
 
 import re
-import re
 import unittest
 from pathlib import Path
 
@@ -52,8 +51,14 @@ class TestFaceMatchesVerdicts(unittest.TestCase):
         chip = source[source.index("id: 'amp-chip'"):]
         self.assertIn("const live = !!(meter.data && meter.data.live)", chip)
         self.assertIn("CHIP_WORD[verdict]", chip)
-        self.assertRegex(chip, r"live \? `\$\{toDb\(peak\)\.toFixed\(0\)\} dB`",
-                         "the dB number must sit behind the live check, never print unconditionally")
+        # The dB number sits behind the live check however the ternary is nested, and the demo
+        # comes first because a canned rig's level is not a measurement of this machine.
+        self.assertIn("dB`", chip)
+        self.assertLess(chip.index("const live"), chip.index("dB`"),
+                        "the dB number must sit behind the live check, never print unconditionally")
+        self.assertLess(chip.index("state.data.demo"), chip.index("dB`"),
+                        "the demo has to claim the chip before a level does")
+        self.assertLess(chip.index("const text"), chip.index("dB`"))
 
     def test_every_verdict_word_has_a_chip_word(self):
         source = face_source()
@@ -72,3 +77,32 @@ class TestFaceMatchesVerdicts(unittest.TestCase):
         source = face_source()
         self.assertIn("const isAmpKnob = (name) => /^amplifier\\s/i.test(name || '')", source)
         self.assertIn("function groups(knobs)", source)
+
+class TestTheDemoIsReachable(unittest.TestCase):
+    """A visitor with no DAW must be able to see the plugin work, from inside the pane."""
+
+    def test_the_face_offers_the_demo_on_a_dead_rig(self):
+        source = face_source()
+        offered = re.search(r"const DEMO_OFFER = new Set\(\[(.*?)\]\)", source, re.S)
+        self.assertIsNotNone(offered, "the face has no list of verdicts that offer the demo")
+        words = offered.group(1)
+        for word in ("REAPER NOT RUNNING", "NO REAPER INSTALL", "BRIDGE GONE", "RIG TAB CLOSED"):
+            self.assertIn(word, words, f"{word} does not offer the demo")
+        self.assertIn("DemoRow", source)
+        self.assertIn("'see it work'", source)
+
+    def test_the_demo_says_out_loud_that_it_is_not_the_players_rig(self):
+        source = face_source()
+        self.assertIn("demo rig, not your hardware", source.lower())
+        self.assertIn("'leave demo'", source)
+
+    def test_the_demo_switch_is_a_route_the_face_calls(self):
+        self.assertIn("act('/demo', { on: !s.demo })", face_source())
+        api = (PLUGIN.parent.parent / "dashboard" / "plugin_api.py").read_text(encoding="utf-8")
+        self.assertIn('@router.post("/demo")', api)
+        self.assertIn("demo.set_enabled", api)
+
+    def test_the_chip_says_demo_rather_than_a_level_it_did_not_measure(self):
+        source = face_source()
+        self.assertIn("state.data.demo", source)
+        self.assertIn("? 'demo'", source)

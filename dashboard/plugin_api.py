@@ -26,7 +26,7 @@ _ROOT = Path(__file__).resolve().parent.parent
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-from amphead import bridge, launch, tones, verdict  # noqa: E402
+from amphead import bridge, demo, launch, tones, verdict  # noqa: E402
 
 FLOOR = verdict.FLOOR  # -60 dB, the same floor the rig boots and parks at
 WANTED = ("gain", "bass", "mid", "treble", "oomph", "sparkle", "blend", "gate", "volume")
@@ -117,6 +117,10 @@ def _presets() -> list[dict]:
 
 @router.get("/state")
 def state() -> dict[str, Any]:
+    # The demo rig answers first when it is switched on: a visitor with no DAW still gets a face
+    # that moves, and the pane paints a badge so it is never mistaken for their own rig.
+    if demo.enabled():
+        return demo.state()
     try:
         live = launch.state()
     except launch.NoReaperInstall:
@@ -162,11 +166,14 @@ def state() -> dict[str, Any]:
         "chain": chain or [],
         "knobs": _knobs(track_no) if live.get("bridge") == "live" else [],
         "presets": _presets(),
+        "demo": False,
     }
 
 
 @router.get("/meter")
 def meter() -> dict[str, Any]:
+    if demo.enabled():
+        return demo.meter()
     try:
         reading = bridge.meter(1)
     except bridge.ReaperError:
@@ -177,6 +184,8 @@ def meter() -> dict[str, Any]:
 
 @router.post("/live")
 def live_switch(body: dict) -> dict[str, Any]:
+    if demo.enabled():
+        return demo.live_switch(body)
     from amphead import tools
 
     on = bool(body.get("on"))
@@ -190,6 +199,8 @@ def live_switch(body: dict) -> dict[str, Any]:
 
 @router.post("/panic")
 def panic(body: dict) -> dict[str, Any]:
+    if demo.enabled():
+        return demo.panic(body)
     from amphead import tools
 
     restore = bool(body.get("restore"))
@@ -201,6 +212,8 @@ def panic(body: dict) -> dict[str, Any]:
 @router.post("/tweak")
 def tweak(body: dict) -> dict[str, Any]:
     """One knob, written the same way chat writes it: resolved by name, read back, one undo group."""
+    if demo.enabled():
+        return demo.tweak(body)
     from amphead import tools
 
     param = body.get("param")
@@ -221,6 +234,8 @@ def tweak(body: dict) -> dict[str, Any]:
 @router.post("/focus")
 def focus(body: dict) -> dict[str, Any]:
     """Bring one plugin to the front, but only while REAPER's window is actually showing."""
+    if demo.enabled():
+        return demo.focus(body)
     fx = body.get("fx", 0)
     track = int(body.get("track") or 1)
     if not launch.ui_visible():
@@ -237,6 +252,8 @@ def focus(body: dict) -> dict[str, Any]:
 
 @router.post("/preset")
 def preset(body: dict) -> dict[str, Any]:
+    if demo.enabled():
+        return demo.preset(body)
     from amphead import tools
 
     query = str(body.get("query") or "").strip()
@@ -249,3 +266,16 @@ def preset(body: dict) -> dict[str, Any]:
     first = out.splitlines()[0].upper() if out else ""
     ok = not first.startswith(("NOT APPLIED", "NO MATCH", "NO QUERY", "NOT SET", "REFUSED"))
     return {"output": out, "ok": ok}
+
+
+@router.post("/demo")
+def demo_switch(body: dict) -> dict[str, Any]:
+    """Turn the canned rig on or off. Off hands the pane back to whatever REAPER is doing.
+
+    This is the only route a visitor needs to find: with no REAPER installed the pane offers the
+    demo itself, so nothing has to be typed at a terminal or set in an environment variable.
+    """
+    on = demo.set_enabled(bool(body.get("on")))
+    said = ("demo rig on: a made-up session, not your hardware" if on
+            else "demo rig off: back to REAPER")
+    return {"on": on, "output": said, "demo": on}

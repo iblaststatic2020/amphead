@@ -42,6 +42,18 @@ const VERDICT_COLOR = {
   CONNECTING: FACE_DIM
 }
 
+// A visitor installs the plugin on a machine with no DAW and would otherwise stare at a dead pane.
+// These are the verdicts where a demo is the useful next click, not an insult to their setup.
+const DEMO_OFFER = new Set([
+  'REAPER NOT RUNNING',
+  'NO REAPER INSTALL',
+  'BRIDGE GONE',
+  'REAPER BUSY',
+  'TWO REAPER',
+  'RIG TAB CLOSED',
+  'CONNECTING'
+])
+
 const toDb = (peak) => (peak <= 0.000001 ? -60 : Math.max(-60, 20 * Math.log10(peak)))
 
 // A dB number is a claim about a level, so the chip only shows one when the rig is actually live.
@@ -486,6 +498,33 @@ function PanicButton({ silenced, busy, onClick }) {
   })
 }
 
+// The demo rig is a canned session: same face, same judge, no hardware. It is labelled while it
+// runs, because a moving meter that is not the player's own rig is a lie unless it says so.
+function DemoRow({ demo, busy, onToggle }) {
+  return jsxs('div', {
+    className: 'mt-1 flex items-center justify-between gap-2 rounded px-1.5 py-1',
+    style: {
+      background: demo ? 'rgba(255,179,71,0.12)' : 'rgba(255,255,255,0.03)',
+      border: `1px solid ${demo ? 'rgba(255,179,71,0.4)' : 'rgba(255,255,255,0.08)'}`
+    },
+    children: [
+      jsx('span', {
+        className: 'text-[0.5rem] uppercase tracking-[0.14em]',
+        style: { color: demo ? '#ffb347' : FACE_DIM },
+        children: demo ? 'demo rig, not your hardware' : 'no amp to play with here?'
+      }),
+      jsx('button', {
+        type: 'button',
+        disabled: busy,
+        onClick: onToggle,
+        className: 'shrink-0 rounded px-1.5 py-0.5 text-[0.5rem] font-semibold uppercase tracking-[0.12em] disabled:opacity-50',
+        style: { color: demo ? FACE_DIM : '#ffb347', background: 'rgba(0,0,0,0.28)' },
+        children: busy ? '...' : demo ? 'leave demo' : 'see it work'
+      })
+    ]
+  })
+}
+
 // Tones are footswitches: the key is on the switch, and the description of the tone that was last
 // pressed is printed under the row, in place, instead of hiding in a tooltip.
 function ToneRow({ presets, busy, onPick }) {
@@ -654,6 +693,9 @@ function AmpFace({ rest }) {
                 children: ['– ', p]
               }, i))
             })
+            : null,
+          s.demo || DEMO_OFFER.has(verdict)
+            ? jsx(DemoRow, { demo: !!s.demo, busy, onToggle: () => act('/demo', { on: !s.demo }) })
             : null
         ]
       }),
@@ -818,7 +860,11 @@ export default {
           // A number only when there is something to number: with no rig, the meter reads zero and
           // "0 dB" or "-60 dB" would read as a quiet rig rather than no rig. The words carry it.
           const live = !!(meter.data && meter.data.live)
-          const text = live ? `${toDb(peak).toFixed(0)} dB` : CHIP_WORD[verdict] || verdict.toLowerCase()
+          const text = state.data && state.data.demo
+            ? 'demo'
+            : live
+              ? `${toDb(peak).toFixed(0)} dB`
+              : CHIP_WORD[verdict] || verdict.toLowerCase()
           return jsxs('span', {
             className: 'flex items-center gap-1 px-1.5 text-[0.6875rem] tabular-nums',
             title: (state.data && state.data.reason) || verdict,

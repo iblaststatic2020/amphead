@@ -3,6 +3,12 @@
 // on the guitar track, ASIO at 512 / 44100, 11.61 ms out, master parked at -18 dB while live.
 
 let live = true
+// ?demo=1 shows the canned rig the way a visitor with no DAW sees it. The switch is held here so
+// the demo button in the face can actually turn it off and back on inside the harness.
+let demoOverride = null
+const demoOn = () => (demoOverride !== null
+  ? demoOverride
+  : new URLSearchParams(location.search).get('demo') === '1')
 let master = -18
 let chain = [{ name: 'VST3: NAM Universal (Neural Amp Modeler)', enabled: true }]
 
@@ -27,11 +33,16 @@ function peak() {
 }
 
 export const state = () => {
+  if (demoOn()) {
+    const demo = DEMO_STATE()
+    return demo
+  }
   // ?verdict=RIG%20TAB%20CLOSED lets the harness show a broken rig on demand, so the red states can
   // be looked at without unplugging anything.
   const forced = new URLSearchParams(location.search).get('verdict')
   return {
     ok: true,
+    demo: false,
     verdict: forced || (live ? 'READY' : 'STANDBY'),
     reason: forced
       ? 'REAPER is in front of a project that is not the rig, so nothing here can be trusted'
@@ -50,6 +61,29 @@ export const state = () => {
       { key: 'clean', title: 'clean: input 12 dB, bass 3, mid 5, treble 6' },
       { key: 'crunch', title: 'crunch: input 20 dB, bass 5, mid 6, treble 8' },
       { key: 'lead', title: 'lead: input 26 dB, bass 6, mid 7, treble 9' }
+    ]
+  }
+}
+
+// The demo rig as the backend sends it: a made-up session, shaped exactly like a real one.
+function DEMO_STATE() {
+  return {
+    ok: true,
+    demo: true,
+    verdict: 'READY',
+    reason: 'armed, monitoring, 11.61 ms out, 1 plugin live',
+    armed: true,
+    master_db: -20,
+    project: 'amphead.rpp (demo rig)',
+    ui: 'hidden',
+    device: { buffer: '512', rate: '44100', out_ms: 11.61, closed: false },
+    problems: [],
+    chain: [{ name: 'VST3i: NAM Universal (Neural Amp Modeler)', enabled: true }],
+    knobs,
+    presets: [
+      { key: 'crunch', title: 'a mid-forward crunch' },
+      { key: 'clean', title: 'a bright clean' },
+      { key: 'doom', title: 'a doom stack' }
     ]
   }
 }
@@ -87,5 +121,10 @@ export async function rest(path, options) {
     return { ok: true, output: `set ${knob ? knob.name : 'knob'} to ${body.value.toFixed(3)}` }
   }
   if (path === '/preset') return { ok: true, output: `applied ${body.query}` }
+  if (path === '/demo') {
+    demoOverride = !!body.on
+    return { ok: true, demo: demoOverride, on: demoOverride,
+             output: demoOverride ? 'demo rig on: a made-up session, not your hardware' : 'demo rig off: back to REAPER' }
+  }
   return { ok: false, output: `unknown route ${path}` }
 }
