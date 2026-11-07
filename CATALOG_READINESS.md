@@ -135,6 +135,18 @@ fader, its own `.rpp`, no network, no audio, Windows only. Missing:
 Fix: one paragraph, pasted into both the catalog `description` and the README under a
 `## What this touches` heading. Draft in section 5.
 
+**Done.** The paragraph is in `plugin-catalog/amphead.yaml` as the second block of the `description`
+and in `README.md` under `## What this touches`, naming all seven PowerShell call sites' work, the
+`__startup.lua` append with its backup and uninstall, the long-lived file channel with its 150 ms
+rate, the reads from a session the plugin did not create, and the four things it does not do.
+`tests/test_disclosure.py` is the pin: it folds the YAML the way YAML folds, squashes whitespace so
+wrapping is free to differ, and asserts the two copies are the same words. Six tests, and they
+fail on either side being edited alone.
+
+`plugin.yaml`'s own `description` stays a short pitch on purpose. The catalog entry is what a
+reviewer and a user read, and a two-paragraph description in a `hermes plugins list` row is worse
+for the reader, not better for the disclosure.
+
 ### G3. Unattended behaviour is unproven
 
 Rule 12 forbids routing around approvals and requires that a plugin not stall when nobody is there.
@@ -146,6 +158,16 @@ closed. The `_powershell` calls have 30 s and 15 s timeouts, but `minimize_and_w
 Fix: one integration test that runs `amphead_ready`, `amphead_status` and a refused `amphead_live`
 with no desktop attached, asserting each returns within 5 s with a readable sentence and no
 exception. That is the evidence to cite when asked "what happens if a cron job calls this?".
+
+**Done.** `tests/test_unattended.py` runs each tool in its own process with stdin closed and an
+engine that has no rig, so nothing launches and no fader moves. It asserts the answer is one line
+with no traceback, that the line names a state a person can act on, that every call comes back
+inside a 5 s wall-clock budget with the cold interpreter counted, and that a live request without
+`confirm` is refused rather than attempted. That last one is deliberately not the only shape
+asserted: with no rig open the refusal reads `NOT LIVE: no project is open, call amphead_setup
+first`, and with a rig open it reads `REFUSED`, so the test pins "a named state plus the next step"
+rather than one spelling. It also greps the package for a real `input(` call, so a handler added
+later cannot reintroduce a prompt.
 
 ### G4. Tool handlers return prose, not JSON
 
@@ -233,8 +255,8 @@ repo is only exposed at the moment of submission:
 | # | Item | Done when |
 |---|---|---|
 | 1 | G1 application declaration | ~~REAPER missing returns `missing_app`; `amphead_setup` reads it; test covers both branches~~ **done** |
-| 2 | G2 disclosure | paragraph in catalog `description` and README `## What this touches`; byte-identical text in both |
-| 3 | G3 unattended test | three tools called with no desktop, each returns inside 5 s, no exception |
+| 2 | G2 disclosure | ~~paragraph in catalog `description` and README `## What this touches`; byte-identical text in both~~ **done**, pinned by `tests/test_disclosure.py` |
+| 3 | G3 unattended test | ~~three tools called with no desktop, each returns inside 5 s, no exception~~ **done**, plus the refused live |
 | 4 | B2 pin and version | `plugin.yaml` version == catalog version; `sha` == `git rev-parse HEAD`; validate clean at that checkout |
 | 5 | B1 flip and cut the PR | history sweep clean, visibility `PUBLIC`, anonymous clone works, catalog PR opened against that SHA |
 
