@@ -45,11 +45,33 @@ class EngineSilent(port.RigTimeout):
     """The engine did not answer in time."""
 
 
+def engine_python(explicit: str | None = None) -> str:
+    """The interpreter that can host the engine, in the order a person would look.
+
+    An explicit argument, then AMPHEAD_ENGINE_PYTHON, then the virtualenv this repo keeps
+    beside itself (.engine), then this process's own interpreter. The venv step is the one
+    that matters: Hermes runs the plugin in its own Python, which has no numpy and no
+    PortAudio, so "press Setup in the pane" would otherwise answer "install numpy" to a
+    player who already has an engine that runs.
+    """
+    if explicit:
+        return explicit
+    said = os.environ.get("AMPHEAD_ENGINE_PYTHON")
+    if said:
+        return said
+    root = Path(__file__).resolve().parent.parent
+    for relative in ("Scripts/python.exe", "bin/python3", "bin/python"):
+        candidate = root / ".engine" / relative
+        if candidate.is_file():
+            return str(candidate)
+    return sys.executable
+
+
 class EngineClient:
     """A pipe to ``amphead.engine_main``, started on first use and reused after that."""
 
     def __init__(self, python: str | None = None, timeout: float = 20.0) -> None:
-        self.python = python or os.environ.get("AMPHEAD_ENGINE_PYTHON") or sys.executable
+        self.python = python or engine_python()
         self.timeout = float(timeout)
         self._proc: subprocess.Popen | None = None
         self._lock = threading.Lock()
