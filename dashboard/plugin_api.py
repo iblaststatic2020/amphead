@@ -341,14 +341,29 @@ def input_switch(body: dict) -> dict[str, Any]:
         return {"output": "NO INPUT: say which socket on the interface", "ok": False}
     track_no = int(body.get("track") or 1)
     try:
+        # Every write carries the project the player is looking at as `expect`. Without it the
+        # bridge's guard refuses, and rightly: a record input is per project, so a write that does
+        # not name a project could land in a tab nobody meant to touch.
+        expect = bridge.active_project()
         got = bridge.inputs()
+    except bridge.NoReaper:
+        return {"output": "NOT SET: REAPER is not running", "ok": False}
     except bridge.ReaperError as exc:
         return {"output": f"NOT SET: {exc}", "ok": False}
+    if not expect:
+        return {"output": "NOT SET: no project is open, so there is no track to point", "ok": False}
     if int(got.get("count") or 0) < 1:
-        return {"output": "NOT SET: the audio device is closed, so there are no sockets to point "
-                          "at. Open REAPER's audio device and turn again.", "ok": False}
+        # REAPER parks the device closed when idle, and a closed device has no sockets. Opening it
+        # is the difference between "your interface has no inputs" and "the device was asleep".
+        try:
+            got = launch.ensure_audio(info=got)
+        except bridge.ReaperError as exc:
+            return {"output": f"NOT SET: could not open the audio device: {exc}", "ok": False}
+        if int(got.get("count") or 0) < 1:
+            return {"output": "NOT SET: the audio device is closed, so there are no sockets to "
+                              "point at. Open REAPER's audio device and turn again.", "ok": False}
     try:
-        bridge.set_input(track=track_no, spec=spec, inputs=int(got["count"]))
+        bridge.set_input(track=track_no, spec=spec, inputs=int(got["count"]), expect=expect)
     except bridge.NoReaper:
         return {"output": "NOT SET: REAPER is not running", "ok": False}
     except (bridge.CommandFailed, bridge.ReaperError, ValueError) as exc:

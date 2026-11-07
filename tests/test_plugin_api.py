@@ -57,6 +57,10 @@ PRESET = ROUTER.routes[("POST", "/preset")]
 FOCUS = ROUTER.routes[("POST", "/focus")]
 INPUT = ROUTER.routes[("POST", "/input")]
 
+# The project a write names as `expect`: every mutating bridge command carries one, so a write
+# cannot land in a tab nobody meant to touch.
+RIG_PATH = "C:/Users/Chris/Music/rig.rpp"
+
 
 def _live(**over):
     base = {"bridge": "live", "project": "amphead.rpp", "tracks": 1,
@@ -341,22 +345,56 @@ class TestInputSocket(unittest.TestCase):
         self.assertEqual([row["name"] for row in mine["channels"]], ["IN 1", "IN 2"])
 
     def test_a_socket_turn_writes_and_reports_the_interface_name(self):
-        with mock.patch.object(API.bridge, "inputs", return_value=self._channels()), \
+        with mock.patch.object(API.bridge, "active_project", return_value=RIG_PATH), \
+             mock.patch.object(API.bridge, "inputs", return_value=self._channels()), \
              mock.patch.object(API.bridge, "set_input",
                                return_value={"recinput": 1.0, "applied": True}) as wrote, \
              mock.patch.object(API.bridge, "track_info", return_value={"recinput": 1.0}):
             answer = INPUT({"input": 2})
-        wrote.assert_called_once_with(track=1, spec=2, inputs=2)
+        # The write names the project the player is looking at, or the bridge's guard refuses it.
+        wrote.assert_called_once_with(track=1, spec=2, inputs=2, expect=RIG_PATH)
         self.assertTrue(answer["ok"])
         self.assertEqual((answer["number"], answer["name"], answer["track"]), (2, "IN 2", 1))
         self.assertIn("IN 2", answer["output"])
 
     def test_a_turn_with_no_sockets_says_the_device_is_closed(self):
-        with mock.patch.object(API.bridge, "inputs", return_value={"count": 0, "channels": []}), \
+        with mock.patch.object(API.bridge, "active_project", return_value=RIG_PATH), \
+             mock.patch.object(API.bridge, "inputs", return_value={"count": 0, "channels": []}), \
+             mock.patch.object(API.launch, "ensure_audio",
+                               return_value={"count": 0, "inputs": 0}) as opened, \
              mock.patch.object(API.bridge, "set_input") as wrote:
             answer = INPUT({"input": 1})
         self.assertFalse(answer["ok"])
         self.assertIn("closed", answer["output"])
+        opened.assert_called_once()
+        wrote.assert_not_called()
+
+    def test_a_sleeping_device_is_opened_before_the_socket_is_blamed(self):
+        """REAPER parks the device closed when idle; that is not the interface losing its sockets."""
+        # First read: the device is asleep and has no sockets. Second read, after it is opened:
+        # the interface answers with its own channel names again.
+        asleep = {"count": 0, "channels": []}
+        awake = self._channels()
+        with mock.patch.object(API.bridge, "active_project", return_value=RIG_PATH), \
+             mock.patch.object(API.bridge, "inputs", side_effect=[asleep, awake]), \
+             mock.patch.object(API.launch, "ensure_audio",
+                               return_value={"count": 2, "inputs": 2}) as opened, \
+             mock.patch.object(API.bridge, "set_input",
+                               return_value={"recinput": 0.0, "applied": True}) as wrote, \
+             mock.patch.object(API.bridge, "track_info", return_value={"recinput": 0.0}):
+            answer = INPUT({"input": 1})
+        opened.assert_called_once()
+        wrote.assert_called_once_with(track=1, spec=1, inputs=2, expect=RIG_PATH)
+        self.assertTrue(answer["ok"], answer["output"])
+        self.assertEqual(answer["name"], "IN 1")
+
+    def test_a_turn_with_no_project_open_is_refused(self):
+        with mock.patch.object(API.bridge, "active_project", return_value=None), \
+             mock.patch.object(API.bridge, "inputs", return_value=self._channels()), \
+             mock.patch.object(API.bridge, "set_input") as wrote:
+            answer = INPUT({"input": 1})
+        self.assertFalse(answer["ok"])
+        self.assertIn("no project", answer["output"])
         wrote.assert_not_called()
 
     def test_a_turn_with_no_socket_named_is_refused(self):
