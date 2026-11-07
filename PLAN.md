@@ -209,9 +209,9 @@ The real finding: matching knobs by name compared the wrong pair and invented a 
 
 **Task 4.3** Demo fixture on the user's real guitar: scratch tab, DI input, Shoeless into RigSculpt with a cab, three presets (`clean`, `crunch`, `lead`) tuned by ear, and one deliberately hostile case: a parameter that reads back `-inf` so the tool's refusal is on camera.
 
-**Task 4.4** Record the under-90s demo per `demo/shotlist.md`. Two takes. Keep the second as the fallback. No keys, no network, nothing typed that a viewer cannot see happen.
+**Task 4.4** Record the under-90s demo per `demo/shotlist.md`. Two takes. Keep the second as the fallback. No keys, no network, nothing typed that a viewer cannot see happen. **Moved: recording is now Task 5.6, dead last, after the freeze. The user will not film a build that is not behaving the way he wants, and he tests it himself over Sat and Sun before anything is committed to camera.**
 
-**Task 4.5** README: what it is in one sentence, install in three commands, the four layers, honest limits (no DSP, latency is REAPER's, Windows only in v0, no tuner), the safety model (own tab, undo groups, panic), and the demo video link.
+**Task 4.5** README: what it is in one sentence, install in three commands, the four layers, honest limits (no DSP, latency is REAPER's, Windows only in v0, no tuner), the safety model (own tab, undo groups, panic), and the demo video link. The link is the one line that waits for Task 5.6; do not add a placeholder URL.
 
 **Task 4.6** `demo/shotlist.md` finalized with timestamps and the exact words spoken, so the take is reproducible.
 
@@ -226,6 +226,8 @@ The real finding: matching knobs by name compared the wrong pair and invented a 
 **Task 5.4** Fresh-eyes read of the repo as a stranger: no absolute paths of mine, no secrets, no scratch files, LICENSE, `.gitignore` for `runs/`, `log.jsonl`, `snapshots/`.
 
 **Task 5.5** Freeze at 18:00 local. After that, only demo-video edits, no code.
+
+**Task 5.6 (dead last, no exceptions)** Record the demo, after the freeze, once the user has finished testing and says the build behaves. Nothing moves ahead of this except the submit itself. Order from here: his testing Sat and Sun, fixes landed as they come, freeze Tue 18:00, record Tue night or Wed morning, X post, Typeform, submit before the deadline. If the take is not working, the fallback is the shotlist walked without narration-playback sync, never a rushed live attempt with the code half changed.
 
 ### Phase 6 — Wed Nov 11, submit before 14:00 EST
 
