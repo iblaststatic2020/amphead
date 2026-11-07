@@ -22,23 +22,17 @@ import sys
 import time
 from pathlib import Path
 
-STATE = Path.home() / ".amphead2.json"
+from . import lastchain
+
+STATE = lastchain.STATE
 
 
 def _last_chain() -> dict:
-    try:
-        return json.loads(STATE.read_text(encoding="utf-8"))
-    except Exception:
-        return {}
+    return lastchain.load()
 
 
 def _remember(**kw) -> None:
-    state = _last_chain()
-    state.update({k: v for k, v in kw.items() if v})
-    try:
-        STATE.write_text(json.dumps(state, indent=2), encoding="utf-8")
-    except OSError:
-        pass
+    lastchain.save(**kw)
 
 
 def devices_name(index) -> str:

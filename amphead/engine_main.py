@@ -79,7 +79,34 @@ class Server:
         # Started means an open device, not a live amp: the master stays at the floor
         # until arm() asks for a level, so "armed: false" is silent rather than quiet.
         engine.update(master_db=SAFE_MASTER_DB, armed=False)
-        return {"mode": mode, "latency_ms": engine.latency_ms, "last_error": engine.last_error}
+        played = self._remembered_chain(kw)
+        return {"mode": mode, "latency_ms": engine.latency_ms,
+                "last_error": engine.last_error, "chain": played}
+
+    def _remembered_chain(self, kw: dict) -> dict:
+        """Load what the CLI was playing last, so Setup is not a clean DI by accident.
+
+        The pane has no file picker, and the player has already chosen a capture once.
+        A path that no longer exists is skipped in silence rather than loaded as an error:
+        the engine still starts, it just has nothing in front of the input.
+        """
+        from . import lastchain
+
+        want = {"capture": kw.get("capture") or lastchain.load().get("capture"),
+                "cab": kw.get("cab") or lastchain.load().get("cab")}
+        done = {}
+        for key, path in want.items():
+            found = lastchain.usable(path)
+            if not found:
+                continue
+            try:
+                if key == "capture":
+                    done["capture"] = self.load_capture(found)["capture"]
+                else:
+                    done["cab"] = self.load_cab(found).get("cab", found)
+            except Exception as exc:  # a bad file must not take the device down with it
+                done[key] = f"failed: {type(exc).__name__}: {exc}"
+        return done
 
     def stop(self) -> dict:
         self.engine.stop()

@@ -3,6 +3,7 @@
 import io
 import json
 import unittest
+from pathlib import Path
 from unittest import mock
 
 try:
@@ -38,6 +39,24 @@ class VerbTest(unittest.TestCase):
         status = self.server.handle({"cmd": "status"})["result"]
         self.assertFalse(status["armed"])
         self.assertEqual(status["master_db"], SAFE_MASTER_DB)
+
+    def test_start_plays_the_chain_that_was_played_last(self):
+        """Setup is not a clean DI: the pane has no picker, so it reads the CLI's last chain."""
+        fixture = str(Path(__file__).resolve().parent / "fixtures" / "tiny_wavenet.nam")
+        with mock.patch.object(type(self.server.engine), "start", return_value="test"), \
+                mock.patch("amphead.lastchain.load", return_value={"capture": fixture}):
+            done = self.server.handle({"cmd": "start"})["result"]
+        self.assertEqual(done["chain"]["capture"], fixture)
+        self.assertEqual(self.server.capture_name, fixture)
+
+    def test_a_capture_that_is_gone_is_skipped_rather_than_fatal(self):
+        """A moved file leaves the device open with nothing in front of it, and says nothing."""
+        with mock.patch.object(type(self.server.engine), "start", return_value="test"), \
+                mock.patch("amphead.lastchain.load",
+                           return_value={"capture": "C:/captures/gone.nam"}):
+            done = self.server.handle({"cmd": "start"})["result"]
+        self.assertEqual(done["chain"], {})
+        self.assertIsNone(self.server.capture_name)
 
     def test_arm_uses_the_measured_default(self):
         result = self.server.handle({"cmd": "arm"})["result"]
