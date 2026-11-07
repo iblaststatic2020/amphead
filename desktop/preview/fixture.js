@@ -20,7 +20,11 @@ const knobs = [
   { index: 4, name: 'Amplifier Output Gain', value: '0.00 dB', norm: 0.5 },
   { index: 5, name: 'Input Gain', value: '-12.68 dB', norm: 0.36 },
   { index: 6, name: 'Output Gain', value: '0.00 dB', norm: 0.5 },
-  { index: 7, name: 'Gate', value: '-80.0 dB', norm: 0.0 }
+  { index: 7, name: 'Gate', value: '-80.0 dB', norm: 0.0 },
+  // The host marks a parameter that reads On or Off, so the harness draws the switch the same way
+  // the pane does rather than only ever showing knobs.
+  { index: 8, name: 'Amplifier Bright', value: 'On', norm: 1, bool: true },
+  { index: 9, name: 'Amplifier Cabinet', value: 'Off', norm: 0, bool: true }
 ]
 
 // A plucked string, roughly: two peaks per second that fall away, so the meter looks like an amp
@@ -53,7 +57,10 @@ export const state = () => {
     master_db: master,
     project: 'amphead.rpp',
     ui: 'visible',
-    device: { buffer: '512', rate: '44100', out_ms: 11.61, closed: false },
+    device: { buffer: '512', rate: '44100', out_ms: 11.61, closed: false,
+              driver: 'ASIO AudioBox ASIO Driver' },
+    // Two sockets on this interface, so the socket control is a two-position switch.
+    input: { count: 2, index: 1, name: 'IN 1', norm: 0, track: 1 },
     problems: forced ? ['the active project is not the rig'] : [],
     chain,
     knobs,
@@ -76,7 +83,10 @@ function DEMO_STATE() {
     master_db: -20,
     project: 'amphead.rpp (demo rig)',
     ui: 'hidden',
-    device: { buffer: '512', rate: '44100', out_ms: 11.61, closed: false },
+    device: { buffer: '512', rate: '44100', out_ms: 11.61, closed: false,
+              driver: 'ASIO AudioBox ASIO Driver' },
+    // Two sockets on this interface, so the socket control is a two-position switch.
+    input: { count: 2, index: 1, name: 'IN 1', norm: 0, track: 1 },
     problems: [],
     chain: [{ name: 'VST3i: NAM Universal (Neural Amp Modeler)', enabled: true }],
     knobs,

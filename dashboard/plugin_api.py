@@ -110,8 +110,8 @@ def _knobs(track: int) -> list[dict]:
         picked.append({"index": int(param["i"]), "name": name,
                        "section": _section(name),
                        # The host's own reading decides what is a switch: a parameter that says
-                       # On or Off has two places to be, and the face draws it as a knob that
-                       # snaps between them rather than one that can sit at 0.47.
+                       # On or Off has exactly two positions, and the face draws it as a lever
+                       # rather than as a knob that could sit at 0.47.
                        "bool": reading in {"On", "Off"},
                        "value": reading,
                        "norm": round(float(param.get("norm") or 0.0), 4),
