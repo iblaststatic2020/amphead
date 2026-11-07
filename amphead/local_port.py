@@ -301,13 +301,22 @@ class AmpHead2Rig:
         return str(got.get("capture") or "") or None
 
     def fx_list(self, track: int = 1, **kw: Any) -> list:
+        """Three stages, each saying whether it is loaded and whether it is in the path.
+
+        A flat tone knob is loaded and on: it is a stage you can turn, not a missing plug-in.
+        A bypassed capture is loaded and off, which is what panic leaves behind.
+        """
         got = self._call(cmd="status")
-        present = {
+        stages = got.get("stages") or {}
+        keys = {"Capture": "capture", "Tone": "tone", "Cabinet": "cabinet"}
+        loaded = {
             "Capture": bool(got.get("capture")),
-            "Tone": any(abs(float(v)) > 1e-9 for v in (got.get("tone") or {}).values()),
+            "Tone": True,
             "Cabinet": bool(got.get("cab")),
         }
-        return [{"i": i, "name": name, "enabled": present[name]} for i, name in enumerate(STAGES)]
+        return [{"i": i, "name": name,
+                 "enabled": loaded[name] and bool(stages.get(keys[name], True))}
+                for i, name in enumerate(STAGES)]
 
     def fx_params(self, track: int = 1, fx: int = 0, keep: int | None = None,
                   **kw: Any) -> list:
@@ -412,26 +421,31 @@ class AmpHead2Rig:
     def fx_bypass(self, track: int = 1, fx: int = 0, on: bool = True, **kw: Any) -> dict:
         """``on`` is bypass-on, as the pane means it: true takes the stage out of the path.
 
-        Taking a stage out is honest and immediate. Putting it back is not: the engine
-        holds a capture and an IR, not a rack of plug-ins, so a stage that was bypassed
-        has to be loaded again rather than switched back on. Saying so beats a chain that
-        reports itself restored while it is still clean.
+        Bypass here is a switch on a stage, not an unload. The capture stays loaded and the
+        cabinet stays in memory, so panic can take all three out of the path and the player
+        can bring the rig back without finding the file again. Switching on a stage that was
+        never loaded is refused by name, because there is nothing there to hear.
         """
         if not 0 <= fx < len(STAGES):
             raise EngineRefused(f"{LABEL} has no stage {fx}")
         name = STAGES[fx]
+        key = {"Capture": "capture", "Tone": "tone", "Cabinet": "cabinet"}[name]
         if not on:
-            raise EngineRefused(
-                f"{LABEL} cannot switch {name} back on without loading it again: "
-                f"run amphead_capture or amphead_cab, or set the tone knobs."
-            )
-        if name == "Capture":
-            self._call(cmd="clear_capture")
-        elif name == "Cabinet":
-            self._call(cmd="clear_cab")
-        else:
-            self._call(cmd="tone", bass=0.0, mid=0.0, treble=0.0)
-        return {"i": fx, "name": name, "enabled": False}
+            held = self._call(cmd="status")
+            if name == "Capture" and not held.get("capture"):
+                raise EngineRefused(
+                    f"{LABEL} has no capture loaded to switch back on: load one with "
+                    f"-m amphead.play --capture, then press Setup."
+                )
+            if name == "Cabinet" and not held.get("cab"):
+                raise EngineRefused(
+                    f"{LABEL} has no cabinet loaded to switch back on: load one with "
+                    f"-m amphead.play --cab, then press Setup."
+                )
+        got = self._call(cmd="bypass", stage=key, on=not on)
+        if got.get("refused"):
+            raise EngineRefused(str(got["refused"]))
+        return {"i": fx, "name": name, "enabled": bool(got.get("enabled"))}
 
     def fx_focus(self, track: int = 1, fx: int = 0, **kw: Any) -> dict:
         return {"focused": None, "note": f"{LABEL} draws no plugin windows"}

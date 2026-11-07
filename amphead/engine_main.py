@@ -45,6 +45,8 @@ class Server:
             "output_gain_db": chain.output_gain_db,
             "capture": self.capture_name,
             "cab": self.cab_name,
+            "stages": {"capture": chain.amp_on, "tone": chain.tone_on,
+                       "cabinet": chain.cab_on},
             "tone": dict(self.tone),
             "meter": {
                 "peak_in": meter.peak_in,
@@ -119,6 +121,23 @@ class Server:
         self.engine.update(amp=model)
         self.capture_name = str(path)
         return {"capture": self.capture_name, "receptive_field": model.receptive_field}
+
+    def bypass(self, stage: str = "", on: bool = True) -> dict:
+        """Switch a stage out of the path, or back in, without unloading it.
+
+        A capture is not a plug-in: there is nothing to click in a rack. But the chain has
+        three stages and each can be skipped, so panic can silence the rig and the player
+        can undo it without hunting for the .nam file again.
+        """
+        key = str(stage or "").strip().lower()
+        names = {"capture": "amp_on", "amp": "amp_on", "cab": "cab_on", "cabin": "cab_on",
+                 "cabinet": "cab_on", "tone": "tone_on"}
+        field = names.get(key)
+        if field is None:
+            return {"refused": f"no stage called {stage!r}; the chain has capture, tone, cabinet"}
+        self.engine.update(**{field: bool(on)})
+        chain = self.engine.chain
+        return {"stage": key, "enabled": bool(getattr(chain, field))}
 
     def clear_capture(self) -> dict:
         self.engine.update(amp=None)
@@ -238,6 +257,7 @@ class Server:
         "stop": "stop",
         "load_capture": "load_capture",
         "clear_capture": "clear_capture",
+        "bypass": "bypass",
         "load_cab": "load_cab",
         "clear_cab": "clear_cab",
         "tone": "tone_set",

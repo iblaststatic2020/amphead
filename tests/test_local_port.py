@@ -23,6 +23,7 @@ class FakeClient:
         self.cab = ""
         self.master_db = port.SAFE_MASTER_DB
         self.armed = False
+        self.stages = {"capture": True, "tone": True, "cabinet": True}
         self.calls = []
 
     running = True
@@ -34,7 +35,7 @@ class FakeClient:
             return {"ok": True, "running": True, "armed": self.armed,
                     "master_db": self.master_db, "samplerate": 44100, "blocksize": 512,
                     "capture": self.capture, "cab": self.cab, "tone": dict(self.tone),
-                    "mode": "wdm-ks", "latency_ms": 20.0}
+                    "stages": dict(self.stages), "mode": "wdm-ks", "latency_ms": 20.0}
         if cmd == "tone":
             for key in ("bass", "mid", "treble"):
                 if key in request:
@@ -55,6 +56,9 @@ class FakeClient:
             self.armed = False
             self.master_db = port.SAFE_MASTER_DB
             return {"armed": False, "master_db": self.master_db}
+        if cmd == "bypass":
+            self.stages[str(request["stage"])] = bool(request["on"])
+            return {"stage": request["stage"], "enabled": bool(request["on"])}
         if cmd == "clear_capture":
             self.capture = ""
             return {}
@@ -122,10 +126,19 @@ class BypassTest(unittest.TestCase):
         r.client.capture = "C:/captures/bugera.nam"
         out = r.fx_bypass(fx=0, on=True)
         self.assertFalse(out["enabled"])
-        self.assertEqual(r.client.capture, "")
+        self.assertEqual(r.client.capture, "C:/captures/bugera.nam")
 
-    def test_bypass_off_is_refused_because_the_capture_is_gone(self):
-        """Reporting a stage as restored while it is still clean is the bug worth refusing."""
+    def test_a_bypassed_stage_is_still_loaded_and_can_come_back(self):
+        """Panic has to be undoable: the capture is switched out, not forgotten."""
+        r = rig()
+        r.client.capture = "C:/captures/bugera.nam"
+        r.fx_bypass(fx=0, on=True)
+        self.assertFalse(r.fx_list()[0]["enabled"])
+        self.assertTrue(r.fx_bypass(fx=0, on=False)["enabled"])
+        self.assertTrue(r.fx_list()[0]["enabled"])
+
+    def test_bypass_off_is_refused_when_nothing_is_loaded(self):
+        """Offering a switch that would restore silence is worse than refusing it."""
         with self.assertRaises(local_port.EngineRefused):
             rig().fx_bypass(fx=0, on=False)
 

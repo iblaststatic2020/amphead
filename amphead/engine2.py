@@ -96,6 +96,11 @@ class Chain:
     amp: object | None = None
     tone: object | None = None
     cab: object | None = None
+    # Loaded and switched on are different things: panic takes a stage out of the path
+    # without forgetting it, so the rig can be brought back without finding the file again.
+    amp_on: bool = True
+    tone_on: bool = True
+    cab_on: bool = True
 
 
 @dataclass
@@ -121,11 +126,11 @@ def process_chain(x, chain: Chain):
     import numpy as np
 
     y = np.asarray(x, dtype=np.float32).reshape(-1) * db_to_gain(chain.input_gain_db)
-    if chain.amp is not None:
+    if chain.amp is not None and chain.amp_on:
         y = chain.amp.process(y)
-    if chain.tone is not None:
+    if chain.tone is not None and chain.tone_on:
         y = chain.tone.process(y)
-    if chain.cab is not None:
+    if chain.cab is not None and chain.cab_on:
         y = chain.cab.process(y)
     y = y * db_to_gain(chain.output_gain_db)
     y = y * db_to_gain(chain.master_db)

@@ -40,6 +40,31 @@ def ramp(n=256):
 
 
 @unittest.skipIf(np is None, "numpy is not installed")
+class BypassTest(unittest.TestCase):
+    def test_a_switched_out_stage_is_skipped_not_forgotten(self):
+        """The point of a switch: take the amp out of the path, keep the amp."""
+        import numpy as np
+
+        from amphead.engine2 import Chain, process_chain
+
+        chain = Chain(amp=FakeAmp(), amp_on=False, master_db=0.0)
+        x = np.linspace(-0.2, 0.2, 64).astype(np.float32)
+        np.testing.assert_allclose(process_chain(x, chain), x, atol=1e-6)
+        chain.amp_on = True
+        self.assertFalse(np.allclose(process_chain(x, chain), x))
+
+    def test_the_chain_is_wired_capture_then_tone_then_cabinet(self):
+        import numpy as np
+
+        from amphead.engine2 import Chain, process_chain
+
+        x = np.linspace(-0.2, 0.2, 64).astype(np.float32)
+        both = process_chain(x, Chain(amp=FakeAmp(), cab=FakeCab(), master_db=0.0))
+        amp_first = process_chain(process_chain(x, Chain(amp=FakeAmp(), master_db=0.0)),
+                                  Chain(cab=FakeCab(), master_db=0.0))
+        np.testing.assert_allclose(amp_first[1:], both[1:], atol=1e-6)
+
+
 class ChainTest(unittest.TestCase):
     def test_disarmed_is_silence(self):
         engine = Engine()

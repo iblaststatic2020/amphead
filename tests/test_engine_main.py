@@ -66,6 +66,21 @@ class VerbTest(unittest.TestCase):
     def test_arm_can_be_overridden(self):
         self.assertEqual(self.server.handle({"cmd": "arm", "master_db": -12})["result"]["master_db"], -12.0)
 
+    def test_bypass_switches_a_stage_out_and_keeps_it_loaded(self):
+        fixture = str(Path(__file__).resolve().parent / "fixtures" / "tiny_wavenet.nam")
+        self.server.handle({"cmd": "load_capture", "path": fixture})
+        got = self.server.handle({"cmd": "bypass", "stage": "capture", "on": False})["result"]
+        self.assertFalse(got["enabled"])
+        status = self.server.handle({"cmd": "status"})["result"]
+        self.assertFalse(status["stages"]["capture"])
+        self.assertEqual(status["capture"], fixture)
+        back = self.server.handle({"cmd": "bypass", "stage": "capture", "on": True})["result"]
+        self.assertTrue(back["enabled"])
+
+    def test_bypass_refuses_a_stage_that_does_not_exist(self):
+        got = self.server.handle({"cmd": "bypass", "stage": "reverb", "on": False})["result"]
+        self.assertIn("refused", got)
+
     def test_panic_is_a_hard_mute(self):
         self.server.handle({"cmd": "arm", "master_db": 0})
         result = self.server.handle({"cmd": "panic"})["result"]
