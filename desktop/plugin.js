@@ -672,11 +672,11 @@ function SignalPath({ chain, ui, onFocus }) {
 
 // LIVE is the amp's power switch: on means armed, monitoring, and the master out of the parked
 // floor. The caption changes with the direction of the action, so the switch explains itself.
-function PowerSwitch({ armed, busy, onToggle }) {
+function PowerSwitch({ armed, busy, onToggle, setup, onSetup }) {
   return jsxs('button', {
     type: 'button',
     disabled: busy,
-    onClick: onToggle,
+    onClick: setup ? onSetup : onToggle,
     className: 'flex w-full items-center justify-between gap-2 rounded-md px-2.5 py-2 disabled:opacity-50',
     style: {
       background: armed ? 'rgba(255,179,71,0.14)' : 'rgba(255,255,255,0.05)',
@@ -709,14 +709,20 @@ function PowerSwitch({ armed, busy, onToggle }) {
           jsx('span', {
             className: 'text-[0.6875rem] font-semibold uppercase tracking-[0.14em]',
             style: { color: armed ? '#ffb347' : FACE, opacity: armed ? 1 : 0.8 },
-            children: armed ? 'live' : 'standby'
+            children: setup ? 'engine off' : armed ? 'live' : 'standby'
           })
         ]
       }),
       jsx('span', {
         className: 'max-w-[62%] text-right text-[0.5625rem] leading-tight',
         style: { color: FACE_DIM },
-        children: busy ? 'working' : armed ? 'armed, master silent until you raise it' : 'click to arm and play'
+        children: busy
+          ? 'working'
+          : setup
+            ? 'click to open the engine: silent until live'
+            : armed
+              ? 'armed, master silent until you raise it'
+              : 'click to arm and play'
       })
     ]
   })
@@ -1048,7 +1054,9 @@ function AmpFace({ rest }) {
           jsx(PowerSwitch, {
             armed,
             busy,
-            onToggle: () => act('/live', { on: !armed })
+            setup: s.running === false,
+            onToggle: () => act('/live', { on: !armed }),
+            onSetup: () => act('/setup', {})
           }),
           jsx(PanicButton, {
             silenced,
