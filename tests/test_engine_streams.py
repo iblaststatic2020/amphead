@@ -9,7 +9,10 @@ import sys
 import types
 import unittest
 
-import numpy as np
+try:
+    import numpy as np
+except ModuleNotFoundError:  # pragma: no cover - engine modules need numpy
+    raise unittest.SkipTest("numpy is not installed")
 
 from amphead import engine2
 

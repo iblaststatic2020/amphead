@@ -13,18 +13,22 @@ import os
 import re
 from pathlib import Path
 
+from . import settings
+
 #: Where captures usually live: the Neural Amp Modeler convention under Documents.
 CAPTURE_DEFAULTS = ("Documents", "Guitar Amp Sims", "NAM")
 #: Where cabinets usually live: plain IR folders, and Aurora DSP's factory folder.
 CAB_DEFAULTS = (("Documents", "Guitar Amp Sims", "IRs"), ("Documents", "Aurora DSP"))
 
 
-def _folders(env: str, defaults: list[Path], current: str) -> list[Path]:
-    """Every folder worth scanning, in order, without duplicates."""
-    found: list[Path] = []
-    for raw in (os.environ.get(env) or "").split(os.pathsep):
-        if raw:
-            found.append(Path(raw))
+def _folders(key: str, defaults: list[Path], current: str) -> list[Path]:
+    """Every folder worth scanning, in order, without duplicates.
+
+    Settings first, because a folder the player chose is a better guess than a folder
+    this code was told about: the environment variable, then the settings file, then the
+    usual places, then wherever the file already loaded came from.
+    """
+    found: list[Path] = settings.folders(key)
     found.extend(defaults)
     if current:
         found.append(Path(current).parent)
@@ -95,11 +99,92 @@ def tone_name(capture: str = "", cab: str = "") -> str:
     return " / ".join(halves) if halves else "nothing loaded"
 
 
+#: Where a person keeps a library they downloaded: the usually-synced folders.
+SEARCH_ROOTS = ("Documents", "Downloads", "Desktop", "Music", "OneDrive",
+                "OneDrive/Documents", "Dropbox", "Google Drive")
+#: Words in a folder name that say "this is a tone library", and words that say "these are
+#: recordings". A render folder can hold five hundred wavs and still be the last place a
+#: player keeps a cabinet, so the name is worth more than the count.
+LIBRARY_WORDS = ("ir", "irs", "impulse", "cab", "cabs", "nam", "capture", "captures", "amp",
+                 "amps", "tone", "tones", "preset", "presets", "kemper", "neural")
+RECORDING_WORDS = ("media", "render", "renders", "bounce", "mixes", "stems", "samples",
+                   "loops", "backup", "projectdata", "recordings")
+
+#: Deep enough to clear "Documents/OneDrive/Guitar/NAM", shallow enough to stay quick.
+FIND_DEPTH = 4
+FIND_LIMIT = 40000
+
+
+def _library_score(row: dict) -> int:
+    """How much a folder's name argues for it being a tone library rather than a session."""
+    parts = re.split(r"[^a-z0-9]+", row["path"].lower())
+    words = [p for p in parts if p]
+    good = any(w.startswith(LIBRARY_WORDS) for w in words)
+    bad = any(w.startswith(RECORDING_WORDS) for w in words)
+    return (1000 if good else 0) - (1000 if bad else 0) + row["captures"] + row["cabs"]
+
+
+def find(depth: int = FIND_DEPTH, limit: int = FIND_LIMIT, max_rows: int = 40) -> dict:
+    """Folders that look like a capture or cabinet library, for the agent to offer.
+
+    Nobody knows where a player unzipped their pack, but it is almost always in one of the
+    folders that sync: Documents, Downloads, Desktop, Music, and the cloud folders that
+    appear inside them. Walk those a few levels down, count the files that matter, and
+    report the folders that hold them, biggest first. The caller decides; this only looks.
+    """
+    home = Path.home()
+    roots: list[Path] = []
+    for name in SEARCH_ROOTS:
+        candidate = home.joinpath(*name.split("/"))
+        if candidate.is_dir() and candidate not in roots:
+            roots.append(candidate)
+    # Already-configured folders count too: a library can live anywhere.
+    for key in ("capture_dirs", "cab_dirs"):
+        for folder in settings.folders(key):
+            if folder.is_dir() and folder not in roots:
+                roots.append(folder)
+
+    tally: dict[Path, list[int]] = {}
+    visits = 0
+    for root in roots:
+        base_depth = len(root.parts)
+        for base, subdirs, files in os.walk(root):
+            visits += len(files)
+            if visits > limit:
+                break
+            here = Path(base)
+            subdirs[:] = [d for d in subdirs if not d.startswith((".", "$"))
+                          and len(here.parts) - base_depth < depth]
+            nam = sum(1 for n in files if n.lower().endswith(".nam"))
+            wav = sum(1 for n in files if n.lower().endswith(".wav"))
+            if nam or wav:
+                tally[here] = [nam, wav]
+        if visits > limit:
+            break
+
+    rows = []
+    for folder, (nam, wav) in tally.items():
+        rows.append({
+            "path": str(folder),
+            "captures": nam,
+            "cabs": wav,
+            "kind": "captures" if nam > wav else ("cabs" if wav > nam else "both"),
+        })
+    rows.sort(key=lambda r: (-_library_score(r), r["path"].lower()))
+    return {
+        "candidates": rows[:max_rows],
+        "scanned": [str(r) for r in roots],
+        "configured": {"capture_dirs": [str(p) for p in settings.folders("capture_dirs")],
+                       "cab_dirs": [str(p) for p in settings.folders("cab_dirs")]},
+        "settings": str(settings.path()),
+    }
+
+
 def listing(capture: str = "", cab: str = "") -> dict:
     """Both menus, plus the two names currently loaded (if any)."""
     home = Path.home()
-    capture_roots = _folders("AMPHEAD_CAPTURE_DIR", [home.joinpath(*CAPTURE_DEFAULTS)], capture)
-    cab_roots = _folders("AMPHEAD_CAB_DIR", [home.joinpath(*each) for each in CAB_DEFAULTS], cab)
+    capture_roots = _folders("capture_dirs", [home.joinpath(*CAPTURE_DEFAULTS)], capture)
+    cab_roots = _folders("cab_dirs", [home.joinpath(*each) for each in CAB_DEFAULTS], cab)
     return {
         "captures": scan(capture_roots, (".nam",)),
         "cabs": scan(cab_roots, (".wav",)),

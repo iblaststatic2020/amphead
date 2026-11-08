@@ -23,6 +23,12 @@ description: >-
   and saves that tab to its own `.rpp` under the Hermes data folder. It never saves, renames or
   overwrites your song projects, never touches audio files, stores no credentials and makes no
   network calls.
+
+  Once the headless engine is in use it reads one settings file (`%APPDATA%\amphead\settings.json`
+  and the equivalents above), writes it only when you or your agent call `amphead_settings action=set`,
+  and scans the folders named there for `.nam` and `.wav` files. `action="find"` additionally walks
+  Documents, Downloads, Desktop, Music and the cloud folders inside them, four levels deep, reading
+  file names only; it does not open, copy or change them.
 maintainer: iblaststatic2020
 tier: community
 category: tools
@@ -53,6 +59,7 @@ capabilities:
     - amphead_build
     - amphead_preset
     - amphead_ab
+    - amphead_settings
   provides_hooks: []
   provides_middleware: []
   requires_env: []

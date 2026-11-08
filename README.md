@@ -345,6 +345,58 @@ hardware** with a leave button, and the status chip says `demo` rather than prin
 not measure. It answers through the same `verdict.judge` as the real path, so what a visitor sees is
 the real rules applied to a rig that is not there. It never turns itself on.
 
+## Settings: the parts no code can guess
+
+AmpHead works most of its own world out. It finds the REAPER resource directory, installs its
+bridge, and offers whatever captures and cabinets the last session used. Three things it genuinely
+cannot guess: where you keep your files, which input on your interface is the guitar, and how hard
+your driver wants to be pushed. Those live in one JSON file:
+
+| Platform | File |
+| --- | --- |
+| Windows | `%APPDATA%\amphead\settings.json` |
+| macOS | `~/Library/Application Support/amphead/settings.json` |
+| Linux | `$XDG_CONFIG_HOME/amphead/settings.json` |
+
+```json
+{
+  "capture_dirs": ["D:/Tones/NAM"],
+  "cab_dirs": ["D:/Tones/IRs"],
+  "engine_python": "",
+  "audio": {
+    "input_device": 37,
+    "output_device": 38,
+    "input_channel": 1,
+    "samplerate": 44100,
+    "blocksize": 512,
+    "latency_ms": 5.0
+  }
+}
+```
+
+Nothing has to be set. An empty file means the usual folders (the Neural Amp Modeler convention under
+Documents, plus Aurora DSP's), the first input channel, 44.1 kHz, 512 frames, and the 5 ms per
+direction that held realtime on the machine this was measured on. The file exists so a guess can be
+corrected without editing code.
+
+Left to itself the engine picks the kernel-streaming pair by shape rather than by brand: it looks for
+one input device and one stereo output that belong to the same interface, ignores virtual cables and
+loopbacks (VB-Audio, Steam streaming, anything called "cable"), and only falls back to the system
+default, which is usually a shared WMME pair and roughly ten times slower, when no interface exposes
+that shape. Changing any of the `audio` values takes effect the next time the engine opens; a running
+engine keeps the device it opened.
+
+`input_channel` counts from 1, the way an interface labels its sockets: 1 is the first input. The
+older `AMPHEAD_CAPTURE_DIR`, `AMPHEAD_CAB_DIR`, `AMPHEAD_ENGINE_PYTHON` and `AMPHEAD_LATENCY_MS`
+variables are still honoured and still win, so an install configured before this file keeps working.
+
+An agent can do the hunting. `amphead_settings action="find"` walks Documents, Downloads, Desktop,
+Music and the cloud folders that appear inside them, a few levels down, and lists the folders that
+actually contain `.nam` or `.wav` files with the counts. `amphead_settings action="set"` writes your
+choice and keeps everything else. `amphead_settings action="show"` reports what is set, whether each
+folder still exists, and whether the value came from the file, an environment variable, or the
+built-in default. Read-only unless you say `set`.
+
 ## What this touches
 
 The catalog asks for an explicit disclosure, so this is the whole list, not the flattering part of
@@ -362,6 +414,12 @@ and the record input into its own rig tab as one undo group per action, lowers t
 and saves that tab to its own `.rpp` under the Hermes data folder. It never saves, renames or
 overwrites your song projects, never touches audio files, stores no credentials and makes no
 network calls.
+
+Once the headless engine is in use it reads one settings file (`%APPDATA%\amphead\settings.json`
+and the equivalents above), writes it only when you or your agent call `amphead_settings action=set`,
+and scans the folders named there for `.nam` and `.wav` files. `action="find"` additionally walks
+Documents, Downloads, Desktop, Music and the cloud folders inside them, four levels deep, reading
+file names only; it does not open, copy or change them.
 
 ## Honest limits
 

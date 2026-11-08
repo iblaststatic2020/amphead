@@ -159,5 +159,74 @@ class ChainTest(unittest.TestCase):
         self.assertLess(float(np.max(np.abs(a - b))), 1e-5)
 
 
+class FakeHost:
+    """Just enough of sounddevice to answer the question "which pair would you open?"."""
+
+    WDM = 0
+
+    def __init__(self, devices, default=(5, 6)):
+        self.devices = devices
+        self.default = type("Defaults", (), {"device": default})()
+
+    def query_hostapis(self):
+        return [{"name": "Windows WDM-KS"}, {"name": "MME"}]
+
+    def query_devices(self):
+        return [dict(d, hostapi=d.get("hostapi", self.WDM)) for d in self.devices]
+
+
+def row(name, ins=0, outs=0, hostapi=0):
+    return {"name": name, "max_input_channels": ins, "max_output_channels": outs,
+            "hostapi": hostapi, "default_samplerate": 44100.0}
+
+
+class TestChoosingTheDevice(unittest.TestCase):
+    """The pair is found by shape, not by this plugin knowing one vendor's names."""
+
+    def choose(self, devices, default=(5, 6)):
+        import sys
+        from amphead.engine2 import choose_devices
+        from unittest import mock
+
+        with mock.patch.object(sys, "platform", "win32"):
+            return choose_devices(FakeHost(devices, default))
+
+    def test_the_two_halves_of_one_interface_are_paired_by_their_common_name(self):
+        got = self.choose([
+            row("Speakers (Realtek HD Audio output)", outs=8),
+            row("Line (Focusrite USB Audio Input)", ins=2),
+            row("Speakers (Focusrite USB Audio Output)", outs=2),
+        ])
+        self.assertEqual(got, (1, 2, "wdm-ks"))
+
+    def test_a_virtual_cable_is_never_the_interface(self):
+        got = self.choose([
+            row("Input (VB-Audio Point)", ins=16),
+            row("Output (VB-Audio Point)", outs=16),
+            row("Line (Audio Input)", ins=2),
+            row("Speakers (Audio Output)", outs=2),
+        ])
+        self.assertEqual(got[:2], (2, 3), "the real card is the one without 'virtual' on it")
+
+    def test_an_unnamed_pair_still_opens_something(self):
+        got = self.choose([
+            row("Line (Audio Input)", ins=2),
+            row("Speakers (Audio Output)", outs=2),
+        ])
+        self.assertEqual(got, (0, 1, "wdm-ks"))
+
+    def test_without_kernel_streaming_it_uses_the_system_default_and_says_so(self):
+        got = self.choose([row("Speakers", outs=2, hostapi=1)], default=(3, 4))
+        self.assertEqual(got, (3, 4, "default"))
+
+    def test_a_device_that_cannot_take_two_outputs_is_not_the_output(self):
+        got = self.choose([
+            row("Mono (Some Input)", ins=2),
+            row("Mono (Some Output)", outs=1),
+            row("Stereo (Other Output)", outs=2),
+        ])
+        self.assertEqual(got, (0, 2, "wdm-ks"), "mono output cannot carry a stereo cabinet")
+
+
 if __name__ == "__main__":
     unittest.main()

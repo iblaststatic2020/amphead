@@ -69,6 +69,11 @@ def engine_python(explicit: str | None = None) -> str:
     said = os.environ.get("AMPHEAD_ENGINE_PYTHON")
     if said:
         return said
+    from . import settings
+
+    chosen = str(settings.load().get("engine_python") or "").strip()
+    if chosen and Path(chosen).is_file():
+        return chosen
     root = Path(__file__).resolve().parent.parent
     for relative in ("Scripts/python.exe", "bin/python3", "bin/python"):
         candidate = root / ".engine" / relative

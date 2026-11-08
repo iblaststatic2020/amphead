@@ -85,15 +85,42 @@ def choose_devices(sd) -> tuple[int | None, int | None, str]:
     def hostapi(row) -> str:
         return str(apis[row["hostapi"]]["name"])
 
+    def virtual(name: str) -> bool:
+        """Cables and loopbacks advertise themselves as an interface; they are not one.
+
+        VB-Audio's virtual point, Steam's streaming pair and any "cable" device will open,
+        play nothing into a guitar, and otherwise look exactly like the real card.
+        """
+        low = name.lower()
+        return any(word in low for word in ("vb-audio", "cable", "virtual", "steam streaming",
+                                            "voicemeeter", "loopback"))
+
     kernel = [(i, d) for i, d in enumerate(devices)
-              if "WDM-KS" in hostapi(d)
-              and ("audio input" in d["name"].lower() or "audiobox" in d["name"].lower())]
-    out = [(i, d) for i, d in enumerate(devices)
-           if "WDM-KS" in hostapi(d)
-           and ("audio output" in d["name"].lower() or "audiobox" in d["name"].lower())
-           and d["max_output_channels"] >= 2]
-    if kernel and out:
-        return kernel[0][0], out[0][0], "wdm-ks"
+              if "WDM-KS" in hostapi(d) and not virtual(d["name"])]
+
+    def stem(name: str) -> str:
+        """The interface a kernel endpoint belongs to, with the endpoint word taken out.
+
+        Kernel streaming publishes each direction as its own device ("AudioBox 96 Audio
+        Input", "AudioBox 96 Audio Output"), so the two halves of one interface are found
+        by their common beginning, not by this plugin knowing the vendor.
+        """
+        low = name.lower()
+        if "(" in low and ")" in low:
+            low = low[low.index("(") + 1:low.rindex(")")]
+        for word in ("audio input", "audio output", "input", "output"):
+            low = low.replace(word, " ")
+        return "".join(ch for ch in low if ch.isalnum())
+
+    ins = [(i, d) for i, d in kernel if d["max_input_channels"] >= 1]
+    outs = [(i, d) for i, d in kernel if d["max_output_channels"] >= 2]
+    for i, d in ins:
+        for j, e in outs:
+            shared = stem(d["name"])
+            if i != j and len(shared) >= 3 and shared == stem(e["name"]):
+                return i, j, "wdm-ks"
+    if ins and outs:
+        return ins[0][0], outs[0][0], "wdm-ks"
     return sd.default.device[0], sd.default.device[1], "default"
 
 

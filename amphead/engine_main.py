@@ -18,7 +18,29 @@ import json
 import sys
 import traceback
 
+from . import settings
 from .engine2 import ARM_MASTER_DB, SAFE_MASTER_DB, Engine
+
+
+def engine_from_settings(**over) -> Engine:
+    """An engine built from the settings file, so the pane and the file agree.
+
+    The device pair, the guitar channel, the rate and the block are all choices this
+    machine had to be measured to learn; another machine answers differently. Settings
+    first, keyword arguments last, because the caller who names a value means it.
+    """
+    from . import engine2
+
+    audio = settings.audio()
+    audio.update({k: v for k, v in over.items() if v is not None})
+    engine2.TARGET_LATENCY_MS = float(audio.get("latency_ms") or engine2.TARGET_LATENCY_MS)
+    return Engine(
+        samplerate=int(audio["samplerate"]),
+        blocksize=int(audio["blocksize"]),
+        input_device=audio.get("input_device"),
+        output_device=audio.get("output_device"),
+        input_channel=max(0, int(audio["input_channel"]) - 1),
+    )
 
 
 class Server:
@@ -90,6 +112,10 @@ class Server:
         engine = self.engine
         if engine.running:
             return {"mode": engine.mode, "already": True}
+        if kw.get("latency_ms") is not None:
+            from . import engine2
+
+            engine2.TARGET_LATENCY_MS = float(kw["latency_ms"])
         for key in ("samplerate", "blocksize", "input_device", "output_device"):
             if kw.get(key) is not None:
                 setattr(engine, key, int(kw[key]))
@@ -319,7 +345,7 @@ class Server:
 def serve(stdin=None, stdout=None) -> int:
     stdin = stdin or sys.stdin
     stdout = stdout or sys.stdout
-    server = Server(Engine())
+    server = Server(engine_from_settings())
     for line in stdin:
         line = line.strip()
         if not line:
@@ -344,15 +370,17 @@ def serve(stdin=None, stdout=None) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="AmpHead 2 engine process")
-    parser.add_argument("--samplerate", type=int, default=44100)
-    parser.add_argument("--blocksize", type=int, default=512,
+    # Defaults are None on purpose: unset means "whatever the settings file says",
+    # which is how another machine gets its own rate and block without a flag.
+    parser.add_argument("--samplerate", type=int, default=None)
+    parser.add_argument("--blocksize", type=int, default=None,
                         help="frames per callback (512 is the measured default: same round "
                              "trip as 128 on kernel streaming, less CPU, no starved blocks)")
     parser.add_argument("--input", type=int, default=None)
     parser.add_argument("--output", type=int, default=None)
     args = parser.parse_args(argv)
-    server = Server(Engine(samplerate=args.samplerate, blocksize=args.blocksize,
-                           input_device=args.input, output_device=args.output))
+    server = Server(engine_from_settings(samplerate=args.samplerate, blocksize=args.blocksize,
+                                         input_device=args.input, output_device=args.output))
     for line in sys.stdin:
         line = line.strip()
         if not line:

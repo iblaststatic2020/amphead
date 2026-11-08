@@ -885,6 +885,86 @@ def handle_ab(args: dict[str, Any], **_kw) -> str:
     return snap.sentence() + f"\nnext: amphead_ab action=compare label={snap.label} other=<later>"
 
 
+SETTINGS_SCHEMA = _schema(
+    "amphead_settings",
+    "Read or change the few things AmpHead cannot work out for itself: where the player keeps "
+    ".nam captures and cabinet .wav files, which audio device and guitar channel to open, the "
+    "sample rate, the block size and the latency to ask the driver for. action=show reports the "
+    "settings file, what it says, and whether each folder exists. action=find walks Documents, "
+    "Downloads, Desktop, Music and the cloud folders and lists the folders that actually hold "
+    "captures or cabinets, so the agent can offer a choice instead of asking a player to type a "
+    "path. action=set writes the values and keeps everything else. Read-only unless action=set.",
+    {"action": {"type": "string", "enum": ["show", "find", "set"],
+                "description": "show the settings, find candidate folders, or set values."},
+     "capture_dirs": {"type": "array", "items": {"type": "string"},
+                      "description": "Folders to scan for .nam captures (set)."},
+     "cab_dirs": {"type": "array", "items": {"type": "string"},
+                  "description": "Folders to scan for cabinet .wav files (set)."},
+     "engine_python": {"type": "string",
+                       "description": "Interpreter with numpy and sounddevice (set)."},
+     "audio": {"type": "object",
+               "description": "Audio overrides (set): input_device, output_device, input_channel "
+                              "(counted from 1), samplerate, blocksize, latency_ms.",
+               "additionalProperties": True}},
+)
+
+
+def handle_settings(args: dict[str, Any], **_kw) -> str:
+    """The machine-specific choices: folder roots, the device pair, the channel, the cushion."""
+    from . import library, settings
+
+    action = str(args.get("action") or "show").strip().lower()
+    if action == "find":
+        found = library.find()
+        if not found["candidates"]:
+            return (f"NO LIBRARY FOUND: nothing with captures or cabinets under "
+                    f"{', '.join(Path(p).name for p in found['scanned']) or 'the usual folders'}"
+                    f" | settings={found['settings']}")
+        lines = [f"FOUND {len(found['candidates'])} folders that hold captures or cabinets"]
+        for row in found["candidates"][:12]:
+            lines.append(f"{row['kind']}={row['path']} | captures={row['captures']} | cabs={row['cabs']}")
+        lines.append(f"next: amphead_settings action=set capture_dirs=[...] cab_dirs=[...] | "
+                     f"settings={found['settings']}")
+        return "\n".join(lines)
+
+    if action == "set":
+        patch: dict[str, Any] = {}
+        for key in ("capture_dirs", "cab_dirs"):
+            if key in args:
+                value = args[key]
+                if isinstance(value, str):
+                    value = [v for v in value.split(os.pathsep) if v]
+                patch[key] = [str(v) for v in (value or []) if str(v).strip()]
+        if args.get("engine_python") is not None:
+            patch["engine_python"] = str(args["engine_python"])
+        if isinstance(args.get("audio"), dict):
+            patch["audio"] = args["audio"]
+        if not patch:
+            return "NOTHING TO SET: say capture_dirs, cab_dirs, engine_python or audio"
+        saved = settings.save(patch)
+        changed = ", ".join(sorted(patch))
+        return (f"SAVED {changed} | settings={settings.path()} | "
+                f"captures={len(saved.get('capture_dirs') or [])} folders | "
+                f"cabs={len(saved.get('cab_dirs') or [])} folders")
+
+    # show
+    said = settings.describe()
+    audio = settings.audio()
+    lines = [f"SETTINGS at {said['path']} ({'written' if said['exists'] else 'not written yet'})"]
+    for row in said["settings"]:
+        if row["key"] in ("capture_dirs", "cab_dirs"):
+            for folder in row["value"] or []:
+                state = "exists" if Path(folder).is_dir() else "MISSING"
+                lines.append(f"{row['key']}={folder} | {state} | from={row['from']}")
+            if not row["value"]:
+                lines.append(f"{row['key']}=none set | from={row['from']}")
+        elif row["key"] == "engine_python":
+            lines.append(f"engine_python={row['value'] or 'bundled venv'} | from={row['from']}")
+        else:
+            lines.append("audio=" + " | ".join(f"{k}={v}" for k, v in audio.items()))
+    return "\n".join(lines)
+
+
 def run_call(cmd: str, **kwargs) -> dict:
     """Small indirection so tests can stub the wire without a live host."""
     return RIG.debug_call(cmd, **kwargs)
@@ -903,6 +983,7 @@ TOOLS = (
     ("amphead_build", BUILD_SCHEMA, handle_build, "🏗️"),
     ("amphead_preset", PRESET_SCHEMA, handle_preset, "🎸"),
     ("amphead_ab", AB_SCHEMA, handle_ab, "🔀"),
+    ("amphead_settings", SETTINGS_SCHEMA, handle_settings, "⚙️"),
 )
 
 # ---- the shape the host sees -------------------------------------------------------------
