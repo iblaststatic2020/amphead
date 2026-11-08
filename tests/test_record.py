@@ -103,13 +103,13 @@ class TestTheAmpWritesWhatItPlays(unittest.TestCase):
         self.dir = tempfile.TemporaryDirectory()
         self.addCleanup(self.dir.cleanup)
         self.server = engine_main.Server(engine2.Engine(samplerate=44100, blocksize=128))
+        self.server.engine.update(armed=True, master_db=-6.0)
 
     def test_a_take_between_start_and_stop_lands_as_a_wav(self):
         said = self.server.handle({"cmd": "record_start",
                                    "path": str(Path(self.dir.name) / "one.wav")})
         self.assertTrue(said["ok"])
         self.assertTrue(self.server.handle({"cmd": "record_state"})["result"]["recording"])
-        self.server.engine.update(armed=True, master_db=-6.0)
         for block in _sine(0.4):
             x = np.stack([block, block], axis=1)
             self.server.engine._render(x.reshape(-1), x.shape[0])
@@ -127,6 +127,17 @@ class TestTheAmpWritesWhatItPlays(unittest.TestCase):
         self.assertFalse(second["ok"])
         self.assertIn("already recording", str(second.get("error")))
         self.server.handle({"cmd": "record_stop"})
+
+    def test_a_silent_master_is_refused_rather_than_recorded(self):
+        """A take after a parked master is a wav of nothing, so say the fix instead."""
+        self.server.engine.update(armed=False)
+        said = self.server.handle({"cmd": "record_start"})
+        self.assertFalse(said["ok"])
+        self.assertIn("not live", str(said.get("error")))
+        self.server.engine.update(armed=True, master_db=-60.0)
+        said = self.server.handle({"cmd": "record_start"})
+        self.assertFalse(said["ok"])
+        self.assertIn("master is silent", str(said.get("error")))
 
     def test_a_stop_with_nothing_running_says_so(self):
         said = self.server.handle({"cmd": "record_stop"})

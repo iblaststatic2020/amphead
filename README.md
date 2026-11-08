@@ -192,6 +192,9 @@ amphead_record action=stop                      # close it, report path, length,
 amphead_record action=state                     # is something being written?
 ```
 
+Recording refuses when the amp is not live or the master is at the bottom, because a take after a
+silent master is a wav full of nothing, and a player asking to record deserves the fix, not a file.
+
 The audio callback never touches the disk: a block goes into a queue and a thread of its own writes
 it, so a slow drive costs a counted dropped block instead of a hole in the take, and a full disk ends
 the take with the error in the summary rather than a silently truncated file. Recording is only ever

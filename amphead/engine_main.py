@@ -79,6 +79,13 @@ class Server:
                 target = target / f"{recording.default_name(self.engine.samplerate)}.wav"
         else:
             target = self.recordings_dir() / f"{name or recording.default_name(self.engine.samplerate)}.wav"
+        # A take is recorded after the master, so a master at the bottom writes silence. Refuse
+        # with the fix rather than hand back a wav full of nothing.
+        live = self.status()
+        if not live.get("armed"):
+            raise ValueError("the amp is not live: press GO LIVE, then record")
+        if float(live.get("master_db") or SAFE_MASTER_DB) <= -59.0:
+            raise ValueError("the master is silent, so the take would be: raise the master first")
         said = self.engine.start_take(target)
         said["dir"] = str(target.parent)
         return said
