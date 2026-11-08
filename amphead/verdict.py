@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import Any
 
 PARKED_DB = -59.0  # the floor setup and PANIC park the master at
+ARM_DB = -6.0  # the level arming uses, measured: a -18 dBFS DI peaks at -2.9 dBFS
 FLOOR = 0.001            # -60 dB, the same floor the rig boots and parks at
 LATENCY_LIMIT_MS = 40.0  # beyond this, playing feels late even when the meter is moving
 
@@ -87,7 +88,7 @@ def judge(state: dict, track: dict, reading: dict,
         # so the honest word is off, and the reason names the control that turns it on.
         if str(state.get("engine") or "") == "amphead2":
             return {"verdict": ENGINE_OFF,
-                    "reason": "the local engine is not running: press Setup",
+                    "reason": "the local engine is not running: the switch on the face reads SET UP",
                     "problems": problems}
         word = {
             "no-install": NO_REAPER_INSTALL,
@@ -126,6 +127,17 @@ def judge(state: dict, track: dict, reading: dict,
                 "problems": ["the device reports 0 inputs"]}
 
     if not track.get("armed"):
+        # A started engine is a device that is open and silent. That is a state in its own right,
+        # and the face has to be able to say it: otherwise a player reads "not armed", looks for
+        # the Setup button, and finds GO LIVE instead because Setup has already done its job.
+        if str(state.get("engine") or "") == "amphead2":
+            master = state.get("master_db")
+            where = (f"parked at {float(master):.0f} dB" if master is not None
+                     and float(master) <= PARKED_DB else "on")
+            return {"verdict": STANDBY,
+                    "reason": f"the engine is already open and silent, master {where}: GO LIVE "
+                              f"arms it at the safe {ARM_DB:.0f} dB",
+                    "problems": ["the engine is open but nothing is live"]}
         return {"verdict": STANDBY, "reason": "the track is not armed, flip LIVE to play",
                 "problems": ["the track is not armed"]}
 

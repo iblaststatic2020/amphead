@@ -1,206 +1,157 @@
-// A rig fixture shaped exactly like /state and /meter answer, so the harness exercises the same
-// field names the real routes use. Values come from the saved amphead.rpp reading: NAM Universal
-// on the guitar track, ASIO at 512 / 44100, 11.61 ms out, master parked at -60 dB: the player ramps it up, nothing comes up loud on its own.
+// A rig fixture shaped exactly like /state answers for the local engine, so the harness exercises
+// the same field names the real route uses. The numbers are copied from a real `/state` read
+// (PEAVEY 6506 clean capture into a Vintage 30 4x12 at 44100 / 512, 20.0 ms round trip, master
+// parked at -60 dB), so the face is drawn against a payload it will actually receive.
 //
-// There are two rigs here because there are two faces: `?engine=reaper` is the contest build's rig
-// and `?engine=amphead2` is the local engine. Each keeps its own chain, master and knob values, so
-// a write through one face can never show up in the other. That is the property the parallel is
-// supposed to have, and the harness is where it gets checked without REAPER.
+// `?off=1` answers the way the route answers before Setup has opened a device: running false,
+// ENGINE OFF, nothing loaded. That is the state a player sees on a fresh start, and the one where
+// the face has to offer SET UP rather than GO LIVE.
 
-const KNOBS = () => [
-  { index: 0, name: 'Amplifier Input Gain', value: '20.55 dB', norm: 0.62 },
-  { index: 1, name: 'Amplifier Bass', value: '4.78', norm: 0.48 },
-  { index: 2, name: 'Amplifier Mid', value: '6.04', norm: 0.6 },
-  { index: 3, name: 'Amplifier Treble', value: '8.44', norm: 0.74 },
-  { index: 4, name: 'Amplifier Output Gain', value: '0.00 dB', norm: 0.5 },
-  { index: 5, name: 'Input Gain', value: '-12.68 dB', norm: 0.36 },
-  { index: 6, name: 'Output Gain', value: '0.00 dB', norm: 0.5 },
-  { index: 7, name: 'Gate', value: '-80.0 dB', norm: 0.0 },
-  // The host marks a parameter that reads On or Off, so the harness draws the switch the same way
-  // the pane does rather than only ever showing knobs.
-  { index: 8, name: 'Amplifier Bright', value: 'On', norm: 1, bool: true },
-  { index: 9, name: 'Amplifier Cabinet', value: 'Off', norm: 0, bool: true }
+const CAPTURES = [
+  { path: 'C:\\Users\\Chris\\Documents\\Guitar Amp Sims\\NAM\\Bugera 6262\\Phillipe P Bugera6262-Lead-M77-ESR0,020.nam', name: 'Phillipe P Bugera6262-Lead-M77-ESR0,020', folder: 'Bugera 6262' },
+  { path: 'C:\\Users\\Chris\\Documents\\Guitar Amp Sims\\NAM\\Peavey 6505\\PEAVEY - 6506 - CLEAN - B0 - HIGH - G4.0.nam', name: 'PEAVEY - 6506 - CLEAN - B0 - HIGH - G4.0', folder: 'Peavey 6505' }
 ]
 
-const rigs = {
-  reaper: {
-    verdict: 'READY',
-    reason: 'armed, monitoring, NAM Universal is passing signal',
-    armed: true,
-    master: -60,
-    project: 'amphead.rpp',
-    ui: 'visible',
-    problems: [],
-    chain: [{ name: 'VST3: NAM Universal (Neural Amp Modeler)', enabled: true }],
-    knobs: KNOBS()
-  },
-  // The local engine answers in its own words: it is up, and it has no device open yet. A READY
-  // here would be a lie, and avoiding exactly that lie is why the seam exists.
-  amphead2: {
-    verdict: 'STANDBY',
-    reason: 'the local engine is up, no audio device open yet',
-    armed: false,
-    master: -60,
-    project: 'local engine, no project file',
-    ui: 'hidden',
-    problems: [],
-    chain: [{ name: 'NAM: Twin Reverb (local .nam)', enabled: true }],
-    knobs: KNOBS()
+const CABS = [
+  { path: 'C:\\Users\\Chris\\Documents\\Guitar Amp Sims\\IRs\\Aurora\\AURORA_212_GOV.wav', name: 'AURORA_212_GOV', folder: 'Aurora' },
+  { path: 'C:\\Users\\Chris\\Documents\\Guitar Amp Sims\\IRs\\Celestion\\Vintage 30 4x12 close.wav', name: 'Vintage 30 4x12 close', folder: 'Celestion' }
+]
+
+const off = () => new URLSearchParams(location.search).get('off') === '1'
+
+// One rig, one chain: a capture, the tone stack, a cabinet. Same three stages the engine runs.
+const rig = {
+  running: true,
+  armed: false,
+  master_db: -60,
+  tone: { bass: 0, mid: 0, treble: 0 },
+  capture: 'PEAVEY - 6506 - CLEAN - B0 - HIGH - G4.0',
+  capture_path: CAPTURES[1].path,
+  cab: 'Vintage 30 4x12 close',
+  cab_path: CABS[1].path,
+  stages: [
+    { i: 0, name: 'Capture', enabled: true },
+    { i: 1, name: 'Tone', enabled: true },
+    { i: 2, name: 'Cabinet', enabled: true }
+  ]
+}
+
+const toneName = () => `${rig.capture || 'no capture'} / ${rig.cab || 'no cabinet'}`
+
+export const state = () => {
+  if (off()) {
+    return {
+      ok: true, engine: 'amphead2', verdict: 'ENGINE OFF',
+      reason: 'the local engine is not running: press Setup',
+      project: 'AmpHead 2', ui: 'hidden', running: false, armed: false, monitor: false,
+      master_db: null, demo: false, problems: [], chain: [], knobs: [], tone: null,
+      tone_name: '', capture: '', capture_path: '', cab: '', cab_path: '',
+      samplerate: 0, blocksize: 0, latency_ms: 0, mode: '',
+      device: { driver: '', buffer: '', rate: '', out_ms: 0, closed: true }
+    }
+  }
+  const armed = rig.armed
+  return {
+    ok: true, engine: 'amphead2', demo: false,
+    verdict: armed ? 'READY' : 'STANDBY',
+    reason: armed ? 'armed, monitoring, 20.0 ms round trip' : 'the track is not armed, flip LIVE to play',
+    project: 'AmpHead 2', ui: 'hidden', running: true, armed, monitor: armed,
+    master_db: rig.master_db,
+    // A stage silence switched out is a stage the face must not pretend is playing.
+    problems: rig.stages.some((stage) => !stage.enabled) ? ['a stage is switched out of the path'] : [],
+    chain: rig.stages.map((stage) => ({ name: stage.name, enabled: stage.enabled })),
+    stages: rig.stages, knobs: [], tone: { ...rig.tone },
+    tone_name: toneName(),
+    capture: rig.capture, capture_path: rig.capture_path,
+    cab: rig.cab, cab_path: rig.cab_path,
+    samplerate: 44100, blocksize: 512, latency_ms: 20.0, mode: 'wdm-ks',
+    device: { driver: 'WDM-KS', buffer: 512, rate: 44100, out_ms: 10.0, closed: false }
   }
 }
 
-// ?demo=1 shows the canned rig the way a visitor with no DAW sees it. The switch is held here so
-// the demo button in the face can actually turn it off and back on inside the harness.
-let demoOverride = null
-const demoOn = () => (demoOverride !== null
-  ? demoOverride
-  : new URLSearchParams(location.search).get('demo') === '1')
-
-// A plucked string, roughly: two peaks per second that fall away, so the meter looks like an amp
-// being played rather than a random walk.
-function peak(rig) {
-  if (!rig.armed) return 0
+export const meter = () => {
+  if (off() || !rig.armed) return { l: 0, r: 0, clip: false, live: false }
+  // A plucked string, roughly: so the meter looks like an amp being played, not a random walk.
   const t = Date.now() / 1000
   const pluck = Math.max(0, Math.sin(t * 2.1)) ** 3
-  return Math.min(0.92, 0.03 + pluck * (0.42 + 0.1 * Math.sin(t * 37)))
+  const p = Math.min(0.92, 0.03 + pluck * (0.42 + 0.1 * Math.sin(t * 37)))
+  return { l: p, r: p * 0.93, clip: p > 0.9, live: true }
 }
 
-// Every route may carry `?engine=`. A call without it belongs to the rig the process was started
-// against, which is what the shipped face and the tools do.
-export function split(path) {
-  const [bare, search] = String(path).split('?')
-  const query = new URLSearchParams(search || '')
-  const named = (query.get('engine') || 'reaper').toLowerCase()
-  return { path: bare, query, engine: rigs[named] ? named : 'reaper' }
-}
+export const library = () => ({
+  ok: true,
+  captures: CAPTURES,
+  cabs: CABS,
+  capture: rig.capture_path,
+  cab: rig.cab_path
+})
 
-export const state = (engine) => {
-  const rig = rigs[engine]
-  if (demoOn()) return DEMO_STATE(engine)
-  // ?verdict=RIG%20TAB%20CLOSED lets the harness show a broken rig on demand, so the red states can
-  // be looked at without unplugging anything.
-  const forced = new URLSearchParams(location.search).get('verdict')
-  return {
-    ok: true,
-    demo: false,
-    engine,
-    verdict: forced || rig.verdict,
-    reason: forced
-      ? 'REAPER is in front of a project that is not the rig, so nothing here can be trusted'
-      : rig.reason,
-    armed: rig.armed,
-    master_db: rig.master,
-    project: rig.project,
-    ui: rig.ui,
-    device: { buffer: '512', rate: '44100', out_ms: 11.61, closed: false,
-              driver: 'ASIO AudioBox ASIO Driver' },
-    // Two sockets on this interface, so the socket control is a two-position switch.
-    input: { count: 2, index: 1, name: 'IN 1', norm: 0, track: 1 },
-    problems: forced ? ['the active project is not the rig'] : rig.problems,
-    chain: rig.chain,
-    knobs: rig.knobs,
-    presets: [
-      { key: 'clean', title: 'clean: input 12 dB, bass 3, mid 5, treble 6' },
-      { key: 'crunch', title: 'crunch: input 20 dB, bass 5, mid 6, treble 8' },
-      { key: 'lead', title: 'lead: input 26 dB, bass 6, mid 7, treble 9' }
-    ]
-  }
-}
-
-// The demo rig as the backend sends it: a made-up session, shaped exactly like a real one.
-function DEMO_STATE(engine) {
-  return {
-    ok: true,
-    demo: true,
-    engine,
-    verdict: 'READY',
-    reason: 'armed, monitoring, 11.61 ms out, 1 plugin live',
-    armed: true,
-    master_db: -20,
-    project: 'amphead.rpp (demo rig)',
-    ui: 'hidden',
-    device: { buffer: '512', rate: '44100', out_ms: 11.61, closed: false,
-              driver: 'ASIO AudioBox ASIO Driver' },
-    // Two sockets on this interface, so the socket control is a two-position switch.
-    input: { count: 2, index: 1, name: 'IN 1', norm: 0, track: 1 },
-    problems: [],
-    chain: [{ name: 'VST3i: NAM Universal (Neural Amp Modeler)', enabled: true }],
-    knobs: KNOBS(),
-    presets: [
-      { key: 'crunch', title: 'a mid-forward crunch' },
-      { key: 'clean', title: 'a bright clean' },
-      { key: 'doom', title: 'a doom stack' }
-    ]
-  }
-}
-
-export const meter = (engine) => {
-  const rig = rigs[engine]
-  // A forced broken verdict means no rig, so the meter must read like no rig: zeros, not live.
-  const forced = new URLSearchParams(location.search).get('verdict')
-  if (forced) return { l: 0, r: 0, clip: false, live: false }
-  const p = peak(rig)
-  return { l: p, r: p * (0.9 + Math.random() * 0.1), clip: p > 0.9, live: rig.armed }
-}
-
-// Every call the faces make, tagged with the engine that rode on it. The harness reads this, so a
-// pane that forgets its `?engine=` shows up as a reaper call made by the rebuild.
+// Every call the face makes. The harness reads this: a click that never reaches a route, or one
+// that reaches the wrong one, is visible without the app.
 export const calls = []
 
 export async function rest(path, options) {
-  const body = options && options.body ? options.body : {}
-  const call = split(path)
-  const rig = rigs[call.engine]
-  calls.push(`${call.engine} ${call.path}`)
-  if (call.path === '/state') return state(call.engine)
-  if (call.path === '/meter') return meter(call.engine)
-  if (call.path === '/live') {
-    rig.armed = body.on !== undefined ? !!body.on : !rig.armed
-    rig.master = body.master_db !== undefined ? body.master_db : -60
-    rig.verdict = rig.armed ? 'READY' : 'STANDBY'
-    return { ok: true, engine: call.engine,
-             output: rig.armed ? 'live: armed, monitor on, master still parked at -60 dB' : 'standby: disarmed, master parked' }
+  const [bare, search] = String(path).split('?')
+  const query = new URLSearchParams(search || '')
+  const engine = (query.get('engine') || '').toLowerCase()
+  const body = (options && options.body) || {}
+  calls.push(`${engine || 'no-engine'} ${bare}`)
+
+  if (bare === '/state') return state()
+  if (bare === '/meter') return meter()
+  if (bare === '/library') return library()
+  if (bare === '/setup') {
+    rig.running = true
+    return { ok: true, output: 'engine up: silent until live (master -60 dB)' }
   }
-  if (call.path === '/panic') {
-    if (body.restore) {
-      rig.chain = rig.chain.map((fx) => ({ ...fx, enabled: true }))
-      rig.master = body.master_db !== undefined ? body.master_db : -60
-      return { ok: true, engine: call.engine, output: 'restored: chain un-bypassed, still silent at -60 dB' }
-    }
-    rig.chain = rig.chain.map((fx) => ({ ...fx, enabled: false }))
-    return { ok: true, engine: call.engine, output: 'panicked: chain bypassed, master untouched' }
+  if (bare === '/capture') {
+    const found = CAPTURES.find((row) => row.path === body.path)
+    if (found) { rig.capture = found.name; rig.capture_path = found.path }
+    return { ok: true, output: `capture ${found ? found.name : 'unchanged'}` }
   }
-  // The volume ramp: the only route that makes the rig audible, so the fixture returns the level
-  // the backend would have stored rather than echoing the request.
-  if (call.path === '/master') {
+  if (bare === '/cab') {
+    const found = CABS.find((row) => row.path === body.path)
+    if (found) { rig.cab = found.name; rig.cab_path = found.path }
+    return { ok: true, output: `cabinet ${found ? found.name : 'unchanged'}` }
+  }
+  // The three tone knobs answer in dB, because that is what the engine reports back.
+  if (bare === '/knob') {
+    const sent = String(body.param === undefined ? '' : body.param)
+    // The face sends a knob index; a name works too. Both land on the same three values.
+    const key = /^[0-9]+$/.test(sent) ? ['bass', 'mid', 'treble'][Number(sent)] : sent
+    const db = Math.max(-12, Math.min(12, Number(body.value)))
+    if (key && key in rig.tone) rig.tone[key] = db
+    return { ok: true, norm: body.value, value: db, param_name: key,
+             output: `${key} ${db > 0 ? '+' : ''}${db.toFixed(1)} dB` }
+  }
+  // The ramp: -60 is silent, +12 is the engine's own ceiling (not a DAW's 0).
+  if (bare === '/master') {
     const asked = Number(body.db)
-    const db = Number.isFinite(asked) ? Math.max(-60, Math.min(0, asked)) : (rig.master ?? -60)
-    rig.master = db
-    return { ok: true, engine: call.engine, db,
-             output: db <= -60 ? 'silent; raise it in steps and listen' : `master at ${db} dB; raise it in steps and listen` }
+    const db = Number.isFinite(asked) ? Math.max(-60, Math.min(12, asked)) : rig.master_db
+    rig.master_db = db
+    return { ok: true, db, output: db <= -60 ? 'silent; raise it in steps and listen' : `master at ${db} dB` }
   }
-  if (call.path === '/focus') return { ok: true, engine: call.engine, output: 'brought plugin 1 forward in REAPER' }
-  // The rebuild turns knobs at /knob with a normalized value and reads the plugin's own number back;
-  // the shipped face still posts /tweak. Both are served here, or the harness would only ever
-  // exercise one of the two faces.
-  if (call.path === '/knob' || call.path === '/tweak') {
-    const knob = rig.knobs[body.param]
-    if (knob) {
-      knob.norm = body.value
-      knob.value = `${Number(body.value).toFixed(2)} (turned)`
+  if (bare === '/live') {
+    rig.armed = body.on === undefined ? !rig.armed : !!body.on
+    if (body.master_db !== undefined && rig.armed) rig.master_db = Number(body.master_db)
+    // Arming is the moment a player asks to hear the chain again, so the stages silence closed
+    // come back, exactly as the live route does it.
+    const back = rig.stages.filter((stage) => !stage.enabled).map((stage) => stage.name)
+    if (rig.armed) rig.stages.forEach((stage) => { stage.enabled = true })
+    return { ok: true, on: rig.armed, reengaged: back,
+             output: rig.armed
+               ? `live=True | armed=True | master ${rig.master_db} dB${back.length ? ` | re-engaged=${back.join(', ')}` : ''}`
+               : 'live=False | armed=False | master parked' }
+  }
+  if (bare === '/panic') {
+    if (body.restore) {
+      rig.stages.forEach((stage) => { stage.enabled = true })
+      return { ok: true, output: 'restored: chain back in, still silent' }
     }
-    return { ok: true, engine: call.engine, norm: body.value, value: knob ? knob.value : '?',
-             output: `set ${knob ? knob.name : 'knob'} to ${Number(body.value).toFixed(3)}` }
+    rig.armed = false
+    rig.master_db = -60
+    rig.stages.forEach((stage) => { stage.enabled = false })
+    return { ok: true, output: 'silenced: disarmed, master at -60 dB, stages out of the path' }
   }
-  if (call.path === '/input') {
-    const socket = { count: 2, index: body.input, name: `IN ${body.input}`, norm: body.input - 1, track: 1 }
-    return { ok: true, engine: call.engine, ...socket, output: `track 1 records from ${socket.name}` }
-  }
-  if (call.path === '/preset') return { ok: true, engine: call.engine, output: `applied ${body.query}` }
-  if (call.path === '/demo') {
-    demoOverride = !!body.on
-    return { ok: true, engine: call.engine, demo: demoOverride, on: demoOverride,
-             output: demoOverride ? 'demo rig on: a made-up session, not your hardware' : 'demo rig off: back to REAPER' }
-  }
-  return { ok: false, engine: call.engine, output: `unknown route ${call.path}` }
+  return { ok: false, output: `unknown route ${bare}` }
 }

@@ -2,11 +2,9 @@
 // registered renders dropped into their own columns. Nothing in plugin.js is aware of the harness,
 // so what shows here is what the app shows.
 //
-// There are five things to mount because there are two faces: the original pane and page from the
-// shipped build (ids amp-face / page), and the rebuild's pane and page (amp2-face / page2) plus its
-// status chip. The harness mounts all of them at once on purpose: if the two faces ever collapse
-// onto one backend, both columns would show the same numbers and the split would be visible here
-// before it ships.
+// Three slots, because the face ships three doors: the pane it docks on the right, the page it
+// opens at /amp2, and the status-bar chip. All three read the same routes, so a disagreement
+// between them shows up here before it ships.
 
 import { createRoot } from 'react-dom/client'
 import { createElement } from 'react'
@@ -22,11 +20,9 @@ plugin.register({
 })
 
 const want = {
-  'amp-face': 'pane',
+  face: 'pane',
   page: 'page',
-  'amp2-face': 'pane2',
-  page2: 'page2',
-  'amp2-chip': 'chip'
+  chip: 'chip'
 }
 
 const missing = Object.keys(want).filter((id) => !entries.some((entry) => entry.id === id))
@@ -39,6 +35,6 @@ for (const [id, slot] of Object.entries(want)) {
   createRoot(document.getElementById(slot)).render(createElement(entry.render))
 }
 
-// Read by the screenshot check and by hand in the console: every route both faces called, and the
-// engine each one asked for.
+// Read by the screenshot check and by hand in the console: every route the face called, and the
+// engine it asked for. A row here without `amphead2` is a click that escaped the face.
 window.__amphead = { entries, plugin, calls }

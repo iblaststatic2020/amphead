@@ -409,6 +409,32 @@ def setup_rig(body: dict | None = None) -> dict[str, Any]:
     return {"output": out, "ok": not out.startswith(("NOT", "NO "))}
 
 
+@router.post("/teardown")
+def teardown(body: dict | None = None) -> dict[str, Any]:
+    """Put the engine down, so the face has a way back to SET UP.
+
+    A started engine holds the audio device and stays up until something closes it. Without a
+    control for that the switch could only ever be pressed once: Setup had already done its job,
+    the pane read GO LIVE, and a player looking for Setup found nothing and had no way to ask why.
+    Closing the engine is the same door in reverse, and it is the only honest way to show the
+    first-press state again.
+    """
+    if demo.enabled():
+        return {"output": "the demo face is on", "ok": True}
+    with _speaking_to_tools() as tools:
+        try:
+            alive = bool(tools.RIG.host_alive())
+        except port.RigError:
+            alive = False
+        if not alive:
+            return {"output": f"{tools.RIG.label} is already closed: the switch reads SET UP",
+                    "ok": True}
+        gone = bool(tools.RIG.stop())
+    return {"output": ("engine closed: the switch reads SET UP again" if gone
+                       else "the engine did not stop cleanly: press SET UP to try again"),
+            "ok": gone}
+
+
 @router.get("/library")
 def library() -> dict[str, Any]:
     """The captures and cabinets this machine has, so the pane can offer a menu.

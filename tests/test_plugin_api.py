@@ -624,6 +624,29 @@ class TestTheSecondFaceWritesToItsOwnRig(unittest.TestCase):
         self.assertIs(seen["rig"], engine)
         self.assertIs(self.tools.RIG, self.held)
 
+    def test_teardown_closes_the_engine_so_set_up_comes_back(self):
+        engine = mock.MagicMock()
+        engine.host_alive.return_value = True
+        engine.stop.return_value = True
+        engine.label = "the local engine"
+        with mock.patch.object(API.port, "choose", lambda name=None: engine):
+            API._ENGINE.set("amphead2")
+            payload = API.teardown({})
+        engine.stop.assert_called_once()
+        self.assertTrue(payload["ok"])
+        self.assertIn("SET UP", payload["output"])
+
+    def test_teardown_of_an_already_closed_engine_is_not_an_error(self):
+        engine = mock.MagicMock()
+        engine.host_alive.return_value = False
+        engine.label = "the local engine"
+        with mock.patch.object(API.port, "choose", lambda name=None: engine):
+            API._ENGINE.set("amphead2")
+            payload = API.teardown({})
+        engine.stop.assert_not_called()
+        self.assertTrue(payload["ok"])
+        self.assertIn("SET UP", payload["output"])
+
     def test_panic_under_engine_amphead2_hands_the_handler_the_engine_rig(self):
         engine = object()
         seen = {}

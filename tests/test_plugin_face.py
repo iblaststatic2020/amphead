@@ -114,6 +114,14 @@ class TestSetupIsVisible(unittest.TestCase):
     def test_the_face_says_how_to_start_when_the_engine_is_off(self):
         self.assertIn("press SET UP to open the engine", face())
 
+    def test_an_open_engine_can_be_put_back_down(self):
+        """Setup opens a device and away it stays; without a way down the face can only ever be
+        pressed once. The row says which state the switch is in, in words, and closes it."""
+        source = face()
+        self.assertIn("act('/teardown', {})", source)
+        self.assertIn("engine open · silent", source)
+        self.assertIn("'close engine'", source)
+
 
 class TestToneIsThreeKnobs(unittest.TestCase):
     def setUp(self):

@@ -1,60 +1,54 @@
 <!doctype html>
 <html lang="en">
   <head>
-    <meta charset="utf-8" />
-    <title>AmpHead face preview</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script type="importmap">
-      {
-        "imports": {
-          "react": "https://esm.sh/react@18.3.1",
-          "react-dom/client": "https://esm.sh/react-dom@18.3.1/client",
-          "react/jsx-runtime": "https://esm.sh/react@18.3.1/jsx-runtime",
-          "@hermes/plugin-sdk": "./sdk.js"
-        }
-      }
-    </script>
+    <meta charset="utf-8">
+    <title>AmpHead 2 · face harness</title>
+    <!-- The frame the app gives a pane: the theme tokens, the app font, no page margins. The
+         harness supplies them itself so the face is judged against the same variables. -->
     <style>
       :root {
-        --ui-accent: #7aa2f7;
-        --ui-text-quaternary: #565f89;
-        --ui-text-secondary: #9aa5ce;
-        --ui-stroke-secondary: #2a2f45;
+        --ui-text: #e6e1da;
+        --ui-text-secondary: #a9a29a;
+        --ui-text-quaternary: #6f685f;
+        --ui-stroke-secondary: #2a2521;
+        --ui-accent: #d98b3a;
+        --ui-card: #141110;
       }
-      html, body { margin: 0; background: #0b0a09; color: #f0e2c8; }
-      body { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
-      .frame { border: 1px solid #2a2521; border-radius: 8px; overflow: hidden; background: #12100d; }
-      .label { font: 600 10px/1 ui-monospace, monospace; letter-spacing: 0.16em; text-transform: uppercase; color: #6b6357; margin: 0 0 6px 2px; }
+      body {
+        margin: 0;
+        padding: 16px;
+        background: #0d0b0a;
+        color: var(--ui-text);
+        font-family: -apple-system, 'Segoe UI', system-ui, sans-serif;
+      }
+      .label {
+        margin: 0 0 6px;
+        font-size: 11px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--ui-text-quaternary);
+      }
+      .frame {
+        overflow: hidden;
+        border: 1px solid var(--ui-stroke-secondary);
+        border-radius: 8px;
+        background: var(--ui-card);
+      }
     </style>
   </head>
   <body>
-    <div style="display: flex; gap: 34px; align-items: flex-start; padding: 16px">
+    <div style="display: flex; gap: 34px; align-items: flex-start">
       <section>
-        <p class="label">Amp · the shipped face · REAPER rig</p>
-        <div style="display: flex; gap: 14px; align-items: flex-start">
-          <div>
-            <p class="label">pane · 300px</p>
-            <div class="frame" id="pane" style="width: 300px; height: 860px"></div>
-          </div>
-          <div>
-            <p class="label">page · 420px</p>
-            <div class="frame" id="page" style="width: 420px; height: 860px"></div>
-          </div>
-        </div>
+        <p class="label">pane · 300px (docked right)</p>
+        <div class="frame" id="pane" style="width: 300px; height: 900px"></div>
       </section>
       <section>
-        <p class="label">Amp 2 · the rebuild · local engine</p>
-        <div style="display: flex; gap: 14px; align-items: flex-start">
-          <div>
-            <p class="label">pane · 300px &nbsp;·&nbsp; chip</p>
-            <div class="frame" id="pane2" style="width: 300px; height: 860px"></div>
-            <div id="chip" style="display: inline-flex; align-items: center; height: 22px; margin-top: 8px; padding: 0 6px; border: 1px solid #2a2521; border-radius: 5px; background: #12100d"></div>
-          </div>
-          <div>
-            <p class="label">page · 420px</p>
-            <div class="frame" id="page2" style="width: 420px; height: 860px"></div>
-          </div>
-        </div>
+        <p class="label">page · 420px (/amp2)</p>
+        <div class="frame" id="page" style="width: 420px; height: 900px"></div>
+      </section>
+      <section>
+        <p class="label">status bar chip</p>
+        <div id="chip" style="display: inline-flex; align-items: center; height: 22px; padding: 0 6px; border: 1px solid var(--ui-stroke-secondary); border-radius: 5px; background: var(--ui-card)"></div>
       </section>
     </div>
     <script type="module" src="./main.js"></script>

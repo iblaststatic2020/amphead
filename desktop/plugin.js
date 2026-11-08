@@ -597,6 +597,37 @@ function AmpFace({ rest }) {
             ]
           }),
 
+          // ---- the engine is up: say so in words, and give the way back down ----
+          // Setup opens the device and away it stays. Without this row the switch could only be
+          // pressed once: the pane read GO LIVE for ever and a player looking for SET UP found a
+          // face that seemed to have forgotten the control it started with.
+          running
+            ? jsxs('div', {
+              className: 'flex items-center justify-between gap-2 rounded-md px-2 py-1',
+              style: {
+                background: 'color-mix(in srgb, var(--ui-text-primary) 4%, transparent)',
+                border: '1px solid var(--ui-stroke-secondary)'
+              },
+              children: [
+                jsx('span', {
+                  className: 'text-[0.5rem] uppercase leading-none tracking-[0.1em]',
+                  style: MUTED,
+                  children: armed
+                    ? 'engine open · live'
+                    : `engine open · silent · master ${s.master_db === null || s.master_db === undefined ? '-' : Number(s.master_db).toFixed(0)} dB`
+                }),
+                jsx('button', {
+                  type: 'button',
+                  disabled: busy,
+                  onClick: () => act('/teardown', {}),
+                  className: 'shrink-0 text-[0.5rem] uppercase leading-none tracking-[0.1em] underline-offset-2 hover:underline',
+                  style: { color: SECOND.color, cursor: busy ? 'default' : 'pointer' },
+                  children: 'close engine'
+                })
+              ]
+            })
+            : null,
+
           // ---- what is loaded, in the player's words ----
           jsxs('div', {
             style: { ...PLATE, padding: '7px 9px' },
