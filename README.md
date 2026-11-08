@@ -35,6 +35,21 @@ sit down, say "set up my crunch tone", and Hermes is the amp. Nothing else needs
 - Has a dead man's switch. `amphead_panic` parks the master, disarms and bypasses every stage, then
   proves the input is still arriving while nothing reaches the speakers.
 
+## Install
+
+```
+hermes plugins install iblaststatic2020/amphead --enable
+```
+
+Accept the dependency prompt if Hermes asks: numpy and sounddevice come with the plugin, and the
+engine runs in the interpreter Hermes installed them into. There is no second Python to set up, no
+bootstrap script and no path to type.
+
+It needs Hermes 0.22.0 or newer and Python 3.12 or newer, because the plugin runs on the interpreter
+Hermes builds for itself. After the restart the installer asks for, open the AmpHead pane, press
+SET UP, and pick a `.nam` capture and a `.wav` cabinet. `amphead_setup` says which piece is missing
+rather than failing quietly.
+
 ## The amp face
 
 `desktop/plugin.js` is the pane, drawn as an amp head: a chicken-head switch, the tone plate with the
@@ -296,14 +311,10 @@ tests/                   unit tests, no interface and no captures required
 ## Development
 
 ```
-.engine/Scripts/python -m unittest discover -s tests -q
+python -m unittest discover -s tests -q
 hermes plugins validate .
 ```
 
-Both interpreters get through the suite: the engine interpreter runs the DSP and device tests, the
-plugin interpreter runs the dashboard tests, and each skips the handful of tests that need what the
-other one has.
-
-Install it into Hermes with `hermes plugins install iblaststatic2020/amphead --enable` and accept the
-Python dependency prompt: numpy and sounddevice come with the plugin in one step, and the engine runs
-in the interpreter Hermes installed them into.
+Run the suite with an interpreter that has numpy and sounddevice: Hermes's own, or a venv you make
+with `pip install numpy==2.5.4 sounddevice==0.5.6`. Without them the audio tests skip instead of
+failing, so a thin interpreter gives a green run that proves less than it looks.

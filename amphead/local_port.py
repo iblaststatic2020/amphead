@@ -125,9 +125,10 @@ class EngineClient:
     def check_env(self) -> None:
         """Ask the engine's interpreter whether it can host the engine.
 
-        The import has to happen over there. Hermes runs the plugin in its own Python,
-        which has neither numpy nor PortAudio, so testing this process would refuse a
-        perfectly good engine venv and tell the player to install what they already have.
+        The import has to happen over there, in the interpreter that would run the engine.
+        Usually that is the same Python that runs the plugin, but a dev checkout or an
+        AMPHEAD_ENGINE_PYTHON override can point somewhere else, and asking the wrong one
+        turns a working setup into a false refusal.
         """
         try:
             probe = subprocess.run(

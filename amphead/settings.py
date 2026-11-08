@@ -36,7 +36,7 @@ DEFAULTS: dict[str, Any] = {
     # usual folders", which library.py knows how to find.
     "capture_dirs": [],
     "cab_dirs": [],
-    # Interpreter with numpy and sounddevice, if it is not the bundled engine venv.
+    # Interpreter with numpy and sounddevice, when it is not the one running the plugin.
     "engine_python": "",
     # Noise gate threshold in dBFS in front of the amp. -80 is off, which is the default:
     # a gate that arrives switched on is a gate that eats a quiet riff on the first take.
