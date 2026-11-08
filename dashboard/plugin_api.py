@@ -144,13 +144,17 @@ def state() -> dict[str, Any]:
         live = RIG.state()
     except port.NoRig:
         return {"verdict": verdict.ENGINE_OFF,
+                "state": verdict.ENGINE_OFF,
                 "reason": "the engine is not running: the switch reads SET UP",
+                "next": "press SET UP",
+                "health": "ok", "activity": "idle", "notice": "",
                 "running": False, "armed": False, "chain": [], "knobs": [],
                 "device": {"closed": True}, "meter": {"peak": 0.0}, "presets": [],
                 "capture": "", "cab": "", "tone": {}, "tone_name": "",
                 "aim": lastchain.load().get("aim") or "",
                 "aim_confidence": lastchain.load().get("aim_confidence") or "",
                 "take": _saved_take()}
+
 
     peak, clip = 0.0, False
     master = live.get("master_db")
@@ -174,8 +178,14 @@ def state() -> dict[str, Any]:
 
     return {
         "verdict": judged["verdict"],
+        "state": judged["state"],
         "reason": judged["reason"],
+        "next": judged["next"],
+        "health": judged["health"],
+        "activity": judged["activity"],
+        "notice": judged["notice"],
         "problems": judged["problems"],
+        "stage_state": judged["stages"],
         "running": bool(live.get("open")),
         "armed": bool(live.get("armed")),
         "monitor": bool(live.get("armed")),
@@ -208,6 +218,11 @@ def state() -> dict[str, Any]:
         "block_ms": live.get("block_ms"),
         "round_trip_ms": live.get("round_trip_ms"),
         "mode": live.get("mode"),
+        "rate_mismatch": live.get("rate_mismatch"),
+        "callback_errors": live.get("callback_errors"),
+        "late": live.get("late"),
+        "underflows": live.get("underflows"),
+        "overflows": live.get("overflows"),
         "meter": {"peak": peak, "clip": clip},
         "demo": False,
     }

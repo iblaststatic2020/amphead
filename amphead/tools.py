@@ -197,16 +197,37 @@ def handle_status(args: dict[str, Any], **_kw) -> str:
     try:
         state = RIG.state()
     except port.NoRig:
-        return f"{_host()} NOT RUNNING: call amphead_setup to open it"
+        return f"{_host()} NOT RUNNING | state=ENGINE OFF | next=press SET UP | call amphead_setup"
     if not state.get("open"):
-        return f"{_host()} NOT RUNNING | call amphead_setup"
+        return f"{_host()} NOT RUNNING | state=ENGINE OFF | next=press SET UP | call amphead_setup"
     device = state.get("device") or {}
+    reading: dict = {"l": 0.0, "r": 0.0, "clip": False}
+    chain: list[dict] | None = None
+    if state.get("open"):
+        try:
+            sample = RIG.meter(track=1)
+            reading = {"l": float(sample.get("l") or 0.0),
+                       "r": float(sample.get("r") or 0.0),
+                       "clip": bool(sample.get("clip"))}
+        except port.RigError:
+            pass
+        try:
+            chain = _chain()
+        except port.RigError:
+            chain = None
+    judged = verdict.judge(state, reading, chain)
     fields: list[tuple[str, Any]] = [
+        ("state", judged["state"]),
+        ("next", judged["next"]),
+        ("health", judged["health"]),
+        ("activity", judged["activity"]),
         ("open", True),
         ("armed", bool(state.get("armed"))),
         ("capture", state.get("capture") or "none"),
         ("cab", state.get("cab") or "none"),
     ]
+    if judged["notice"]:
+        fields.insert(1, ("notice", judged["notice"]))
     tone = state.get("tone") or {}
     fields += [(k, round(float(tone.get(k) or 0.0), 2)) for k in ("bass", "mid", "treble")]
     fields += [
@@ -477,9 +498,13 @@ def handle_ready(args: dict[str, Any], **_kw) -> str:
 
     out = verdict.judge(state, reading, chain)
     fields: list[tuple[str, Any]] = [
-        ("verdict", out["verdict"]), ("reason", out["reason"]),
+        ("verdict", out["verdict"]), ("state", out["state"]),
+        ("reason", out["reason"]), ("next", out["next"]),
+        ("activity", out["activity"]), ("health", out["health"]),
         ("problems", "; ".join(out["problems"]) or "none"),
     ]
+    if out["notice"]:
+        fields.append(("notice", out["notice"]))
     if state.get("open"):
         fields += [("armed", bool(state.get("armed"))),
                    ("chain", len(chain)),

@@ -50,6 +50,7 @@ const VERDICT_COLOR = {
   'NO INPUT': 'var(--ui-accent)',
   'NO CHAIN': 'var(--ui-accent)',
   CLIPPING: '#e5533d',
+  GLITCH: '#e5533d',
   'DEVICE CLOSED': '#e5533d',
   'DEVICE UNPLUGGED': '#e5533d',
   'ENGINE OFF': 'var(--ui-text-quaternary)',
@@ -70,6 +71,7 @@ const CHIP_WORD = {
   'NO CHAIN': 'no chain',
   'NO SIGNAL': 'no signal',
   CLIPPING: 'clipping',
+  GLITCH: 'glitching',
   'REOPENED DEVICE': 'device reopened',
   CONNECTING: 'connecting'
 }
@@ -1061,6 +1063,12 @@ function AmpFace({ rest }) {
   const aimColor = aimConfidence === 'exact'
     ? 'var(--ui-accent)'
     : aimConfidence === 'family' ? SECOND.color : MUTED.color
+  // A capture trained at one rate and played at another is not silence: it is the wrong tone,
+  // and the fix lives in the interface's own panel. Say it where the capture is named.
+  const mismatch = s.rate_mismatch || null
+  const mismatchText = s.notice || (mismatch && mismatch.capture_hz && mismatch.stream_hz
+    ? `${mismatch.capture_hz / 1000} kHz capture in a ${mismatch.stream_hz / 1000} kHz engine`
+    : '')
   const files = library.data || {}
   // A take is the one thing here that leaves the amp as a file, so the face says where it went
   // and how long it is, in place. No tooltip: a player watching the light needs the sentence.
@@ -1142,7 +1150,16 @@ function AmpFace({ rest }) {
                     className: 'mt-0.5 truncate text-[0.5rem] leading-tight',
                     style: { color: VERDICT_COLOR[verdict] || SECOND.color },
                     children: `${verdict}${s.reason ? ` · ${s.reason}` : ''}`
-                  })
+                  }),
+                  // The diagnosis is the reason; this is the control. One imperative, on the
+                  // face, so the player never has to translate "master parked" into a gesture.
+                  s.next && verdict !== 'READY' && verdict !== 'CONNECTING'
+                    ? jsx('div', {
+                      className: 'mt-0.5 truncate text-[0.5rem] uppercase leading-tight tracking-[0.14em]',
+                      style: { color: 'var(--ui-text-quaternary)' },
+                      children: `next · ${s.next}`
+                    })
+                    : null
                 ]
               }),
               jsx(PowerButton, {
@@ -1262,6 +1279,24 @@ function AmpFace({ rest }) {
                       className: 'truncate text-[0.5rem] leading-tight',
                       style: MUTED,
                       children: s.aim
+                    })
+                  ]
+                })
+                : null,
+              mismatchText
+                ? jsxs('div', {
+                  className: 'mt-1 flex items-baseline gap-1.5 border-t pt-1',
+                  style: { borderColor: 'var(--ui-stroke-secondary)' },
+                  children: [
+                    jsx('span', {
+                      className: 'shrink-0 text-[0.4375rem] font-bold uppercase leading-none tracking-[0.12em]',
+                      style: { color: '#e5533d' },
+                      children: 'rate'
+                    }),
+                    jsx('span', {
+                      className: 'truncate text-[0.5rem] leading-tight',
+                      style: MUTED,
+                      children: mismatchText
                     })
                   ]
                 })

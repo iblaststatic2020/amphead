@@ -43,6 +43,11 @@ class FakeRig:
                 "device": {"closed": self.closed, "inputs": 2, "mode": "wdm-ks",
                            "buffer": "512", "rate": "44100", "latency_out_ms": 5.1},
                 "latency_ms": 10.2, "samplerate": 44100, "blocksize": 512,
+                "rate_mismatch": getattr(self, "rate_mismatch", None),
+                "callback_errors": getattr(self, "callback_errors", 0),
+                "late": getattr(self, "late", 0),
+                "underflows": getattr(self, "underflows", 0),
+                "overflows": getattr(self, "overflows", 0),
                 "stages": {"capture": True, "tone": True, "cab": True}}
 
     def meter(self, track=1):
@@ -187,8 +192,24 @@ class StateTest(ApiTest):
         self.rig.open = False
         got = self.state()
         self.assertEqual(got["verdict"], plugin_api.verdict.ENGINE_OFF)
+        self.assertEqual(got["state"], plugin_api.verdict.ENGINE_OFF)
+        self.assertEqual(got["next"], "press SET UP")
         self.assertFalse(got["running"])
         self.assertEqual(got["chain"], [])
+
+    def test_the_page_says_the_activity_and_the_health_not_just_a_word(self):
+        got = self.state()
+        self.assertEqual(got["activity"], "idle")
+        self.assertEqual(got["health"], "ok")
+        self.assertEqual(got["next"], "press GO LIVE")
+
+    def test_a_rate_mismatch_reaches_the_face_as_a_notice(self):
+        self.rig.armed = True
+        self.rig.rate_mismatch = {"capture_hz": 48000, "stream_hz": 44100}
+        got = self.state()
+        self.assertEqual(got["health"], "warn")
+        self.assertIn("48 kHz", got["notice"])
+        self.assertEqual(got["verdict"], plugin_api.verdict.READY)
 
 
 class SwitchTest(ApiTest):

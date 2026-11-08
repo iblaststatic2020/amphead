@@ -635,6 +635,15 @@ class AmpHead2Rig:
             "block_ms": got.get("block_ms"),
             "round_trip_ms": got.get("round_trip_ms"),
             "mode": got.get("mode"),
+            # The judge has rules for these, but this adapter used to drop them on the floor, so
+            # the pane could only ever say READY over a glitching stream. Pass them through
+            # exactly as reported; None means the engine did not say.
+            "rate_mismatch": got.get("rate_mismatch"),
+            "callback_errors": got.get("callback_errors"),
+            "late": got.get("late"),
+            "underflows": got.get("underflows"),
+            "overflows": got.get("overflows"),
+            "input_device": got.get("input_device"),
         }
 
     def host_alive(self) -> bool:

@@ -353,3 +353,17 @@ class TestTheTakeCanBeHeardAgain(unittest.TestCase):
 
     def test_the_saved_row_only_appears_for_a_take_that_exists(self):
         self.assertIn("const saved = !recording && !!take.path", face())
+
+
+class TestTheFaceExplainsItsOwnState(unittest.TestCase):
+    """A word and a reason are a diagnosis; the next line is the control. Both are on the face."""
+
+    def test_the_next_action_is_printed_when_the_amp_is_not_ready(self):
+        source = face()
+        self.assertIn("s.next && verdict !== 'READY'", source)
+        self.assertIn("next · ${s.next}", source)
+
+    def test_a_rate_mismatch_is_said_where_the_tone_is_named(self):
+        source = face()
+        self.assertIn("const mismatch = s.rate_mismatch", source)
+        self.assertIn("children: mismatchText", source)
