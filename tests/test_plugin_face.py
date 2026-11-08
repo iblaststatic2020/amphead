@@ -308,3 +308,23 @@ class TestTheRigsAreOnTheFace(unittest.TestCase):
 
     def test_an_empty_shelf_says_what_to_do_rather_than_nothing(self):
         self.assertIn("none yet: dial a sound in and name it", face())
+
+
+class TestTheTakeIsOnTheFace(unittest.TestCase):
+    """Recording is one press with a light, and the strip says where the take went without a tooltip."""
+
+    def test_the_rec_button_posts_the_record_route_both_ways(self):
+        source = face()
+        self.assertIn("act('/record', { on: !recording })", source)
+
+    def test_the_strip_says_what_the_press_writes(self):
+        self.assertIn("rec writes what you hear to a wav", face())
+
+    def test_a_running_take_shows_its_clock_and_the_claim_about_the_file(self):
+        source = face()
+        self.assertIn("`recording ${clock(take.seconds)}", source)
+        self.assertIn("what you hear is what is written", source)
+
+    def test_the_strip_only_offers_rec_when_the_engine_is_open(self):
+        source = face()
+        self.assertIn("disabled: busy || !running", source)

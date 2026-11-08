@@ -404,6 +404,19 @@ class AmpHead2Rig:
         """
         return {"db": self._call(cmd="gate", db=float(db)).get("gate_db")}
 
+    # recording --------------------------------------------------------------
+    def start_take(self, path: str | None = None, name: str | None = None, **kw: Any) -> dict:
+        """Record what the amp is making, to a wav. What you hear is what lands in the file."""
+        return self._call(cmd="record_start", path=path or None, name=name or None)
+
+    def stop_take(self, **kw: Any) -> dict:
+        return self._call(cmd="record_stop")
+
+    def take_state(self) -> dict:
+        if not self.client.running:
+            return {"recording": False}
+        return self._call(cmd="record_state")
+
     def tune(self, **kw: Any) -> dict:
         """Measure this chain and reopen the amp on the quickest block size that holds."""
         return self._call(cmd="tune")
@@ -507,6 +520,7 @@ class AmpHead2Rig:
             "armed": bool(got.get("armed")),
             "master_db": got.get("master_db"),
             "parked_by_idle": bool(got.get("parked_by_idle")),
+            "take": got.get("take") or {"recording": False},
             "device": {
                 "buffer": got.get("blocksize"),
                 "rate": got.get("samplerate"),

@@ -13,7 +13,7 @@ so it can be tested without an audio device, an engine, or a pane.
 | Answer shape | `amphead/answers.py`, `amphead/faults.py` | Turning a handler's one-line answer into the host's JSON, and turning a failed load into the next step |
 | Wire | `amphead/local_port.py`, `amphead/port.py` | The phone line to the engine, and the vocabulary both ends share |
 | Process | `amphead/engine_main.py` | The engine process: start, stop, commands, status |
-| Engine | `amphead/engine2.py`, `amphead/park.py` | The audio device, the blocks, the chain state, the counters, and the timer that parks a master nobody is playing |
+| Engine | `amphead/engine2.py`, `amphead/park.py`, `amphead/record.py` | The audio device, the blocks, the chain state, the counters, and the timer that parks a master nobody is playing |
 | Measurement | `amphead/tune.py`, `amphead/analyse.py` | What the rig does when asked to prove it (soak, latency, spectrum) |
 | Rig facts | `amphead/library.py`, `amphead/settings.py`, `amphead/lastchain.py`, `amphead/target.py`, `amphead/verdict.py` | Files on disk, the settings file, what was last played, which capture a word means, how to describe the rig's state |
 | DSP | `amphead/nam.py`, `amphead/cab.py`, `amphead/tone.py`, `amphead/gate.py` | Sample math only: captures, cabinets, tone stack, gate |
@@ -45,6 +45,10 @@ These are now built, kept here as the worked examples of the rule:
 * **Auto-park**: `amphead/park.py` is a pure timer over the input peak, and `engine2.py` acts on
   it by parking the master and leaving the chain armed. The verdict says `PARKED`, which is a
   different sentence from `STANDBY` because the fix is different.
+* **Takes**: `amphead/record.py` takes blocks and writes a wav, and knows nothing about where
+  the blocks came from; `engine2.py` hands it the same block it sends to the device, so what is
+  recorded is what is heard. The callback queues and a thread writes, because a disk must never
+  be able to stall audio. Nothing here uploads: the file is the handoff.
 * **Better errors**: `amphead/faults.py` turns the exceptions the loaders actually raise into
   one sentence with the next step, attached in the engine's dispatch so the tool, the pane and
   the rig report all get it without knowing the module exists.

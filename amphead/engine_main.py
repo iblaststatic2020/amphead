@@ -17,8 +17,10 @@ import argparse
 import json
 import sys
 import traceback
+from pathlib import Path
 
 from . import faults
+from . import record as recording
 from . import settings
 from . import tune
 from .engine2 import ARM_MASTER_DB, SAFE_MASTER_DB, Engine
@@ -64,6 +66,29 @@ class Server:
         self.tone = {"bass": 0.0, "mid": 0.0, "treble": 0.0}
 
     # every verb returns plain json ----------------------------------------
+    # recording --------------------------------------------------------------
+    def recordings_dir(self) -> Path:
+        """Beside the settings file, so the player already knows where it is."""
+        return settings.path().parent / "recordings"
+
+    def record_start(self, path: str | None = None, name: str | None = None) -> dict:
+        """Open a take on the amp's output. The name defaults to when the player pressed record."""
+        if path:
+            target = Path(path)
+            if target.is_dir():
+                target = target / f"{recording.default_name(self.engine.samplerate)}.wav"
+        else:
+            target = self.recordings_dir() / f"{name or recording.default_name(self.engine.samplerate)}.wav"
+        said = self.engine.start_take(target)
+        said["dir"] = str(target.parent)
+        return said
+
+    def record_stop(self) -> dict:
+        return self.engine.stop_take()
+
+    def take_state(self) -> dict:
+        return self.engine.take_state()
+
     def status(self) -> dict:
         meter = self.engine.meter
         chain = self.engine.chain
@@ -93,6 +118,7 @@ class Server:
             # Distinguishes "the player parked it" from "the amp parked itself": the verdict
             # says which, because the fix is different (raise the master vs press GO LIVE).
             "parked_by_idle": self.engine.parked_by_idle,
+            "take": self.engine.take_state(),
             "input_gain_db": chain.input_gain_db,
             "output_gain_db": chain.output_gain_db,
             "gate_db": chain.gate_db,
@@ -480,6 +506,9 @@ class Server:
         "meter": "meter",
         "render": "render",
         "tune": "tune",
+        "record_start": "record_start",
+        "record_stop": "record_stop",
+        "record_state": "take_state",
     }
 
     def handle(self, request: dict) -> dict:

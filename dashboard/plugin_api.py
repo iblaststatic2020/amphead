@@ -12,6 +12,7 @@ then costs one worker thread instead of stalling the event loop the whole deskto
 
 from __future__ import annotations
 
+import datetime
 import math
 import sys
 from contextlib import contextmanager
@@ -363,6 +364,40 @@ def gate(body: dict) -> dict[str, Any]:
     landed = wrote.get("db")
     word = "off" if limits.gate_off(landed) else f"{float(landed):.0f} dB"
     return {"output": f"gate {word}", "ok": True, "db": landed}
+
+
+@router.post("/record")
+def record(body: dict) -> dict[str, Any]:
+    """Start or stop a take of what the amp is making.
+
+    Recording what you hear, not what the chain is doing before the master, so the file and the
+    room agree. A second press stops it and says how long the take ran.
+    """
+    on = body.get("on", body.get("recording"))
+    if on is None:
+        live = RIG.take_state() if hasattr(RIG, "take_state") else {"recording": False}
+        return {"output": f"recording {datetime.timedelta(seconds=int(live.get('seconds') or 0))}"
+                          if live.get("recording") else "not recording",
+                "ok": True, "take": live}
+    if not on:
+        try:
+            said = RIG.stop_take()
+        except port.NoRig:
+            return {"output": "NOT SET: the engine is not running", "ok": False}
+        except (port.RigError, ValueError) as exc:
+            return {"output": f"NOT SAVED: {exc}", "ok": False}
+        seconds = float(said.get("seconds") or 0.0)
+        where = said.get("path") or ""
+        if seconds <= 0.0:
+            return {"output": f"saved an empty take to {where}", "ok": True, "take": said}
+        return {"output": f"saved {seconds:.0f}s to {where}", "ok": True, "take": said}
+    try:
+        said = RIG.start_take(name=body.get("name") or None)
+    except port.NoRig:
+        return {"output": "NOT SET: the engine is not running", "ok": False}
+    except (port.RigError, ValueError) as exc:
+        return {"output": f"NOT RECORDING: {exc}", "ok": False}
+    return {"output": f"recording to {said.get('path')}", "ok": True, "take": said}
 
 
 @router.post("/tune")

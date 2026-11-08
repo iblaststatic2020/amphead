@@ -791,6 +791,19 @@ function AmpFace({ rest }) {
     ? 'var(--ui-accent)'
     : aimConfidence === 'family' ? SECOND.color : MUTED.color
   const files = library.data || {}
+  // A take is the one thing here that leaves the amp as a file, so the face says where it went
+  // and how long it is, in place. No tooltip: a player watching the light needs the sentence.
+  const take = s.take || {}
+  const recording = !!take.recording
+  const clock = (secs) => {
+    const whole = Math.max(0, Math.round(Number(secs) || 0))
+    return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, '0')}`
+  }
+  const takeLine = recording
+    ? `recording ${clock(take.seconds)} · what you hear is what is written`
+    : take.path
+      ? `last take ${clock(take.seconds)} saved`
+      : 'rec writes what you hear to a wav' 
 
   async function act(path, body) {
     setBusy(true)
@@ -1076,6 +1089,40 @@ function AmpFace({ rest }) {
                 children: running
                   ? 'in drives the amp · out balances the cab · master is the room · drag, shift for fine'
                   : 'the engine is off: set up before the knobs answer'
+              })
+            ]
+          }),
+
+          // ---- the take, right under the knobs ----
+          jsxs('div', {
+            className: 'flex items-center gap-2 rounded-md px-2 py-1.5',
+            style: { ...WELL },
+            children: [
+              jsxs('button', {
+                type: 'button',
+                key: 'rec',
+                disabled: busy || !running,
+                onClick: () => act('/record', { on: !recording }),
+                className: 'flex shrink-0 items-center gap-1.5 rounded px-2 py-1 text-[0.5625rem] font-bold uppercase tracking-[0.1em]',
+                style: {
+                  color: recording ? '#fff' : 'var(--ui-text-secondary)',
+                  background: recording ? '#e5533d' : 'var(--ui-bg-quaternary)',
+                  border: '1px solid var(--ui-stroke-secondary)',
+                  opacity: running ? 1 : 0.4,
+                  cursor: running && !busy ? 'pointer' : 'default'
+                },
+                children: [
+                  jsx('span', {
+                    className: 'inline-block h-1.5 w-1.5 rounded-full',
+                    style: { background: recording ? '#fff' : '#e5533d' }
+                  }),
+                  jsx('span', { children: recording ? 'stop' : 'rec' })
+                ]
+              }),
+              jsx('span', {
+                className: 'min-w-0 flex-1 truncate text-[0.5rem] leading-tight',
+                style: recording ? SECOND : MUTED,
+                children: takeLine
               })
             ]
           }),

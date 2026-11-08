@@ -32,6 +32,7 @@ from dataclasses import dataclass, field, replace
 from .gate import FLOOR_DB as GATE_FLOOR_DB, Gate
 from .limits import SILENT_DB
 from .park import AutoPark
+from .record import Take
 from .limits import master as clamp_master, gate as clamp_gate, trim as clamp_trim
 
 #: Where the master sits when the chain is disarmed. Quiet enough to be harmless,
@@ -238,8 +239,35 @@ class Engine:
         # master, so an interface left live overnight is not still listening to the room.
         self._park = AutoPark()
         self._parked_by_idle = False
+        # The take in progress, if any. A block is queued and a writer thread does the disk work,
+        # so a slow drive costs a counted dropped block rather than a hole in the audio.
+        self._take: Take | None = None
 
     # state -----------------------------------------------------------------
+    # recording --------------------------------------------------------------
+    def start_take(self, path, channels: int = 2) -> dict:
+        """Start writing the amp's output to a wav. Refuses rather than stacking takes."""
+        with self._lock:
+            if self._take is not None:
+                raise ValueError(f"a take is already recording to {self._take.path}")
+            take = Take(path, self.samplerate, channels=channels).open()
+            self._take = take
+            # Pressing record is the player reaching for the amp, so the silence is over.
+            self._park.reset()
+            self._parked_by_idle = False
+        return take.state()
+
+    def stop_take(self) -> dict:
+        with self._lock:
+            take, self._take = self._take, None
+        if take is None:
+            raise ValueError("nothing is recording")
+        return take.stop()
+
+    def take_state(self) -> dict:
+        take = self._take
+        return take.state() if take is not None else {"recording": False}
+
     @property
     def parked_by_idle(self) -> bool:
         """True when the amp parked its own master because nobody has played for a while."""
@@ -419,6 +447,9 @@ class Engine:
         raise RuntimeError(self._last_error)
 
     def stop(self) -> None:
+        take, self._take = self._take, None
+        if take is not None:
+            take.stop()
         for stream in (self._duplex, self._in_stream, self._out_stream):
             if stream is not None:
                 try:
@@ -529,6 +560,9 @@ class Engine:
         self._meter.rms_out = float(np.sqrt(np.mean(np.square(y)))) if y.size else 0.0
         if self._capturing:
             self._capture.append(y.copy())
+        take = self._take
+        if take is not None:
+            take.push(y)                              # queued, never written in the callback
         return y
 
     def _on_duplex(self, indata, outdata, frames, time_info, status) -> None:

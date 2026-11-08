@@ -636,6 +636,22 @@ AIM_SCHEMA = _schema(
 )
 
 
+RECORD_SCHEMA = _schema(
+    "amphead_record",
+    "Record what the amp is making to a wav, and stop when the riff is done. action=start opens a "
+    "take (what you hear is what is written; the file lands in the recordings folder beside the "
+    "settings, named for the time); action=stop closes it and reports the path and length; "
+    "action=state says whether a take is running. The file is the handoff for anything else: a "
+    "DAW, a song model, or a player who just wants the riff.",
+    {"action": {"type": "string", "enum": ["start", "stop", "state"],
+                "description": "start (default) records, stop saves, state asks."},
+     "name": {"type": "string",
+              "description": "Optional take name (start), e.g. verse riff take 2."},
+     "path": {"type": "string", "description": "Optional exact wav path (start)."}},
+    required=["action"],
+)
+
+
 class _NoAnalyser(Exception):
     """The engine interpreter could not run the measurement."""
 
@@ -857,6 +873,36 @@ def run_call(cmd: str, **kwargs) -> dict:
     return RIG.debug_call(cmd, **kwargs)
 
 
+def handle_record(args: dict[str, Any], **_kw) -> str:
+    """One take, start to stop, said as a file the player can go and open."""
+    action = str(args.get("action") or "start").strip().lower()
+    if action in ("state", "status"):
+        try:
+            live = RIG.take_state()
+        except (port.NoRig, port.RigError) as exc:
+            return f"NO ENGINE: {exc}"
+        if not live.get("recording"):
+            return "NOT RECORDING: nothing is being written"
+        return _fmt([("recording", "yes"), ("seconds", live.get("seconds")),
+                     ("path", live.get("path"))])
+    try:
+        if action == "stop":
+            said = RIG.stop_take()
+            seconds = float(said.get("seconds") or 0.0)
+            if seconds <= 0.0:
+                return f"SAVED: an empty take went to {said.get('path')}"
+            return _fmt([("saved", f"{seconds:.0f}s"), ("path", said.get("path")),
+                         ("peak", f"{said.get('peak_db')} dB"),
+                         ("dropped", said.get("dropped"))])
+        said = RIG.start_take(path=args.get("path") or None, name=args.get("name") or None)
+        return _fmt([("recording", "yes"), ("path", said.get("path")),
+                     ("rate", f"{said.get('samplerate')} Hz")])
+    except (port.NoRig, port.RigError) as exc:
+        return f"NOT RECORDED: {exc}"
+    except ValueError as exc:
+        return f"NOT RECORDED: {exc}"
+
+
 TOOLS = (
     ("amphead_ping", PING_SCHEMA, handle_ping, "🎸"),
     ("amphead_status", STATUS_SCHEMA, handle_status, "📊"),
@@ -870,6 +916,7 @@ TOOLS = (
     ("amphead_settings", SETTINGS_SCHEMA, handle_settings, "⚙️"),
     ("amphead_aim", AIM_SCHEMA, handle_aim, "🎯"),
     ("amphead_rig", RIG_SCHEMA, handle_rig, "💾"),
+    ("amphead_record", RECORD_SCHEMA, handle_record, "⏺️"),
 )
 
 # ---- the shape the host sees -------------------------------------------------------------

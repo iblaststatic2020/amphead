@@ -29,6 +29,8 @@ const rig = {
   output_gain_db: 0,
   // Noise gate threshold in front of the amp: the bottom of the range is off.
   gate_db: -80,
+  // A take that is running, so the preview shows the strip lit the way a full take looks.
+  take: { recording: true, seconds: 42, path: 'recordings/take 2026-11-08 091500.wav' },
   tone: { bass: 0, mid: 0, treble: 0 },
   capture: 'PEAVEY - 6506 - CLEAN - B0 - HIGH - G4.0',
   capture_path: CAPTURES[1].path,
@@ -53,6 +55,7 @@ export const state = () => {
       reason: 'the local engine is not running: press Setup',
       project: 'AmpHead 2', ui: 'hidden', running: false, armed: false, monitor: false,
       master_db: null, input_gain_db: null, output_gain_db: null, gate_db: null, demo: false, problems: [], chain: [], knobs: [], tone: null,
+      take: { recording: false },
       tone_name: '', capture: '', capture_path: '', cab: '', cab_path: '', aim: '', aim_confidence: '',
       samplerate: 0, blocksize: 0, latency_ms: 0, block_ms: 0, round_trip_ms: 0, mode: '',
       device: { driver: '', buffer: '', rate: '', out_ms: 0, closed: true }
@@ -68,6 +71,7 @@ export const state = () => {
     input_gain_db: rig.input_gain_db,
     output_gain_db: rig.output_gain_db,
     gate_db: rig.gate_db,
+    take: rig.take,
     // A stage silence switched out is a stage the face must not pretend is playing.
     problems: rig.stages.some((stage) => !stage.enabled) ? ['a stage is switched out of the path'] : [],
     chain: rig.stages.map((stage) => ({ name: stage.name, enabled: stage.enabled })),

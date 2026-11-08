@@ -51,7 +51,7 @@ capture and cabinet named on it, the knobs in a row, a meter, and the files. It 
 | rigs | a chip per saved sound (press to load), a name field and `SAVE` |
 
 Routes: `GET /state`, `GET /meter`, `GET /library`, `GET /input`, `POST /setup`, `/live`, `/teardown`,
-`/master`, `/gate`, `/tune`, `/input_gain`, `/output_gain`, `/knob`, `/tweak`, `/input`, `/capture`,
+`/master`, `/gate`, `/tune`, `/record`, `/input_gain`, `/output_gain`, `/knob`, `/tweak`, `/input`, `/capture`,
 `/cab`, `/preset`, `/panic`, `/rigs`, `/rig`. The pane polls `/state` at 1.5 s and `/meter` at 150 ms.
 
 Every write route calls the same handler chat calls, so a knob drag and the sentence "more low end"
@@ -179,6 +179,28 @@ amphead_rig action=load name=lead        # put it back, knob by knob
 amphead_rig action=paste text="amphead:friend | capture=Thing;cab=Thing 4x12"
 ```
 
+## A take
+
+Press `rec` on the face, play, press `stop`. The amp writes what you hear, after the master, to a
+24-bit wav in a `recordings` folder beside the settings file, named for the minute you played. The
+strip under the knobs says the time as it runs and where the last take went, so the file is never
+somewhere you have to go looking for.
+
+```
+amphead_record action=start name="verse riff"   # open a take now
+amphead_record action=stop                      # close it, report path, length, peak
+amphead_record action=state                     # is something being written?
+```
+
+The audio callback never touches the disk: a block goes into a queue and a thread of its own writes
+it, so a slow drive costs a counted dropped block instead of a hole in the take, and a full disk ends
+the take with the error in the summary rather than a silently truncated file. Recording is only ever
+the amp's own output. There is no second input, no monitoring path and no track to arm.
+
+The wav is the handoff. Whatever comes next (a DAW, a clip sketcher, a song model) reads the file;
+this plugin does not upload anything anywhere. See `ARCHITECTURE.md` for why that line is drawn
+there.
+
 ## What this touches
 
 The catalog asks for an explicit disclosure, so this is the whole list, not the flattering part.
@@ -193,7 +215,8 @@ and keeps it open while the amp is on. It reads `.nam` captures and `.wav` cabin
 named in a settings file (`%APPDATA%\amphead\settings.json` and the macOS/Linux equivalents), and
 writes that file only when you or your agent call `amphead_settings action=set`. `action="find"`
 walks Documents, Downloads, Desktop, Music and the cloud folders inside them, four levels deep,
-reading file names only. It remembers the last capture and cabinet in `~/.amphead2.json`. Once
+reading file names only. It remembers the last capture and cabinet in `~/.amphead2.json`, and writes `.wav` takes to a
+`recordings` folder beside its settings file when you press record. Once
 running it makes no network calls, sends no telemetry, stores no credentials, and does not launch,
 steer or read any other application: there is no other application.
 
