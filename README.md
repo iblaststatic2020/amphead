@@ -219,9 +219,7 @@ AmpHead runs one Python process of its own, the engine, in the interpreter Herme
 plugin in. Its two dependencies, numpy and sounddevice, are declared in `pyproject.toml`, so a
 normal `hermes plugins install` asks once and installs them: that is the only install step, and
 there is no second interpreter to build or path to type. Hermes downloads those two pinned wheels
-from PyPI, pinned as numpy 2.5.4 and sounddevice 0.5.6; `scripts/engine_env.ps1` exists only for a
-bare checkout that Hermes has never installed, and it is the only other network access in this
-project. The engine opens the audio interface (exclusive kernel streaming on Windows, CoreAudio on
+from PyPI, pinned as numpy 2.5.4 and sounddevice 0.5.6. That single download during install is the whole project's network access. The engine opens the audio interface (exclusive kernel streaming on Windows, CoreAudio on
 macOS, ALSA on Linux) and keeps it open while the amp is on. It reads `.nam` captures and `.wav`
 cabinets from the folders named in a settings file (`%APPDATA%\amphead\settings.json` and the
 macOS/Linux equivalents), and writes that file only when you or your agent call
