@@ -19,6 +19,19 @@ const CABS = [
 
 const off = () => new URLSearchParams(location.search).get('off') === '1'
 
+// `?bare=1` answers the way a machine with no library does: configured folders, no files in them.
+// That is the state the empty picker is written for, and the state where the press that searches
+// has to appear, so the harness can show the button and prove it is the only thing that searches.
+const bare = () => new URLSearchParams(location.search).get('bare') === '1'
+const adopted = { capture: false, cab: false }
+
+// Folders the pretend search turns up. Two of them, because picking is the point: a list of one
+// hides whether the row that was pressed is the row that got adopted.
+const FOUND = [
+  { path: 'C:\\Users\\Chris\\Documents\\Guitar Amp Sims\\NAM', captures: 214, cabs: 3 },
+  { path: 'C:\\Users\\Chris\\Downloads\\NAM packs', captures: 38, cabs: 0 }
+]
+
 // One rig, one chain: a capture, the tone stack, a cabinet. Same three stages the engine runs.
 const rig = {
   running: true,
@@ -98,13 +111,20 @@ export const meter = () => {
   return { l: p, r: p * 0.93, clip: p > 0.9, live: true }
 }
 
-export const library = () => ({
-  ok: true,
-  captures: CAPTURES,
-  cabs: CABS,
-  capture: rig.capture_path,
-  cab: rig.cab_path
-})
+export const library = () => {
+  const empty = bare() && !adopted.capture
+  return {
+    ok: true,
+    captures: empty ? [] : CAPTURES,
+    cabs: bare() && !adopted.cab ? [] : CABS,
+    capture: rig.capture_path,
+    cab: rig.cab_path,
+    // The folders already configured: the empty picker names them, so a player can tell "you looked
+    // in the wrong place" from "there is nothing there".
+    capture_dirs: ['C:\\Users\\Chris\\Documents\\Guitar Amp Sims\\NAM'],
+    cab_dirs: ['C:\\Users\\Chris\\Documents\\Guitar Amp Sims\\IRs']
+  }
+}
 
 // Saved sounds, kept in memory: the harness can save one and load it back without a file.
 export const SAVED = [{ name: 'lead', capture: 'Bugera 6262 Lead', cab: 'AURORA 212 GOV',
@@ -142,6 +162,16 @@ export async function rest(path, options) {
   if (bare === '/state') return state()
   if (bare === '/meter') return meter()
   if (bare === '/library') return library()
+  // The press: a walk that only happens because somebody asked for it. Nothing in the fixture is
+  // read before this is called, which is what `window.__amphead.calls` lets a test check.
+  if (bare === '/library/find') {
+    return { ok: true, candidates: FOUND, scanned: ['C:\\Users\\Chris\\Documents', 'C:\\Users\\Chris\\Downloads'] }
+  }
+  if (bare === '/library/adopt') {
+    const kind = body.kind === 'cab' ? 'cab' : 'capture'
+    adopted[kind] = true
+    return { ok: true, output: `added ${body.path} to ${kind}_dirs` }
+  }
   if (bare === '/rigs') return rigs()
   if (bare === '/rig') {
     if (body.action === 'save') {

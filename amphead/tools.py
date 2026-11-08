@@ -142,7 +142,9 @@ SETTINGS_SCHEMA = _schema(
     "The machine-specific choices: where captures and cabinets live, which interpreter hosts the "
     "engine, and the audio defaults (device pair, input channel, sample rate, block size, latency "
     "ask). action=show reports the file and every value with where it came from; action=find walks "
-    "the usual folders for capture and cabinet libraries; action=set writes values.",
+    "the usual folders for capture and cabinet libraries, reading file names only, and only when the "
+    "user asks for it, never on your own initiative and never as a way of answering a question they "
+    "did not ask; action=set writes values.",
     {"action": {"type": "string", "enum": ["show", "find", "set"],
                 "description": "show (default), find or set."},
      "capture_dirs": {"type": "array", "items": {"type": "string"},

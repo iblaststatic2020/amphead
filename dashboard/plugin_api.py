@@ -271,12 +271,58 @@ def teardown(body: dict | None = None) -> dict[str, Any]:
 
 @router.get("/library")
 def library() -> dict[str, Any]:
-    """The captures and cabinets this machine has, so the pane can offer a menu."""
+    """The captures and cabinets this machine has, so the pane can offer a menu.
+
+    The folders come along because an empty picker has to be able to say where it looked. They are
+    the folders already configured, nothing scanned: naming a directory is free, reading it is not.
+    """
+    roots = {
+        "capture_dirs": [str(folder) for folder in settings.folders("capture_dirs")],
+        "cab_dirs": [str(folder) for folder in settings.folders("cab_dirs")],
+    }
     try:
-        return RIG.library()
+        said = dict(RIG.library() or {})
     except port.NoRig as exc:
         return {"captures": [], "cabs": [], "capture": "", "cab": "",
-                "why": str(exc) or "the engine is not running"}
+                "why": str(exc) or "the engine is not running", **roots}
+    for key, value in roots.items():
+        said.setdefault(key, value)
+    return said
+
+
+@router.get("/library/find")
+def find_library() -> dict[str, Any]:
+    """Folders that look like a capture or cabinet library, for the press that asks.
+
+    This walks the usual folders four levels down and reads file names and nothing else, so it
+    costs time and no tokens. It is a route with a button in front of it rather than something
+    the pane does when it loads: reading somebody's Documents is not a decision a file picker
+    gets to make on their behalf, and an agent that scans first and reports later has already
+    spent the one thing the player did not offer. Nothing here leaves the machine.
+    """
+    try:
+        return amp_library.find()
+    except OSError as exc:
+        return {"candidates": [], "scanned": [], "configured": {},
+                "why": str(exc) or "the walk stopped early"}
+
+
+@router.post("/library/adopt")
+def adopt_folder(body: dict) -> dict[str, Any]:
+    """Add the folder the player just pointed at to the settings file, for one kind of file."""
+    path = str((body or {}).get("path") or "").strip()
+    kind = str((body or {}).get("kind") or "capture").strip().lower()
+    key = "cab_dirs" if kind.startswith("cab") else "capture_dirs"
+    what = "cabinets" if key == "cab_dirs" else "captures"
+    if not path:
+        return {"output": "NO FOLDER: say which one", "ok": False}
+    if not Path(path).is_dir():
+        return {"output": f"NOT FOUND: {path} is not a folder any more", "ok": False}
+    told = [str(p) for p in (settings.load().get(key) or []) if str(p).strip()]
+    if path not in told:
+        told.append(path)
+        settings.save({key: told})
+    return {"output": f"{what}: reading {path}", "ok": True, "kind": what, "path": path, "key": key}
 
 
 @router.post("/capture")

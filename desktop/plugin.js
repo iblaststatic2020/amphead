@@ -351,10 +351,21 @@ const folderOf = (items, path) => {
   return hit ? hit.folder : ''
 }
 
+// The last segment of a path, for a sentence that has to fit on a 300px plate.
+const leafOf = (path) => String(path || '').split(/[\\/]/).filter(Boolean).pop() || ''
+
 // A cabinet or an amp: a search box and the files under it. 600 captures is a list nobody scrolls,
 // so typing narrows it, and the folder under each name tells two close relatives apart.
-function FilePicker({ items, currentPath, busy, onPick, placeholder }) {
+//
+// When the list is empty the plate does not scan anything: it says which folders it read and offers
+// one press that searches the usual places. The search is local file names, but it is still somebody
+// else's disk, so it waits to be asked. The same press writes the folder it finds, which is how a
+// library that lives somewhere unusual gets adopted without an environment variable.
+function FilePicker({ items, currentPath, busy, onPick, placeholder, kind, rest, roots, onAdopted }) {
   const [needle, setNeedle] = useState('')
+  const [hunt, setHunt] = useState(null)
+  const [why, setWhy] = useState('')
+  const [note, setNote] = useState('')
   const words = needle.trim().toLowerCase().split(/\s+/).filter(Boolean)
   const matches = (items || []).filter((file) => {
     if (!words.length) return true
@@ -362,10 +373,48 @@ function FilePicker({ items, currentPath, busy, onPick, placeholder }) {
     return words.every((word) => hay.includes(word))
   })
   const shown = matches.slice(0, 60)
+  const capture = kind !== 'cab'
+  const rows = (hunt && hunt.rows) || []
+
+  async function searchFolders() {
+    setWhy('')
+    setHunt({ rows: null })
+    try {
+      const found = await rest('/library/find')
+      setHunt({ rows: ((found && found.candidates) || []).slice(0, 8) })
+    } catch (err) {
+      setHunt({ rows: [] })
+      setWhy(`the search failed: ${(err && err.message) || 'no answer'}`)
+    }
+  }
+
+  async function useFolder(path) {
+    setWhy('')
+    try {
+      const out = await rest('/library/adopt', {
+        method: 'POST',
+        body: { path, kind: capture ? 'capture' : 'cab' }
+      })
+      if (out && out.ok === false) {
+        setWhy(out.output || 'that folder was refused')
+        return
+      }
+      setHunt(null)
+      setNeedle('')
+      // Saying which folder is now being read is the whole confirmation: the list filling is the
+      // proof, and a toast would have moved on before anybody looked at it.
+      setNote(`now reading ${leafOf(path)}`)
+      if (onAdopted) onAdopted()
+    } catch (err) {
+      setWhy(`that folder was not added: ${(err && err.message) || 'no answer'}`)
+    }
+  }
+
+  const hunting = hunt !== null
   return jsxs('div', {
     className: 'flex flex-col gap-1',
     children: [
-      jsx('input', {
+      hunting ? null : jsx('input', {
         type: 'search',
         value: needle,
         placeholder,
@@ -374,7 +423,14 @@ function FilePicker({ items, currentPath, busy, onPick, placeholder }) {
         className: 'w-full rounded-md px-2 py-1 text-[0.6875rem] outline-none',
         style: { ...WELL, color: 'var(--ui-text-primary)' }
       }),
-      jsxs('div', {
+      hunting ? null : (note
+        ? jsx('div', {
+          className: 'text-[0.5rem] leading-tight',
+          style: { color: 'var(--ui-accent)' },
+          children: note
+        })
+        : null),
+      hunting ? null : jsxs('div', {
         className: 'text-[0.5rem] leading-tight',
         style: MUTED,
         children: `${matches.length} matched${matches.length > shown.length ? `, showing ${shown.length}` : ''}`
@@ -382,37 +438,97 @@ function FilePicker({ items, currentPath, busy, onPick, placeholder }) {
       jsx('div', {
         className: 'flex max-h-44 flex-col overflow-y-auto rounded-md',
         style: { ...WELL },
-        children: shown.length
-          ? shown.map((file) => {
-            const here = file.path === currentPath
-            return jsxs('button', {
+        children: hunting
+          ? (rows.length
+            ? rows.map((row) => jsxs('button', {
               type: 'button',
-              disabled: busy,
-              onClick: () => onPick(file.path),
+              key: row.path,
+              onClick: () => useFolder(row.path),
               className: 'flex flex-col items-start gap-0 px-2 py-1 text-left outline-none',
-              style: {
-                background: here ? 'color-mix(in srgb, var(--ui-accent) 16%, transparent)' : 'transparent',
-                borderLeft: here ? '2px solid var(--ui-accent)' : '2px solid transparent'
-              },
+              style: { background: 'transparent' },
               children: [
                 jsx('span', {
                   className: 'w-full truncate text-[0.6875rem] leading-tight',
-                  style: { color: here ? 'var(--ui-accent)' : 'var(--ui-text-primary)' },
-                  children: file.name
+                  style: { color: 'var(--ui-text-primary)' },
+                  children: `${leafOf(row.path)} · ${capture ? `${row.captures} amp${row.captures === 1 ? '' : 's'}` : `${row.cabs} cab${row.cabs === 1 ? '' : 's'}`}`
                 }),
                 jsx('span', {
                   className: 'w-full truncate text-[0.5rem] leading-tight',
                   style: MUTED,
-                  children: file.folder
+                  children: row.path
                 })
               ]
-            }, file.path)
-          })
-          : jsx('span', {
-            className: 'px-2 py-1.5 text-[0.5625rem]',
-            style: MUTED,
-            children: needle ? 'nothing in the folders matches that' : 'no files found; set AMPHEAD_CAPTURE_DIR or AMPHEAD_CAB_DIR'
-          })
+            }, row.path))
+            : jsxs('div', {
+              className: 'flex flex-col items-start gap-1 px-2 py-1.5',
+              children: [
+                jsx('span', {
+                  className: 'text-[0.5625rem] leading-tight',
+                  style: MUTED,
+                  children: hunt && hunt.rows === null
+                    ? 'reading the usual folders...'
+                    : why || 'nothing found: name the folder in chat and I will set it'
+                }),
+                jsx('button', {
+                  type: 'button',
+                  onClick: () => { setHunt(null); setWhy('') },
+                  className: 'text-[0.5625rem] font-semibold underline outline-none',
+                  style: { color: 'var(--ui-text-tertiary)' },
+                  children: 'back'
+                })
+              ]
+            }))
+          : (shown.length
+            ? shown.map((file) => {
+              const here = file.path === currentPath
+              return jsxs('button', {
+                type: 'button',
+                disabled: busy,
+                onClick: () => onPick(file.path),
+                className: 'flex flex-col items-start gap-0 px-2 py-1 text-left outline-none',
+                style: {
+                  background: here ? 'color-mix(in srgb, var(--ui-accent) 16%, transparent)' : 'transparent',
+                  borderLeft: here ? '2px solid var(--ui-accent)' : '2px solid transparent'
+                },
+                children: [
+                  jsx('span', {
+                    className: 'w-full truncate text-[0.6875rem] leading-tight',
+                    style: { color: here ? 'var(--ui-accent)' : 'var(--ui-text-primary)' },
+                    children: file.name
+                  }),
+                  jsx('span', {
+                    className: 'w-full truncate text-[0.5rem] leading-tight',
+                    style: MUTED,
+                    children: file.folder
+                  })
+                ]
+              }, file.path)
+            })
+            : jsxs('div', {
+              className: 'flex flex-col items-start gap-1 px-2 py-1.5',
+              children: [
+                jsx('span', {
+                  className: 'text-[0.5625rem] leading-tight',
+                  style: MUTED,
+                  children: needle
+                    ? 'nothing in the folders matches that'
+                    : (roots && roots.length
+                      ? `nothing in ${roots.map(leafOf).join(', ')}`
+                      : 'no folder to read yet')
+                }),
+                jsx('button', {
+                  type: 'button',
+                  disabled: busy,
+                  onClick: searchFolders,
+                  className: 'rounded px-1.5 py-0.5 text-[0.5625rem] font-semibold outline-none',
+                  style: {
+                    background: 'color-mix(in srgb, var(--ui-accent) 12%, transparent)',
+                    color: 'var(--ui-accent)'
+                  },
+                  children: capture ? 'search my folders for amps' : 'search my folders for cabs'
+                })
+              ]
+            }))
       })
     ]
   })
@@ -1248,6 +1364,10 @@ function AmpFace({ rest }) {
               items: files.captures || [],
               currentPath: s.capture_path,
               busy,
+              kind: 'capture',
+              rest,
+              roots: files.capture_dirs || [],
+              onAdopted: () => client.invalidateQueries({ queryKey: ['amphead2', 'library'] }),
               placeholder: 'narrow the amps: bugera, fender, lead',
               onPick: async (path) => {
                 setOpenPicker('')
@@ -1266,6 +1386,10 @@ function AmpFace({ rest }) {
               items: files.cabs || [],
               currentPath: s.cab_path,
               busy,
+              kind: 'cab',
+              rest,
+              roots: files.cab_dirs || [],
+              onAdopted: () => client.invalidateQueries({ queryKey: ['amphead2', 'library'] }),
               placeholder: 'narrow the cabinets: 212, gov, sm57',
               onPick: async (path) => {
                 setOpenPicker('')

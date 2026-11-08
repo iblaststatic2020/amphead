@@ -116,11 +116,14 @@ Changing any `audio` value takes effect the next time the engine opens.
 `AMPHEAD_CAB_DIR`, `AMPHEAD_ENGINE_PYTHON` and `AMPHEAD_LATENCY_MS` variables are still honoured and
 win over the file.
 
-An agent can do the hunting. `amphead_settings action="find"` walks Documents, Downloads, Desktop,
-Music and the cloud folders inside them, four levels down, and lists the folders that actually contain
-`.nam` or `.wav` files with counts. `action="set"` writes your choice and keeps everything else.
-`action="show"` reports what is set, whether each folder exists, and where each value came from.
-Read-only unless you say `set`.
+The pane does the hunting, on a press. When a picker has nothing to show it names the folders it read
+and offers one button; that button walks Documents, Downloads, Desktop, Music and the cloud folders
+inside them, four levels down, lists the folders that actually contain `.nam` or `.wav` files with
+counts, and writes the one you pick into the settings file, so the list fills without an environment
+variable. Nothing is scanned before that press, in the pane or from chat. In chat the same walk is
+`amphead_settings action="find"`, which runs only when you ask for it; `action="set"` writes your
+choice and keeps everything else, and `action="show"` reports what is set, whether each folder exists,
+and where each value came from. Read-only unless you say `set`.
 
 ## Asking for a sound
 
@@ -222,7 +225,8 @@ and keeps it open while the amp is on. It reads `.nam` captures and `.wav` cabin
 named in a settings file (`%APPDATA%\amphead\settings.json` and the macOS/Linux equivalents), and
 writes that file only when you or your agent call `amphead_settings action=set`. `action="find"`
 walks Documents, Downloads, Desktop, Music and the cloud folders inside them, four levels deep,
-reading file names only. It remembers the last capture and cabinet in `~/.amphead2.json`, and writes `.wav` takes to a
+reading file names only, and runs only when a person presses the search in the pane or asks for it
+in chat. It remembers the last capture and cabinet in `~/.amphead2.json`, and writes `.wav` takes to a
 `recordings` folder beside its settings file when you press record. Once
 running it makes no network calls, sends no telemetry, stores no credentials, and does not launch,
 steer or read any other application: there is no other application.
