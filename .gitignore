@@ -25,7 +25,6 @@ out/
 *.vstpreset
 
 # Local bridge scratch
-.reaper_out/
 request.*.json
 resp_*.json
 desktop/probe/

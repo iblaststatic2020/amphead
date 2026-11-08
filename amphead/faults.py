@@ -50,10 +50,10 @@ def explain(exc: BaseException, kind: str = "", path: str = "") -> str:
     if kind == CAPTURE:
         if "only wavenet captures are supported" in lower:
             model = said.rsplit("is", 1)[-1].strip() if " is " in said else "another architecture"
-            return (f"{name} is {model}, and this engine runs NAM's WaveNet captures only. Export "
-                    f"it as WaveNet in the trainer, or pick another capture from the folder.")
+            return (f"{name} is {model}, and this engine runs WaveNet captures only. Export it as "
+                    f"WaveNet in the trainer, or pick another capture from the folder.")
         if "not supported" in lower:
-            return (f"{name} uses part of the NAM format this engine does not implement. A plain "
+            return (f"{name} uses part of the .nam format this engine does not implement. A plain "
                     f"WaveNet capture from the same folder will load.")
         if "json" in lower or isinstance(exc, (KeyError, TypeError, UnicodeDecodeError)):
             return (f"{name} opened but does not look like a .nam capture. Check the picker landed "
@@ -62,7 +62,7 @@ def explain(exc: BaseException, kind: str = "", path: str = "") -> str:
             return (f"{name} is truncated: the file ends before its weights do. Copy it again from "
                     f"wherever you got it.")
         if "configuration" in lower or "config" in lower:
-            return (f"{name} has no model configuration in it, so it is not a complete NAM capture.")
+            return (f"{name} has no model configuration in it, so it is not a complete .nam capture.")
 
     if kind == CAB:
         if "sample width" in lower:
