@@ -1,356 +1,62 @@
 # AmpHead
 
-Hermes as the amp head for a REAPER guitar rig. It starts the host, opens its own project tab, loads
-the amp and drive, sets the knobs, and then stops in standby until the player switches the track live.
+Hermes as the guitar amp. Not a remote control for one: the plugin starts its own audio engine, the
+engine owns the interface, and the capture, tone stack, cabinet, trims and master all run there. You
+sit down, say "set up my crunch tone", and Hermes is the amp. Nothing else needs to be open.
 
-AmpHead never processes audio and never drives REAPER's UI. Everything it reads or writes goes through
-a small file-queue bridge (`reaper/bridge.lua`) that runs inside REAPER, which means each write can be
-read back and verified instead of assumed.
+## What it does
 
-## What it does today
+- Starts a low-latency audio engine of its own: one duplex stream on the interface, 512-frame blocks,
+  44.1 kHz, about 10 ms round trip on the kernel-streaming driver this was measured against.
+- Loads a NAM capture (a real amp, captured) and a cabinet IR (a real speaker, measured), with the IR
+  resampled to the engine's rate so a 44.1 kHz IR does not play 8.8% sharp at 48 kHz.
+- Gives you the knobs a head has: bass, mid, treble, plus input gain (how hard the capture is driven)
+  and output gain (how the cabinet is balanced against the room), and a master on top.
+- Parks the master at -60 dB before anything is armed. The chain is born disarmed; only an explicit
+  confirm arms it, and arming uses -6 dB, measured on a -18 dBFS DI so it peaks near -3 dBFS.
+- Answers in plain language and reports what it read back: `amphead_ready` says `READY`, `STANDBY`,
+  `NO SIGNAL`, `NO CHAIN`, `CLIPPING`, `DEVICE CLOSED` or `ENGINE OFF`, with the reason.
+- Has a dead man's switch. `amphead_panic` parks the master, disarms and bypasses every stage, then
+  proves the input is still arriving while nothing reaches the speakers.
 
-- Launches REAPER minimized and takes a rig tab it owns, leaving your song projects alone.
-- Parks the master at -60 dB before arming anything. The track is born disarmed and unmonitored, and
-  only an explicit confirm arms it.
-- Builds and inspects a chain by name, with `expect` guards so a write cannot land in the wrong tab.
-- Refuses to guess which plugin or knob you meant. A name that matches several controls comes back
-  with every candidate listed, not with the first fuzzy hit.
-- Answers tone requests in plain language: `"an amp that sounds like blink182"` resolves to a saved NAM
-  preset, reports the capture and IR it uses, applies the knob moves, and reads the plugin back.
+## The amp face
 
-## Tone requests
-
-Two paths, and the tool picks the cheaper one. If what you asked for is a sound the rig's own presets
-already carry, `amphead_tone` applies that preset: one undo group, every knob read back, a diff in the
-plugin's own units.
-
-```
-amphead_tone query="make it crunchier"
-  why: asked for crunch or drive
-  preset=crunch | changed=9 | already there=1 | 1.06s | one undo point
-  VST3: NAM Universal (WaveMind) | Pedal Input Gain: 0 -> 5.76
-  VST3: NAM Universal (WaveMind) | Amplifier Input Gain: -3.84 -> 5.76
-  ...
-```
-
-That mapping is a small cue table, not a list of magic words: "crunchier" and "cleaner" match on their
-stems, "more gain" is checked before "gain", and a request that names no sound ("something darker") is
-not guessed at. Those fall through to the second path, because amp choice is not a knob: NAM Universal
-keeps the loaded amp inside its state chunk, so a different amp is a different saved preset.
-`amphead/tones.py` holds nine archetypes (pop punk, pop punk hot, modern metal, AC/DC, hard rock,
-lead, clean, edge of breakup, stoner fuzz, bass), each pointing at a preset in the library plus the
-knob deltas that push it toward the request. Artist, song and amp words route: "sound like AC/DC",
-"angus young", "back in black" and "plexi" all land on the JMP capture through a Greenback, while
-"hard rock" and "guns n roses" stay on the generic rig.
-
-```
-python -m amphead.tones --list
-python -m amphead.tones "an amp that sounds like blink182"
-python -m amphead.tones "drop C metal chug" --apply
-```
-
-`--apply` needs an open project that already has a NAM Universal on a track. It pushes the preset state,
-waits for the plugin to settle, then reports the capture name and knob values read back from the plugin.
-
-Library layout it expects:
-
-- captures: `%USERPROFILE%\WaveMind\NAMU\Amps\**\*.nam`
-- presets: `%USERPROFILE%\WaveMind\NAMU\*.preset`
-
-## Naming a plugin or a knob
-
-`amphead/resolver.py` answers two questions: which plugin on this track, and which knob on that plugin.
-The ladder is exact name, exact name without the `VST3:`/`JS:` prefix, every word present, every word
-present allowing one vendor misspelling, then the query as a subsequence. Only the best rung that hit
-counts, and if two controls land on it the answer is a refusal that names them:
-
-```
-gain             -> 'gain' matches 8 parameters: #2 Input Gain, #3 Output Gain,
-                    #6 Pedal Input Gain, #7 Pedal Ouput Gain, #15 Amplifier Input Gain,
-                    #8 Instigator Input Gain, #16 Amplifier Output Gain, #9 Instigator Output Gain.
-                    Name one of them exactly.
-output gain      -> Output Gain (#3)
-pedal output gain-> Pedal Ouput Gain (#7)      # the plugin misspells it, the request does not
-presence         -> no parameter matches 'presence'
-```
-
-Before any write the chain is re-read and the name is confirmed against its index, because FX indices
-shift the moment something is added or removed. Writing to index 2 because it used to be the amp is
-exactly the kind of wrong that sounds plausible.
-
-## Building a rig from nothing
-
-```
-amphead_build amp="NAM Universal"
-  built=True | rig=...\amphead\rig\rig.rpp | track=1 Gtr | amp=VST3: NAM Universal (WaveMind) at fx 0
-             | chain=1 | db=-6 | armed=False | monitor=False | input=untouched (default 0) | seconds=1.31
-             | next=the player flips Live
-```
-
-The tab is opened from a minimal `rig.rpp` that the plugin writes itself, because a path on disk is
-the only identity every later write can be guarded against. Then the whole build is one batch: add the
-track, load the amp, set the input if one was asked for, set the starting level, and arm only if
-`arm=true`. The track index is worked out before the batch runs (current count plus one), so the build
-costs one round trip and still checks the index REAPER reports back.
-
-Two rules keep it from surprising the player. It never arms on its own: `arm=true` exists, but the
-default leaves the rig in standby, because going live is the switch the user flips. And it never
-deletes FX it did not add; a project that arrives with a chain gets those plugins named in the result
-and left exactly where they are. `teardown` will only close a tab whose path is the rig's, and only
-deletes the file after REAPER confirms the close.
-
-Live on this machine: 1.31 s unarmed, 1.21 s armed, chain and `I_RECARM`/`I_RECMON` read back from
-REAPER, existing tabs untouched.
-
-## Turning a knob, and proving it moved
-
-`amphead/rig.py` writes one parameter at a time and does not take the plugin's word for it:
-
-```
-read FX_INFO  ->  pick a mode  ->  clamp, and say so  ->  write in one undo group
-              ->  read the parameter back  ->  accept only if it moved AND is a real number
-              ->  if not, retry once in the other mode  ->  else refuse, showing both tries
-```
-
-```
-amphead_set fx="NAM Universal" param="IR Blend" value=0.52
-  set=True | param=IR Blend | wrote=0.52 (norm) | reads_back=0.5200000 | clamped=False
-
-amphead_set fx="Shoeless" param="Tone" value=0.9
-  REFUSED: Tone on VST3: Shoeless Drive Pedal refused the write:
-           norm 0.9000 read back 5.0 (norm 0.500) then raw 0.9000 read back 5.0 (norm 0.500);
-           value did not move
-```
-
-Two real failures on this machine shaped that order. ReaEQ's gain at 0.35 normalized and ReaFir's
-output gain at 1.44 raw both accept the write and then format the value as `-inf`; ReaFir lands on the
-normalized retry, ReaEQ does not and comes back as a refusal. A plugin that silently ignores a write
-is the third case and is refused the same way.
-
-Details that matter in use: `mode=auto` writes the normalized 0..1 value unless you name the plugin's
-own unit (`dB`, `Hz`), because raw units differ per plugin and `%` is just another way to say
-normalized. Clamping is reported, never hidden. Every write carries the active project as `expect`,
-because the bridge refuses an unguarded write, and that guard is what keeps a write from landing in
-whichever tab happens to be in front. Each attempt is appended to
-`%LOCALAPPDATA%\hermes\amphead\log.jsonl` so a tone change leaves a paper trail.
-
-## A preset, and the knobs it says it moves
-
-`amphead/presets.py` turns intent into knobs. A preset file is plain JSON naming the plugin and the
-knobs in words, with the value in the plugin's own units where that is clearer:
-
-```json
-{
-  "name": "crunch",
-  "about": "pedal in front, amp pushed, treble pulled back",
-  "track_db": -6.0,
-  "targets": {
-    "NAM Universal": {
-      "pedal active": 1,
-      "pedal input gain": 5.8,
-      "amplifier input gain": 5.8,
-      "amplifier treble": 5.2,
-      "sparkle": 6.0
-    }
-  }
-}
-```
-
-Names resolve through the same ladder `amphead_set` uses, so `sparkle`, `Sparkle` and `SPARKLE`
-are one knob. The whole preset is one undo group: pick a preset at random, hit undo once, and you
-are exactly where you were. Then every knob is read back and compared with what was asked for, so a
-plugin with a broken automation binding shows up as a refusal instead of a lie. A knob already where
-the preset wants it is left alone and says so, because writing it would only add noise to the diff.
-
-```
-amphead_preset name="crunch"
-  preset=crunch | changed=8 | already there=2 | 1.07s | one undo point
-  VST3: NAM Universal (WaveMind) | Pedal Active: Off -> On
-  VST3: NAM Universal (WaveMind) | Pedal Input Gain: 0 -> 5.76
-  VST3: NAM Universal (WaveMind) | Amplifier Input Gain: 0 -> 5.76
-  VST3: NAM Universal (WaveMind) | Amplifier Treble: 7.74 -> 5.2
-  VST3: NAM Universal (WaveMind) | IR Blend: 0.5 -> 0.5 (already there)
-  ...
-```
-
-`amphead_preset` with no name lists what is on disk. Three ship: `clean`, `crunch`, `lead`, ordered
-by gain, and the tests hold them to that order. A preset that names a plugin missing from the rig is
-not a failure of the whole call: the plugins that are there still get applied, and the missing one is
-named in the summary. If nothing on the preset is present, nothing is written at all.
-
-## A/B, and proving undo really undid it
-
-`amphead_ab` writes the whole rig down and then argues from the record. A snapshot is the chain in
-real order, every knob in raw, normalized and formatted form, and the track level. Taking one is two
-read-only calls per plugin, so it costs nothing and cannot add an undo point.
-
-```
-amphead_ab label="before"
-  snapshot=before | plugins=1 | knobs=36 | db=-6.0 | ...\snapshots\20261106-074836-before.json
-
-amphead_preset name="lead"
-amphead_ab label="after"
-amphead_ab action="compare" label="before" other="after"
-  ab | before -> after | differences=11
-  VST3: NAM Universal (WaveMind) | Amplifier Input Gain: 0.0000000 -> 9.5999985
-  VST3: NAM Universal (WaveMind) | Pedal Active: Off -> On
-  ...
-
-undo once, snapshot "undone", compare "before" against it:
-  ab | before -> undone | differences=0 | identical: nothing moved
-```
-
-That last line is the point: undo either put every knob back or the tool says which one it missed.
-
-Two things the real plugin taught this. It exposes two parameters both called `Bypass`, so knobs are
-compared by index and a duplicated name is printed with its index (`Bypass [#0]`) rather than matched
-by name and compared against the wrong twin. And the bridge's `FX_PARAMS` sweep stops at 64
-parameters by default while NAM Universal has 36 knobs and other plugins have hundreds, so a snapshot
-asks for the lot and the sweep now carries raw and normalized values, not just formatted ones.
-
-`amphead_ab action="list"` shows what is on disk; labels resolve to the newest snapshot with that
-name, and an unknown label is refused by name instead of comparing against whatever came first.
-
-## The amp face (Hermes side)
-
-The pane is the interface. It is a desktop plugin half that ships in this package
-(`desktop/plugin.js`) and talks to `dashboard/plugin_api.py`, which speaks to the local
-engine process. Nothing else needs to be open: no DAW, no second window.
+`desktop/plugin.js` is the pane, drawn as an amp head: a chicken-head switch, the tone plate with the
+capture and cabinet named on it, the knobs in a row, a meter, and the files. It talks to
+`dashboard/plugin_api.py`, which talks to the same engine process chat talks to.
 
 | row | what it answers |
 |---|---|
-| verdict | one word: `READY`, `STANDBY`, `NO SIGNAL`, `CLIPPING`, `ENGINE OFF`, `DEVICE CLOSED`, plus the reason in a sentence |
-| input meter | live peak in dB with a latching clip light |
-| the switch | `engine off` opens the engine silent; `standby` arms it at the safe -6 dB; `live` is playing |
-| the plate | the tone is named from the two files on the chain (capture + cabinet), with the sample rate, block size and round trip under it |
-| files | amp capture picker and cabinet picker, listing what is actually in the NAM and IR folders |
-| the knobs, on one plate | `IN` (drives the capture), `BASS`/`MID`/`TREBLE` (the amp's own tone), `OUT` (balances the cabinet), `MASTER` (the room) |
+| verdict | one word, plus a sentence naming the thing to fix |
+| the switch | `SET UP` opens the engine silent, `STANDBY` is open and parked, `GO LIVE` arms at -6 dB, `CLOSE ENGINE` releases the device |
+| the plate | tone named from the two files on the chain, with rate, block size and round trip under it |
+| files | capture and cabinet pickers, listing what is actually in the folders |
+| the knobs | `IN`, `BASS`, `MID`, `TREBLE`, `OUT`, `MASTER`, each labelled in place |
 
-Routes: `GET /api/plugins/amphead/state`, `GET /meter` (150 ms poll), `GET /library`,
-`POST /setup`, `POST /live`, `POST /master`, `POST /input_gain`, `POST /output_gain`,
-`POST /panic`, `POST /teardown`, `POST /set`, `POST /capture`, `POST /cab`. The pane polls
-`/state` at 1.5 s and `/meter` at 150 ms; the status bar chip polls `/meter` at 400 ms and
-`/state` at 4 s.
+Routes: `GET /state`, `GET /meter`, `GET /library`, `GET /input`, `POST /setup`, `/live`, `/teardown`,
+`/master`, `/input_gain`, `/output_gain`, `/knob`, `/tweak`, `/input`, `/capture`, `/cab`, `/preset`,
+`/panic`. The pane polls `/state` at 1.5 s and `/meter` at 150 ms.
 
-The two trim knobs are digital trims either side of the capture, `-24 .. +24 dB`. `IN` is
-how hard the capture is driven, which is a tone decision as much as a level one, so it is not
-the master. `OUT` sits after the cabinet so two captures can be balanced without moving the
-master off a level that is known to be safe. The master keeps its own `-60 .. +12 dB` on top
-of both. Neither trim moves when the engine is off: the knob reports the engine's own number
-back, so a failed write looks like a knob that did not move rather than one that did.
+Every write route calls the same handler chat calls, so a knob drag and the sentence "more low end"
+cannot do different things, and `/state` runs the same `verdict.judge` as `amphead_ready`.
 
-The face is not a second opinion. `/state` runs the same `verdict.judge` the `amphead_ready` tool
-runs, and every write route calls the same handler chat calls (`tools.handle_set`,
-`tools.handle_tone`), so a slider drag and the sentence "more gain" cannot do different things.
-
-Dragging a knob holds the value your finger chose until you let go, then writes it and shows the
-engine's own read-back when the state poll comes back. Double-click returns a knob to neutral,
-shift drags finely. Every knob is labelled in dB in place, so the plate explains itself without a
-tooltip.
-
-A cabinet longer than one audio block used to be the one thing that could still make this face lie:
-the convolution cost more than the block it had to fill, the output starved, and the player heard
-crackle. `amphead/cab.py` is partitioned now, so a 262 144-tap 4x12 costs 1.83 ms of an 11.6 ms
-block instead of 13.6 ms. Numbers in `ENGINE_MEASUREMENTS.md`.
-
-An armed rig whose master is parked at -60 dB says `STANDBY`, not `READY`. A rig that would be
-silent is not ready to play, and that rule lives in the judge, so the tool, the pane and the status
-bar chip always agree.
-
-The app loads `%LOCALAPPDATA%\hermes\desktop-plugins\amphead\plugin.js` and refreshes that copy from
-`plugins/amphead/desktop/plugin.js` on its own 5 s poll, so saving the source hot-reloads the UI.
-
-Three doors to the same face: an **Amp** row in the sidebar (route `/amphead`, renders in the main
-pane like a built-in view), the command palette entry **AmpHead: open the amp**, and a right-side
-pane named `amp` for layouts that have a right zone. A dB chip also sits in the status bar.
-
-## Going live
-
-`amphead_live` is the switch that makes the rig audible from inside Hermes.
+## The knobs, in order
 
 ```
-amphead_live on=true confirm=true master_db=-20
-amphead_live on=true confirm=true master_db=-20 input="1"
-amphead_live on=false
+guitar -> input gain -> capture (NAM) -> bass/mid/treble -> cabinet (IR) -> output gain -> master
 ```
 
-`on=true` opens the audio device if REAPER parked it closed, sets the master to the level you asked
-for, then arms and monitors the track. `confirm=true` is required because this is the step that
-makes noise. `on=false` disarms and parks the master back at -60 dB.
-
-`input` defaults to `0`, which means leave the track's input exactly as REAPER has it; the reply
-reports the input REAPER actually holds (`input=3 | input_changed=False`). Name an input only when
-you want the tool to move it: `input="1"` for mono input 1, `input="1+2"` for a stereo pair,
-`input="none"` to clear it.
-
-## Is it playable?
-
-`amphead_ready` is the one call that answers that, and the pane paints the same word because both
-read from `amphead/verdict.py`.
-
-```
-amphead_ready
-amphead_ready settle_ms=1500
-```
-
-It checks the whole path in order: REAPER alive, audio device open, track armed, input selected,
-chain loaded, chain passing audio, signal actually arriving, latency short enough to play. The
-answer is one word plus the problems behind it:
-
-```
-verdict=READY | reason=armed, monitoring, 11.61 ms out, 1 plugin live | problems=none
-track=1 | armed=True | monitor=True | input=1 | chain=1 | live_fx=1 | peak_db=-14.0 | out_ms=11.61
-```
-
-The words are `READY`, `STANDBY` (not armed), `NO INPUT` (armed but pointed at nothing), `NO CHAIN`
-(nothing loaded, or everything bypassed, which is what panic leaves behind), `NO SIGNAL` (armed and
-monitoring but the meter never moved), `CLIPPING`, `DEVICE CLOSED`, `REAPER NOT RUNNING` and
-`REAPER BUSY`. It listens for 600 ms by default before it calls an input silent, so one quiet frame
-cannot report a live rig as dead. Nothing in it writes.
-
-## Panic
-
-`amphead_panic` is the dead man's switch, and it is the one button the pane paints red.
-
-```
-amphead_panic
-amphead_panic restore=true master_db=-20
-```
-
-Panic parks the master at -60 dB first, because that is the control no plugin can refuse. Then it
-disarms the track and bypasses every slot in the chain, reading each one back. The reply is a list of
-facts, not a claim:
-
-```
-panicked=True | master_db=-60.0 | bypassed=1 | bypassed_names=VST3: NAM Universal (WaveMind)
-armed=False | monitor=False | meter=still live: the input stays visible even with the speakers silent
-problems=none
-```
-
-If a plugin ignores the bypass, the rest still close and the reply names the one that did not:
-`still passing: Stubborn; refused the bypass: Stubborn (fx 0 ignored bypass)`. There is no mute
-involved on purpose: muting would kill the meter, and the meter is how the face proves the guitar is
-still arriving while nothing reaches the speakers. `restore=true` un-bypasses the chain and lifts the
-master, and deliberately leaves the track disarmed, so the Live switch stays the only way back to
-sound.
-
-## Watch it without a rig
-
-A judge, or anyone who has no DAW, no interface and no guitar, can still see the thing work. On the
-verdicts where there is nothing to play with (`REAPER NOT RUNNING`, `NO REAPER INSTALL`, `BRIDGE
-GONE`, `REAPER BUSY`, `TWO REAPER`, `RIG TAB CLOSED`) the pane offers **see it work**, which swaps
-its source for a canned rig (`amphead/demo.py`): a made-up session, the plugin's own slider moves, a
-meter that runs, a tone load, a panic and a restore. The row then reads **demo rig, not your
-hardware** with a leave button, and the status chip says `demo` rather than printing a level it did
-not measure. It answers through the same `verdict.judge` as the real path, so what a visitor sees is
-the real rules applied to a rig that is not there. It never turns itself on.
+Input gain is a tone decision as much as a level one, so it is not the master. Output gain sits after
+the cabinet so two captures can be balanced without moving the master off a level known to be safe.
+Both trims are plus or minus 24 dB and clamped in the engine as well as the route: a number that
+arrives from somewhere unexpected cannot push the DSP past what it can hold.
 
 ## Settings: the parts no code can guess
 
-AmpHead works most of its own world out. It finds the REAPER resource directory, installs its
-bridge, and offers whatever captures and cabinets the last session used. Three things it genuinely
-cannot guess: where you keep your files, which input on your interface is the guitar, and how hard
-your driver wants to be pushed. Those live in one JSON file:
+AmpHead works most of its own world out. It finds the interface by shape, remembers the last capture
+and cabinet you played, and picks a device pair itself. Three things it genuinely cannot guess: where
+you keep your files, which input on your interface is the guitar, and how hard your driver wants to be
+pushed. Those live in one JSON file:
 
 | Platform | File |
 | --- | --- |
@@ -375,130 +81,92 @@ your driver wants to be pushed. Those live in one JSON file:
 ```
 
 Nothing has to be set. An empty file means the usual folders (the Neural Amp Modeler convention under
-Documents, plus Aurora DSP's), the first input channel, 44.1 kHz, 512 frames, and the 5 ms per
-direction that held realtime on the machine this was measured on. The file exists so a guess can be
-corrected without editing code.
+Documents, plus the IR library folders), the first input channel, 44.1 kHz, 512 frames, and the 5 ms
+per direction that held realtime on the machine this was measured on. The file exists so a guess can
+be corrected without editing code.
 
-Left to itself the engine picks the kernel-streaming pair by shape rather than by brand: it looks for
-one input device and one stereo output that belong to the same interface, ignores virtual cables and
-loopbacks (VB-Audio, Steam streaming, anything called "cable"), and only falls back to the system
-default, which is usually a shared WMME pair and roughly ten times slower, when no interface exposes
-that shape. Changing any of the `audio` values takes effect the next time the engine opens; a running
-engine keeps the device it opened.
+Left to itself the engine picks the kernel-streaming pair by shape rather than by brand: one input
+device and one stereo output belonging to the same interface, ignoring virtual cables and loopbacks
+(VB-Audio, Steam streaming, anything called "cable"), and only falling back to the system default,
+usually a shared WMME pair and roughly ten times slower, when no interface exposes that shape.
+Changing any `audio` value takes effect the next time the engine opens.
 
-`input_channel` counts from 1, the way an interface labels its sockets: 1 is the first input. The
-older `AMPHEAD_CAPTURE_DIR`, `AMPHEAD_CAB_DIR`, `AMPHEAD_ENGINE_PYTHON` and `AMPHEAD_LATENCY_MS`
-variables are still honoured and still win, so an install configured before this file keeps working.
+`input_channel` counts from 1, the way an interface labels its sockets. The `AMPHEAD_CAPTURE_DIR`,
+`AMPHEAD_CAB_DIR`, `AMPHEAD_ENGINE_PYTHON` and `AMPHEAD_LATENCY_MS` variables are still honoured and
+win over the file.
 
 An agent can do the hunting. `amphead_settings action="find"` walks Documents, Downloads, Desktop,
-Music and the cloud folders that appear inside them, a few levels down, and lists the folders that
-actually contain `.nam` or `.wav` files with the counts. `amphead_settings action="set"` writes your
-choice and keeps everything else. `amphead_settings action="show"` reports what is set, whether each
-folder still exists, and whether the value came from the file, an environment variable, or the
-built-in default. Read-only unless you say `set`.
+Music and the cloud folders inside them, four levels down, and lists the folders that actually contain
+`.nam` or `.wav` files with counts. `action="set"` writes your choice and keeps everything else.
+`action="show"` reports what is set, whether each folder exists, and where each value came from.
+Read-only unless you say `set`.
 
 ## What this touches
 
-The catalog asks for an explicit disclosure, so this is the whole list, not the flattering part of
-it. Nothing here is background magic a reviewer has to discover on their own.
+The catalog asks for an explicit disclosure, so this is the whole list, not the flattering part.
 
-AmpHead touches the machine in five ways. It runs PowerShell (`-NoProfile -ExecutionPolicy Bypass`)
-to find REAPER, launch it minimized, steer and measure its window, count running instances, and
-stop a REAPER it started itself. It installs a Lua bridge into the REAPER resource path, appending
-one line to `__startup.lua` after backing that file up, and removes both on uninstall. While
-connected it runs a long-lived background request channel over files in the Hermes data folder,
-polled at 150 ms from Python and answered by a loop inside REAPER. It reads track names, the FX
-chain, every parameter name and value the loaded plugin publishes, the master fader, and the path
-of the project it is pointed at, all from a session it did not create. It writes plugin parameters
-and the record input into its own rig tab as one undo group per action, lowers the master fader,
-and saves that tab to its own `.rpp` under the Hermes data folder. It never saves, renames or
-overwrites your song projects, never touches audio files, stores no credentials and makes no
-network calls.
-
-Once the headless engine is in use it reads one settings file (`%APPDATA%\amphead\settings.json`
-and the equivalents above), writes it only when you or your agent call `amphead_settings action=set`,
-and scans the folders named there for `.nam` and `.wav` files. `action="find"` additionally walks
-Documents, Downloads, Desktop, Music and the cloud folders inside them, four levels deep, reading
-file names only; it does not open, copy or change them.
+AmpHead runs one Python process of its own, the engine, in `.engine` beside the plugin. That process
+opens the audio interface (exclusive kernel streaming on Windows, CoreAudio on macOS, ALSA on Linux)
+and keeps it open while the amp is on. It reads `.nam` captures and `.wav` cabinets from the folders
+named in a settings file (`%APPDATA%\amphead\settings.json` and the macOS/Linux equivalents), and
+writes that file only when you or your agent call `amphead_settings action=set`. `action="find"` walks
+Documents, Downloads, Desktop, Music and the cloud folders inside them, four levels deep, reading file
+names only. It remembers the last capture and cabinet in `~/.amphead2.json`. It makes no network
+calls, sends no telemetry, stores no credentials, and does not launch, steer or read any other
+application: there is no other application.
 
 ## Honest limits
 
-- **Windows is the only platform I have run it on.** REAPER is one application on three platforms,
-  so the plugin treats it that way: the resource directory is `%APPDATA%\REAPER`,
-  `~/Library/Application Support/REAPER` or `$XDG_CONFIG_HOME/REAPER`, REAPER is started with
-  `open` on macOS and directly on Linux, stopped by signal, and found through the same declaration
-  on all three. That code has unit tests on this host and has not been run against a real macOS or
-  Linux install. Window hiding stays Windows only, so the window appears there instead.
-- **It needs REAPER installed.** It can launch REAPER, it cannot install it, and nothing works while
-  a modal dialog owns REAPER's main thread.
-- **No DSP, no amp model, no tuner.** It does not process audio and does not try to sound like
-  anything by itself. Tone comes from the NAM captures and IRs you already have.
-- **Latency is REAPER's.** The number it reports is what REAPER says the device is doing, not a
-  measurement this plugin makes.
-- **It does not touch your songs.** Every write is guarded to the rig tab it created, inside its own
-  undo block. The only saves are to that tab's own file, on teardown.
-- **Silence on the meter is ambiguous.** It reads the rig track's own peaks, so a disarmed input, a
-  muted track, a closed device and a guitar still hanging on its stand all read the same -60 dB. The
-  verdict names the state instead of trusting the meter.
+- **Windows is the only platform it has been run on.** The macOS and Linux paths (device selection,
+  settings location, engine interpreter discovery) have unit tests on this host and have not been run
+  against a real install. The engine itself is portable Python plus PortAudio.
+- **It needs an audio interface with a kernel-streaming or exclusive driver for low latency.** On a
+  shared WMME pair it works but feels late; the verdict reports the round trip rather than hiding it.
+- **Tone comes from what you own.** No amp is modelled in code: a capture and a cabinet are the sound.
+  Without them it is a clean path with a tone stack.
+- **Silence on the meter is ambiguous.** A guitar on its stand, a muted input and a closed device all
+  read -60 dB, so the verdict names the state instead of trusting the meter.
+- **Latency is measured, not promised.** The number comes from the driver's own report plus what the
+  stream callback sees; 10 ms round trip is what this interface does, not a floor for every machine.
 
-## Status
+## Sound and measurements
 
-Working and verified against REAPER 7.77: the bridge, the launch and standby rules, the arm safety
-floor, tone application, the live switch, the readiness verdict, panic, the amp face backend, the
-pane with its sliders and status-bar chip, and deep links that only fire while REAPER is on screen.
-426 unit tests, `hermes plugins validate` and `hermes plugins validate --install-deps` both pass.
-
-The demo rig is verified the same way: a live pass through `dashboard.plugin_api` with a throwaway
-home turns the demo on (READY, moving meter, knob tweak, tone load, PANIC to `NO CHAIN`, restore to
-READY) and off again (`REAPER NOT RUNNING`), and the pane's own button was clicked in the preview
-harness to prove the face flips.
-
-Verified in a fresh Hermes session: `amphead_live` reported `live=True | armed=True | monitor=True |
-master_db=-20.0 | input=1 | clips_at=11.61`, and `amphead_status` read back `device=open`,
-`buffer=512`, `rate=44100`, `out_ms=11.61`.
-
-Install it into Hermes with `hermes plugins install iblaststatic2020/hermes-reaper-amp --enable`.
-
-Two host facts that cost real time and are worth knowing before touching the bridge:
-
-- FX chunk payloads must be wrapped at 128 characters. A chunk with 78-character lines is accepted and
-  then ignored, and the readback looks identical to the input.
-- A plugin-written chunk can contain `=` padding in the middle, so strip every `=` before decoding and
-  re-pad afterwards.
-
-## Catalog status
-
-`CATALOG_READINESS.md` audits this repo against what Hermes documents a plugin to be and what the
-catalog requires: what the docs allow, why a plugin that fronts another application is a supported
-category, and every gap that blocks or will be raised in review, each with its fix and acceptance
-check. Read it before cutting the catalog PR.
-
-Short version: the plugin qualifies on shape, surfaces and the contest's own wording. The repo stays
-private on purpose until submission, so the remaining work is an application declaration for REAPER, a
-fuller disclosure, an unattended-run test, and a fresh pin cut at the end.
+`ENGINE_MEASUREMENTS.md` holds the numbers: block budget, convolution cost per block for a 16 384-tap
+and a 262 144-tap cabinet, the 117%-of-realtime bug that made a 4x12 cut in and out, and the duplex
+stream that took the round trip from about 20 ms to about 10 ms. The short version: a cabinet longer
+than one block is convolved in partitions, so a 262 144-tap 4x12 costs 1.83 ms of an 11.6 ms block
+instead of 13.6 ms, and one duplex stream replaced the two-stream queue whose cushion was the latency.
 
 ## Layout
 
 ```
-amphead/bridge.py     file-queue client: call, liveness, guards, batch
-amphead/launch.py     find, start, stop, and health of the host
-amphead/namstate.py   decode and rewrite NAM state chunks
-amphead/tones.py      natural language to preset, with knob moves
-amphead/presets.py    preset files: knobs by name, one undo group, read back
-amphead/snapshots.py  whole-rig snapshots and the diff between two
-amphead/verdict.py    the one judge the tool, the pane and the chip all call
-amphead/tools.py      the plugin tools Hermes calls
+amphead/engine2.py       the audio engine: device, stream, captures, cabinets, tone, master
+amphead/engine_main.py   JSON-line server so another process can drive the engine
+amphead/local_port.py    the phone line to that engine
+amphead/port.py          the tiny vocabulary the tools, routes and tests share
+amphead/verdict.py       the one judge the tool, the pane and the tests all call
+amphead/library.py       find captures and cabinets, name the tone from the files
+amphead/settings.py      the settings file and its environment overrides
+amphead/nam.py           NAM WaveNet in numpy, parity-tested against PyTorch
+amphead/cab.py           partitioned overlap-save FIR convolution, resampling
+amphead/tone.py          bass/mid/treble biquads
+amphead/tools.py         the plugin tools Hermes calls
+amphead/play.py          play from a terminal with no window
 dashboard/plugin_api.py  the routes the pane reads and writes
-desktop/plugin.js     the amp face: pane, sidebar row, palette entry, status bar chip
-reaper/bridge.lua     the script that runs inside REAPER
-tests/                unit tests, no host required
+desktop/plugin.js        the amp face
+tests/                   unit tests, no interface and no captures required
 ```
 
 ## Development
 
 ```
-python -m unittest discover -s tests -q
+.engine/Scripts/python -m unittest discover -s tests -q
 hermes plugins validate .
 ```
 
-Tests run without REAPER. Only the integration paths in `tools.py` touch a live host.
+Both interpreters get through the suite: the engine interpreter runs the DSP and device tests, the
+plugin interpreter runs the dashboard tests, and each skips the handful of tests that need what the
+other one has.
+
+Install it into Hermes with `hermes plugins install iblaststatic2020/hermes-reaper-amp --enable`
+while the repo is still private, or from the catalog once it is public.

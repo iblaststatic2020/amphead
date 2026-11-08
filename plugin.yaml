@@ -1,6 +1,6 @@
 name: amphead
 version: 1.0.0
-description: "Turn a REAPER session into a guitar rig Hermes can build, hold and verify: it launches the host, makes its own tab, loads the amp and drive, then stops in standby until you flip the Live switch."
+description: "Turn Hermes into a guitar amp: it starts its own low-latency audio engine, loads a NAM capture and a cabinet IR, gives you bass/mid/treble, input and output trims, and stays in standby until you flip the Live switch."
 author: "@static2020"
 provides_tools:
   - amphead_ping
@@ -12,8 +12,5 @@ provides_tools:
   - amphead_panic
   - amphead_ready
   - amphead_set
-  - amphead_build
-  - amphead_preset
-  - amphead_ab
   - amphead_settings
 requires_hermes: ">=0.22.0"

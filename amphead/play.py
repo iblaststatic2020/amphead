@@ -1,4 +1,4 @@
-"""Play through the engine with no DAW and no window.
+"""Play through the engine with no window.
 
     python -m amphead.play --capture "model.nam" --cab "ir.wav" --arm
 
@@ -130,7 +130,7 @@ def meters(engine, seconds: float, arm: bool) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Play through AmpHead 2, no DAW")
+    parser = argparse.ArgumentParser(description="Play through the amp")
     parser.add_argument("--capture", help="a .nam capture file")
     parser.add_argument("--cab", help="a cabinet impulse response .wav")
     parser.add_argument("--input", help="input device name or index")

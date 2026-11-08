@@ -78,25 +78,6 @@ def rig() -> local_port.AmpHead2Rig:
     return local_port.AmpHead2Rig(client=FakeClient())
 
 
-class PaneTest(unittest.TestCase):
-    def test_the_engine_publishes_itself_as_the_active_tab(self):
-        """The pane refuses to write without an active tab, and the engine has no tabs."""
-        tabs = rig().tabs_list()
-        self.assertEqual(len(tabs), 1)
-        self.assertTrue(tabs[0]["active"])
-        self.assertTrue(tabs[0]["path"])
-
-    def test_the_active_tab_is_named_for_the_player_not_for_a_file(self):
-        r = rig()
-        r.client.capture = "C:/captures/bugera.nam"
-        self.assertEqual(r.tabs_list()[0]["path"], r.project())
-
-    def test_state_never_names_a_project_file_that_does_not_exist(self):
-        state = rig().state()
-        self.assertEqual(state["project"], local_port.LABEL)
-        self.assertIn("no project file", state["path"])
-
-
 class KnobTest(unittest.TestCase):
     def test_a_write_reports_what_the_engine_holds_afterwards(self):
         r = rig()
@@ -211,8 +192,11 @@ class ArmTest(unittest.TestCase):
         self.assertTrue(out["armed"])
         self.assertAlmostEqual(out["master_db"], -6.0)
 
-    def test_a_capture_is_not_a_guessed_default(self):
-        self.assertIsNone(rig().project())
+    def test_the_state_says_open_and_nothing_about_a_project(self):
+        state = rig().state()
+        self.assertTrue(state["open"])
+        self.assertNotIn("project", state)
+        self.assertNotIn("path", state)
 
 
 class InputTest(unittest.TestCase):

@@ -3,32 +3,24 @@ repo: https://github.com/iblaststatic2020/hermes-reaper-amp
 sha: ce2600729da8d4ec8b4d096cb05f991ace17b800
 title: AmpHead
 description: >-
-  Turns a REAPER session into a guitar rig the agent can build, hold and verify: it launches the host
-  minimized, makes its own project tab, loads the amp and drive, sets the knobs, then parks the
-  master at -60 dB and stops in standby until the player flips the Live switch. Every write is read
-  back from the plugin and compared as a number, and a tone request in plain words ("an amp that
-  sounds like blink182", "I want to sound like AC/DC") resolves to a saved NAM capture plus IR and
-  reports what it loaded. A desktop pane shows the live input meter, the real chain, every knob the
-  plugin publishes and a READY / NO SIGNAL / CLIPPING verdict.
+  Turns Hermes into a guitar amp. It starts its own low-latency audio engine (one duplex stream on
+  the interface, 512-frame blocks, about 10 ms round trip on a kernel-streaming driver), loads a NAM
+  capture and a cabinet IR, and gives you the knobs a head has: bass, mid, treble, input gain,
+  output gain and master. It parks the master at -60 dB and stays in standby until you flip the Live
+  switch, arms at a measured -6 dB, and answers READY / STANDBY / NO SIGNAL / NO CHAIN / CLIPPING /
+  DEVICE CLOSED with the reason in a sentence. A desktop pane is drawn as an amp head: the tone named
+  from the two files on the chain, a metre, the file pickers, and a dead man's switch that parks the
+  master, disarms and bypasses every stage while proving the input is still arriving.
 
-  AmpHead touches the machine in five ways. It runs PowerShell (`-NoProfile -ExecutionPolicy Bypass`)
-  to find REAPER, launch it minimized, steer and measure its window, count running instances, and
-  stop a REAPER it started itself. It installs a Lua bridge into the REAPER resource path, appending
-  one line to `__startup.lua` after backing that file up, and removes both on uninstall. While
-  connected it runs a long-lived background request channel over files in the Hermes data folder,
-  polled at 150 ms from Python and answered by a loop inside REAPER. It reads track names, the FX
-  chain, every parameter name and value the loaded plugin publishes, the master fader, and the path
-  of the project it is pointed at, all from a session it did not create. It writes plugin parameters
-  and the record input into its own rig tab as one undo group per action, lowers the master fader,
-  and saves that tab to its own `.rpp` under the Hermes data folder. It never saves, renames or
-  overwrites your song projects, never touches audio files, stores no credentials and makes no
-  network calls.
-
-  Once the headless engine is in use it reads one settings file (`%APPDATA%\amphead\settings.json`
-  and the equivalents above), writes it only when you or your agent call `amphead_settings action=set`,
-  and scans the folders named there for `.nam` and `.wav` files. `action="find"` additionally walks
+  AmpHead runs one Python process of its own, the engine, in `.engine` beside the plugin. That process opens the
+  audio interface (exclusive kernel streaming on Windows, CoreAudio on macOS, ALSA on Linux) and keeps
+  it open while the amp is on. It reads `.nam` captures and `.wav` cabinets from the folders named in
+  a settings file (`%APPDATA%\amphead\settings.json` and the macOS/Linux equivalents), and writes
+  that file only when you or your agent call `amphead_settings action=set`. `action="find"` walks
   Documents, Downloads, Desktop, Music and the cloud folders inside them, four levels deep, reading
-  file names only; it does not open, copy or change them.
+  file names only. It remembers the last capture and cabinet in `~/.amphead2.json`. It makes no
+  network calls, sends no telemetry, stores no credentials, and does not launch, steer or read any
+  other application: there is no other application.
 maintainer: iblaststatic2020
 tier: community
 category: tools
@@ -41,10 +33,10 @@ platforms:
   - macos
   - linux
 known_issues:
-  - REAPER 7 must be installed; the plugin refuses rather than guessing a path when it cannot find it.
-  - No DSP and no tuner. Latency is REAPER's, reported in ms with >15 ms called out as too slow to play through.
-  - Tested on Windows only. macOS and Linux take the same ReaScript bridge and their own resource paths, but have not been run by the author, and window hiding is Windows only.
-  - Amp choice cannot be a parameter write on the NAM builds, so "load this capture" switches a saved REAPER FX preset and verifies the capture name by read-back.
+  - Tested on Windows only. The macOS and Linux paths (device selection, settings location, engine discovery) have unit tests but have not been run by the author against a real install.
+  - Low latency needs an interface with a kernel-streaming or exclusive driver; on a shared WMME pair it works but feels late, and the verdict reports the round trip rather than hiding it.
+  - Tone comes from captures and cabinets you own; no amp is modelled in code, and without a capture and a cabinet the path is clean with a tone stack.
+  - The engine's first start installs numpy and sounddevice into `.engine` beside the plugin; `amphead_setup` says what is missing rather than failing silently.
 capabilities:
   provides_tools:
     - amphead_ping
@@ -56,9 +48,6 @@ capabilities:
     - amphead_panic
     - amphead_ready
     - amphead_set
-    - amphead_build
-    - amphead_preset
-    - amphead_ab
     - amphead_settings
   provides_hooks: []
   provides_middleware: []

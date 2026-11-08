@@ -68,7 +68,7 @@ class TestFindingWhatIsAlreadyOnTheDisk(Rig):
         self.assertEqual(found["candidates"], [], "past the depth limit is somebody else's tree")
 
     def test_a_render_folder_does_not_outrank_an_ir_library_by_count_alone(self):
-        self.touch(*["Documents", "REAPER Media", "Media"] + [f"take{i}.wav" for i in range(20)])
+        self.touch(*["Documents", "Recordings", "Media"] + [f"take{i}.wav" for i in range(20)])
         self.touch("Documents", "Guitar", "IRs", "v30.wav")
         with mock.patch.object(Path, "home", return_value=self.root):
             names = [Path(r["path"]).name for r in library.find()["candidates"]]

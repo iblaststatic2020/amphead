@@ -57,16 +57,16 @@ class EveryToolAnswersInJson(unittest.TestCase):
     def test_a_refusal_is_marked_as_one(self):
         for sentence in ("REFUSED: going live arms the rig. Call again with confirm=true.",
                          "NOT LIVE: no project is open, call amphead_setup first",
-                         "NOT RUNNING: REAPER is not open"):
+                         "NOT RUNNING: the amp engine is not open"):
             with self.subTest(sentence=sentence[:12]):
                 payload = json.loads(tools.json_answer("amphead_live", sentence))
                 self.assertFalse(payload["ok"], sentence)
                 self.assertEqual(payload["summary"], sentence)
 
     def test_a_verdict_inside_the_opening_clause_still_counts(self):
-        """`REAPER NOT RUNNING: installed at ...` is a failed ping, not a successful one."""
+        """`ENGINE NOT RUNNING: nothing on the pipe ...` is a failed ping, not a successful one."""
         payload = json.loads(tools.json_answer(
-            "amphead_ping", "REAPER NOT RUNNING: installed at C:\\Program Files\\REAPER; call amphead_setup"))
+            "amphead_ping", "ENGINE NOT RUNNING: no engine answered on the pipe; call amphead_setup"))
         self.assertFalse(payload["ok"])
         passing = json.loads(tools.json_answer("amphead_ready", "READY: everything is fine, nothing is parked"))
         self.assertTrue(passing["ok"])

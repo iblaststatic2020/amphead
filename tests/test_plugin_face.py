@@ -60,14 +60,13 @@ class TestFaceMatchesVerdicts(unittest.TestCase):
         self.assertGreater(len(words), 10, "verdict.py stopped exporting its words")
         missing = [
             word for word in words
-            if word not in verdicts.DAW_ONLY
-            and not re.search(rf"^\s*['\"]?{re.escape(word)}['\"]?:", table, re.M)
+            if not re.search(rf"^\s*['\"]?{re.escape(word)}['\"]?:", table, re.M)
         ]
         self.assertEqual([], missing, f"the face has no colour for: {missing}")
 
-    def test_the_daws_own_words_are_not_on_an_engine_face(self):
+    def test_the_face_paints_no_host_words(self):
         table = verdict_table(face())
-        for word in verdicts.DAW_ONLY:
+        for word in ("BRIDGE GONE", "NO REAPER INSTALL", "RIG TAB CLOSED"):
             self.assertNotIn(word, table, f"the face still paints {word}")
 
 

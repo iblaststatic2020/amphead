@@ -1,7 +1,7 @@
 """The few things no code can guess about the machine it runs on.
 
-AmpHead works out most of its own world: it finds REAPER's resource directory, it finds
-the bridge, it picks a capture and a cabinet from the last thing played. What it cannot
+AmpHead works out most of its own world: it finds the audio interface, it remembers
+the capture and cabinet played last.  What it cannot
 work out is where a player keeps their captures, which interface input is the guitar,
 and how hard this particular driver wants to be pushed. Those are choices, so they live
 in a settings file, one JSON object, in the same place on every install:

@@ -1,12 +1,9 @@
-"""The local rig: AmpHead 2, no DAW.
+"""The amp, as the plugin sees it.
 
-Same verbs the REAPER rig answers, so the pane, the tools, the verdict and the
-presets cannot tell which one is behind them. The only difference a player sees is
-that no window opens.
-
-The engine is a separate process on purpose: it owns the audio device, the agent
-owns the conversation, and neither can stall the other. Here we are only the phone
-line to it -- one JSON object per line in, one per line out.
+Hermes is the amp head now: there is no host application to open and no project to make. The
+engine in `engine2.py` owns the audio interface, the agent owns the conversation, and neither can
+stall the other because the engine runs in its own process. This module is only the phone line
+to it: one JSON object per line in, one per line out.
 """
 
 from __future__ import annotations
@@ -173,7 +170,7 @@ class EngineClient:
     def call(self, timeout: float | None = None, **request: Any) -> dict:
         if not self.running:
             raise EngineGone(f"{LABEL} is not running. Start it with amphead_setup, or play "
-                             f"through REAPER with AMPHEAD_ENGINE=reaper.")
+                             f"by installing the engine: this plugin ships it.")
         proc = self._proc
         assert proc is not None and proc.stdin is not None and proc.stdout is not None
         payload = json.dumps(request) + "\n"
@@ -233,7 +230,7 @@ class EngineClient:
 
 
 class AmpHead2Rig:
-    """AmpHead's own engine, hosting the chain without a DAW."""
+    """AmpHead's own engine: it hosts the chain, and there is no other host."""
 
     name = "amphead2"
     label = LABEL
@@ -266,14 +263,6 @@ class AmpHead2Rig:
             return ("live", f"{LABEL} is running")
         return ("absent", f"{LABEL} is not running")
 
-    def tabs_list(self, **kw: Any) -> list:
-        """One chain, always open, always the one you are listening to.
-
-        The pane asks a rig which tab is active and refuses to write without an answer,
-        so the engine answers with itself instead of an empty list: the guard exists to
-        stop a stale handle landing on somebody's song, and there is no song here.
-        """
-        return [{"active": True, "path": str(self.project() or LABEL), "index": 0}]
 
     def track_info(self, track: int = 1, **kw: Any) -> dict:
         got = self._call(cmd="status")
@@ -288,8 +277,6 @@ class AmpHead2Rig:
             "mode": got.get("mode"),
         }
 
-    def track_names(self, **kw: Any) -> list[str]:
-        return [LABEL]
 
     def master(self, **kw: Any) -> dict:
         got = self._call(cmd="status")
@@ -315,20 +302,7 @@ class AmpHead2Rig:
         rows = [{"i": k, "name": f"IN {k + 1}"} for k in range(count)]
         return {"count": count, "channels": rows}
 
-    def describe_input(self, value: Any) -> str:
-        if value is None or value == "":
-            return "no input"
-        if isinstance(value, int):
-            if value >= port.INPUT_PAIR_BASE:
-                return f"input {value - port.INPUT_PAIR_BASE + 1} (stereo)"
-            if value == port.INPUT_NONE:
-                return "no input"
-            return f"input {value + 1}"
-        return str(value)
 
-    def project(self) -> str | None:
-        got = self._call(cmd="status")
-        return str(got.get("capture") or "") or None
 
     def fx_list(self, track: int = 1, **kw: Any) -> list:
         """Three stages, each saying whether it is loaded and whether it is in the path.
@@ -490,57 +464,36 @@ class AmpHead2Rig:
             raise EngineRefused(str(got["refused"]))
         return {"i": fx, "name": name, "enabled": bool(got.get("enabled"))}
 
-    def fx_focus(self, track: int = 1, fx: int = 0, **kw: Any) -> dict:
-        return {"focused": None, "note": f"{LABEL} draws no plugin windows"}
 
-    def undo(self, **kw: Any) -> dict:
-        raise EngineRefused(f"{LABEL} has no undo history; the chain is three stages and no edits")
 
     # project-shaped verbs --------------------------------------------------
-    def open_rig(self, path: str, **kw: Any) -> dict:
-        return {"path": path, "mode": "engine", "note": f"{LABEL} keeps no project file"}
 
-    def close_rig(self, path: str, **kw: Any) -> dict:
-        self._call(cmd="panic")
-        return {"mode": "engine", "tracks_removed": 0, "path": path}
 
-    def build(self, *args: Any, **kw: Any) -> Any:
-        raise EngineRefused(
-            f"{LABEL} needs no build step: load a capture with amphead_capture, a cabinet with "
-            f"amphead_cab, and arm. There is no track to create."
-        )
 
-    def teardown(self, *args: Any, **kw: Any) -> dict:
-        # Close the device first, then end the process. Teardown that leaves the engine
-        # running keeps the pane on "live" and leaves a background process behind.
-        if self.client.running:
-            try:
-                self._call(cmd="stop")
-            except port.RigError:
-                pass
-        self.client.stop()
-        return {"closed": "engine stopped", "host": "engine process exited"}
 
     # the host it does not have ---------------------------------------------
-    def find(self) -> str:
-        return f"{self.client.python} (engine interpreter)"
 
     def running(self) -> bool:
         return self.client.running
 
     def state(self) -> dict:
+        """What the engine is doing, in the words the judge and the face both read.
+
+        `open` is the only thing that decides whether the switch reads SET UP or GO LIVE. Every
+        other field is a fact the engine reported, not a guess made here: if the engine cannot
+        answer, nothing below the first line is invented.
+        """
         if not self.client.running:
-            return {"bridge": "gone", "rig_tab": True, "project": LABEL,
-                    "path": "", "tracks": 1, "device": {"closed": True}, "engine": self.name}
+            return {"open": False, "engine": self.name, "armed": False,
+                    "device": {"closed": True}}
         got = self._call(cmd="status")
         latency = got.get("latency_ms")
         tone = got.get("tone") or {}
         return {
-            "bridge": "live",
-            "rig_tab": True,
-            "project": LABEL,
-            "path": str(got.get("capture") or f"{LABEL} (no project file)"),
-            "tracks": 1,
+            "open": True,
+            "engine": self.name,
+            "armed": bool(got.get("armed")),
+            "master_db": got.get("master_db"),
             "device": {
                 "buffer": got.get("blocksize"),
                 "rate": got.get("samplerate"),
@@ -548,8 +501,9 @@ class AmpHead2Rig:
                 "latency_rt_ms": latency,
                 "closed": not got.get("running"),
                 "mode": got.get("mode"),
+                "inputs": got.get("input_channels"),
+                "name": got.get("device") or got.get("input_device") or "",
             },
-            "engine": self.name,
             # What is actually in the chain, in the engine's own words. The face cannot show
             # a capture by name if the adapter keeps the name to itself.
             "capture": _name(got.get("capture")),
@@ -558,8 +512,12 @@ class AmpHead2Rig:
             "cab_path": got.get("cab") or "",
             "tone": {k: float(tone.get(k) or 0.0) for k in ("bass", "mid", "treble")},
             "stages": got.get("stages") or {},
+            "input_channel": got.get("input_channel"),
+            "input_channels": got.get("input_channels"),
             "samplerate": got.get("samplerate"),
             "blocksize": got.get("blocksize"),
+            "input_gain_db": got.get("input_gain_db"),
+            "output_gain_db": got.get("output_gain_db"),
             "latency_ms": latency,
             "mode": got.get("mode"),
         }
@@ -571,27 +529,11 @@ class AmpHead2Rig:
         self.client.start()
         return {"ui": "none", "engine": self.name}
 
-    def ensure_audio(self, **kw: Any) -> Any:
-        got = self._call(cmd="start")
-        devices = self._call(cmd="devices")
-        return {
-            "count": int(self._call(cmd="status").get("input_channels") or 0),
-            "inputs": len(devices.get("inputs") or []),
-            "outputs": len(devices.get("outputs") or []),
-            "mode": got.get("mode"),
-            "output_latency_ms": round(float(got.get("latency_ms") or 0) / 2, 2),
-        }
 
     def stop(self) -> bool:
         return self.client.stop()
 
-    def ui_visible(self) -> bool:
-        return False
 
-    def install(self, **kw: Any) -> Any:
-        self.client.check_env()
-        return type("Installed", (), {"bridge_path": self.client.python,
-                                      "startup_action": "nothing to install"})()
 
     def library(self, **kw: Any) -> dict:
         """What can be loaded, and what is loaded: the pane's amp and cabinet menus.
@@ -635,15 +577,13 @@ class AmpHead2Rig:
         return {"cab": _name(got.get("cab")), "path": got.get("cab"),
                 "file_rate": got.get("file_rate"), "resampled": got.get("resampled")}
 
-    def prepare_file(self, path: Any, **kw: Any) -> Any:
-        return None
 
     def debug_call(self, cmd: str, **kw: Any) -> dict:
         return self._call(cmd=cmd, **kw)
 
     # helpers ---------------------------------------------------------------
     def _input_spec(self, got: dict) -> Any:
-        """The socket the engine is really reading, as REAPER would number it (from zero)."""
+        """The socket the engine is really reading, counted from zero as the engine does."""
         if not got.get("running"):
             return port.INPUT_NONE
         return max(0, int(got.get("input_channel") or 1) - 1)

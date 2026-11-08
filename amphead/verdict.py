@@ -1,28 +1,23 @@
-"""One judge for the rig, shared by the tool and the amp face.
+"""One judge for the amp, shared by the tools and the face.
 
 The pane and the agent must never disagree about whether the amp is playable, so the rules live
-here once. Everything in this module is pure: hand it what REAPER said and it returns a word, a
-sentence a player can act on, and the list of things that are wrong.
+here once. Everything in this module is pure: hand it what the engine said and it returns a word,
+a sentence a player can act on, and the list of things that are wrong.
+
+The words are the whole vocabulary the face can paint. A new one needs a colour in
+`desktop/plugin.js`, because a verdict the pane cannot paint is a verdict the player cannot read.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-PARKED_DB = -59.0  # the floor setup and PANIC park the master at
-ARM_DB = -6.0  # the level arming uses, measured: a -18 dBFS DI peaks at -2.9 dBFS
-FLOOR = 0.001            # -60 dB, the same floor the rig boots and parks at
+PARKED_DB = -59.0       # the floor setup and PANIC park the master at
+ARM_DB = -6.0           # the level arming uses, measured so a -18 dBFS DI does not clip
+FLOOR = 0.001           # -60 dB: below this the engine is open and hearing nothing
 LATENCY_LIMIT_MS = 40.0  # beyond this, playing feels late even when the meter is moving
 
-# Words are the whole vocabulary. A new one needs a colour in the pane, because a verdict the
-# pane cannot paint is a verdict the player cannot read.
-REAPER_NOT_RUNNING = "REAPER NOT RUNNING"
-REAPER_BUSY = "REAPER BUSY"
-NO_REAPER_INSTALL = "NO REAPER INSTALL"
-BRIDGE_GONE = "BRIDGE GONE"
 ENGINE_OFF = "ENGINE OFF"
-TWO_REAPER = "TWO REAPER"
-RIG_TAB_CLOSED = "RIG TAB CLOSED"
 DEVICE_CLOSED = "DEVICE CLOSED"
 DEVICE_UNPLUGGED = "DEVICE UNPLUGGED"
 DEVICE_REOPENED = "REOPENED DEVICE"
@@ -34,30 +29,23 @@ NO_SIGNAL = "NO SIGNAL"
 CLIPPING = "CLIPPING"
 READY = "READY"
 
-# Words only a hosted DAW rig can raise: it has a process to lose, a bridge to drop, a tab to
-# close. The local engine has none of those, so its face does not carry colours for them. The
-# judge still speaks them when someone opts into `port.choose("reaper")`.
-DAW_ONLY = frozenset({REAPER_NOT_RUNNING, REAPER_BUSY, NO_REAPER_INSTALL, BRIDGE_GONE,
-                      TWO_REAPER, RIG_TAB_CLOSED})
-
 
 def _device(state: dict) -> dict:
     device = state.get("device") or {}
     return {
         "buffer": device.get("buffer") or "",
         "rate": device.get("rate") or "",
+        "mode": device.get("mode") or state.get("mode") or "",
         "out_ms": float(device.get("latency_out_ms") or 0.0),
         "closed": bool(device.get("closed")),
-        # None means nobody looked, which is not the same as zero inputs on a live device.
+        # None means nobody looked, which is not the same as zero inputs on either socket.
         "inputs": device.get("inputs"),
-        # True when this session reopened a device that came up closed (a killed REAPER leaves
-        # ASIO wedged). It is a note about what just happened, not an error.
         "reopened": bool(device.get("reopened")),
     }
 
 
 def clip_of(reading: dict) -> bool:
-    """The bridge latches the clip flag and clears it on read, so one true sample is the truth."""
+    """The engine reports the peak it saw; one sample at the ceiling is the truth."""
     return bool(reading.get("clip"))
 
 
@@ -65,152 +53,74 @@ def _peak(reading: dict) -> float:
     return float(max(reading.get("l") or 0.0, reading.get("r") or 0.0))
 
 
-def judge(state: dict, track: dict, reading: dict,
-          chain: list[dict] | None = None) -> dict[str, Any]:
-    """Return {verdict, reason, problems}. `reading` is one METER sample, already the loudest.
+def judge(state: dict, reading: dict, chain: list[dict] | None = None) -> dict[str, Any]:
+    """Return {verdict, reason, problems}. `reading` is one meter sample, already the loudest.
 
-    chain=None means the caller did not look at the chain, so the chain rules are skipped rather
-    than guessed at. recinput missing means the same about the input.
-
-    Facts the caller may add to `state`, each of which switches on one rule:
-      bridge      "live" | "down" | "not-running" | "gone" | "no-install"
-      instances   how many reaper.exe processes are alive (0 = not checked)
-      rig_tab     False when the project in front of REAPER is not the rig
-
-    Each word names the broken thing rather than the symptom. NO SIGNAL is what a muted track, a
-    closed device and an empty input all look like, and a pane that says NO SIGNAL for all three
-    teaches the player to ignore it.
+    chain=None means the caller did not look at the stages, so the stage rules are skipped rather
+    than guessed at. Each word names the broken thing rather than the symptom: NO SIGNAL is what a
+    closed device, an empty input and a parked master all look like, and a pane that says NO SIGNAL
+    for all three teaches the player to ignore it.
     """
     problems: list[str] = []
 
-    if state.get("bridge") != "live":
-        # The local engine has no REAPER to be "gone": it is started and stopped by this plugin,
-        # so the honest word is off, and the reason names the control that turns it on.
-        if str(state.get("engine") or "") == "amphead2":
-            return {"verdict": ENGINE_OFF,
-                    "reason": "the local engine is not running: the switch on the face reads SET UP",
-                    "problems": problems}
-        word = {
-            "no-install": NO_REAPER_INSTALL,
-            "gone": BRIDGE_GONE,
-            "down": REAPER_BUSY,
-        }.get(str(state.get("bridge")), REAPER_NOT_RUNNING)
-        return {"verdict": word, "reason": str(state.get("reason") or "the bridge has not answered"),
+    if not state.get("open"):
+        return {"verdict": ENGINE_OFF,
+                "reason": "the engine is not running: the switch on the face reads SET UP",
                 "problems": problems}
-
-    # Two copies of REAPER both service the same request file, so an answer can come from the
-    # instance the player is not looking at. Nothing downstream can be trusted until that is one.
-    if int(state.get("instances") or 0) > 1:
-        count = int(state["instances"])
-        return {"verdict": TWO_REAPER,
-                "reason": f"{count} copies of REAPER are running and they share one bridge folder, "
-                          "so an answer comes from whichever one grabs the request. Quit them all "
-                          "and run setup.",
-                "problems": [f"{count} reaper.exe processes"]}
-
-    if state.get("rig_tab") is False:
-        return {"verdict": RIG_TAB_CLOSED,
-                "reason": "the project open in REAPER is not the amp rig, so these controls would "
-                          "drive somebody else's song. Run setup to bring the rig tab forward.",
-                "problems": ["the active project is not the rig"]}
 
     device = _device(state)
     if device["closed"]:
         return {"verdict": DEVICE_CLOSED,
-                "reason": "REAPER has no audio device open. Flip LIVE and it opens one for you.",
+                "reason": "the engine has no audio device open. Press GO LIVE and it opens one.",
                 "problems": ["the audio device is closed"]}
 
     if device["inputs"] is not None and int(device["inputs"]) == 0:
         return {"verdict": DEVICE_UNPLUGGED,
-                "reason": "the audio device has no inputs, so nothing can arrive: check the "
-                          "interface is connected and powered.",
+                "reason": "the interface reports no inputs, so nothing can arrive: check it is "
+                          "connected and powered.",
                 "problems": ["the device reports 0 inputs"]}
 
-    if not track.get("armed"):
-        # A started engine is a device that is open and silent. That is a state in its own right,
-        # and the face has to be able to say it: otherwise a player reads "not armed", looks for
-        # the Setup button, and finds GO LIVE instead because Setup has already done its job.
-        if str(state.get("engine") or "") == "amphead2":
-            master = state.get("master_db")
-            where = (f"parked at {float(master):.0f} dB" if master is not None
-                     and float(master) <= PARKED_DB else "on")
-            return {"verdict": STANDBY,
-                    "reason": f"the engine is already open and silent, master {where}: GO LIVE "
-                              f"arms it at the safe {ARM_DB:.0f} dB",
-                    "problems": ["the engine is open but nothing is live"]}
-        return {"verdict": STANDBY, "reason": "the track is not armed, flip LIVE to play",
-                "problems": ["the track is not armed"]}
-
-    if track.get("mute"):
-        return {"verdict": MUTED,
-                "reason": "the track is muted in REAPER, so nothing reaches the master. Unmute it "
-                          "in the mixer, or flip LIVE to be sure the rig is what you hear.",
-                "problems": ["the track is muted"]}
-
-    # Below zero is no input. Zero is the FIRST input, and reading it as "none" told a player with
-    # a guitar in channel 1 that the track had no input selected.
-    if "recinput" in track and int(float(track.get("recinput"))) < 0:
-        return {"verdict": NO_INPUT,
-                "reason": "the track is armed but pointed at no input, so nothing can arrive",
-                "problems": ["recinput is -1 (no input selected)"]}
+    if not state.get("armed"):
+        master = state.get("master_db")
+        where = (f"parked at {float(master):.0f} dB" if master is not None
+                 and float(master) <= PARKED_DB else "on")
+        return {"verdict": STANDBY,
+                "reason": f"the engine is open and silent, master {where}: GO LIVE arms it at the "
+                          f"safe {ARM_DB:.0f} dB",
+                "problems": ["the engine is open but nothing is live"]}
 
     peak = _peak(reading)
     if clip_of(reading):
         return {"verdict": CLIPPING,
-                "reason": "the input is hitting the ceiling, back your guitar volume off",
-                "problems": ["the input is clipping"]}
+                "reason": "the output is hitting the ceiling, back the input gain off",
+                "problems": ["the output is clipping"]}
 
-    live_fx: list[str] = []
+    live: list[str] = []
     if chain is not None:
-        live_fx = [str(fx.get("name")) for fx in chain if fx.get("enabled", True)]
-    if chain is not None and not chain:
-        return {"verdict": NO_CHAIN,
-                "reason": "the track is live but nothing is loaded on it, so you hear the raw DI",
-                "problems": ["the chain is empty"]}
-    if chain is not None and not live_fx:
-        return {"verdict": NO_CHAIN,
-                "reason": "every plugin on the track is bypassed, so you hear the raw DI. "
-                          "That is what PANIC leaves behind; RESTORE puts it back.",
-                "problems": ["every plugin in the chain is bypassed"]}
-
-    bypassed = [str(fx.get("name")) for fx in (chain or []) if not fx.get("enabled", True)]
-    if bypassed:
-        problems.append("still bypassed: " + ", ".join(bypassed))
-
-    if device["out_ms"] > LATENCY_LIMIT_MS:
-        problems.append(f"latency {device['out_ms']} ms is above {LATENCY_LIMIT_MS} ms")
+        live = [str(stage.get("name")) for stage in chain if stage.get("enabled", True)]
+        if not live:
+            return {"verdict": NO_CHAIN,
+                    "reason": "nothing is in the path, so you would hear the raw interface "
+                              "signal. That is what SILENCE leaves behind; GO LIVE re-engages it.",
+                    "problems": ["every stage is out of the path"]}
 
     if peak <= FLOOR:
-        if device["reopened"]:
-            # Silence right after a restart is the device, not the cable. Say which, so the next
-            # ten seconds are not spent wiggling a jack that was never the problem.
-            return {"verdict": DEVICE_REOPENED,
-                    "reason": "the audio device came up closed after REAPER restarted and AmpHead "
-                              "reopened it. If it is still quiet, strum once: the meter sits at "
-                              "-60 dB until something arrives.",
-                    "problems": problems + ["the device had to be reopened after a restart"]}
         return {"verdict": NO_SIGNAL,
                 "reason": "armed and monitoring, but nothing is arriving on this input",
                 "problems": problems + ["the meter never rose above -60 dB"]}
 
-    master_db = reading.get("master_db")
+    master_db = reading.get("master_db", state.get("master_db"))
     if master_db is not None and float(master_db) <= PARKED_DB:
-        # Signal is arriving and the chain is live, but the master is parked: the player would
-        # hear nothing, so this is not "ready". It is the same STANDBY the snapshot boots into.
         return {"verdict": STANDBY,
-                "reason": f"the track is armed and the input is arriving, but the master is parked "
-                          f"at {float(master_db):.0f} dB. Flip LIVE to hear it.",
+                "reason": f"armed and hearing the input, but the master is parked at "
+                          f"{float(master_db):.0f} dB. Raise the master to hear it.",
                 "problems": problems + ["the master is parked at the silent floor"]}
 
-    reason = f"armed, monitoring, {device['out_ms']} ms out"
-    if chain is not None:
-        count = len(live_fx)
-        reason += f", {count} plugin{'s' if count != 1 else ''} live"
+    reason = f"armed, monitoring, {device['out_ms']:.1f} ms round trip"
+    if live:
+        reason += f", {len(live)} stage{'s' if len(live) != 1 else ''} live"
     if device["reopened"]:
         return {"verdict": DEVICE_REOPENED,
-                "reason": "playable, and the audio device had to be reopened after the restart: "
-                          + reason,
-                "problems": problems + ["the device had to be reopened after a restart"]}
+                "reason": "playable, and the audio device had to be reopened: " + reason,
+                "problems": problems + ["the device had to be reopened"]}
     return {"verdict": READY, "reason": reason, "problems": problems}
-
-

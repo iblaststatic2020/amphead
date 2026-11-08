@@ -1,8 +1,12 @@
 """Rule 13 disclosure: the same paragraph in the catalog entry and the README.
 
 The catalog asks a plugin to disclose network calls, reads outside its own data, shell commands,
-long-running background processes and stored credentials. A reviewer reads whichever of the two
-they open first, so the two copies drift the moment one is edited alone. This test is the pin.
+long-running background processes, audio-device access and stored credentials. AmpHead starts its own
+engine now, so the facts a reviewer needs are different from a remote control's: a second process, an
+exclusive audio device held open, and two folders it reads.
+
+A reviewer reads whichever of the two they open first, so the two copies drift the moment one is
+edited alone. This test is the pin.
 
 The catalog description is a YAML folded scalar and the project has no YAML dependency on the
 plugin side, so the reader here folds by hand: newlines become spaces, blank lines become
@@ -17,7 +21,7 @@ CATALOG = ROOT / "plugin-catalog" / "amphead.yaml"
 README = ROOT / "README.md"
 HEADING = "## What this touches"
 #: The first words of the disclosure, used to split the shared text from its own context.
-OPENER = "AmpHead touches the machine in five ways."
+OPENER = "AmpHead runs one Python process of its own"
 
 
 def squash(text: str) -> str:
@@ -65,32 +69,33 @@ class TheDisclosure(unittest.TestCase):
         readme = squash(readme_section().split(OPENER, 1)[1])
         self.assertEqual(catalog, readme, "one paragraph, two copies, or they will drift")
 
-    def test_shell_commands_are_named_not_implied(self):
-        """Undisclosed PowerShell is the kind of thing a reviewer finds and turns into a request."""
+    def test_the_second_process_is_disclosed(self):
+        """A background engine is the kind of thing a reviewer finds and turns into a request."""
         both = f"{catalog_description()} {readme_section()}"
-        for fact in ("PowerShell", "-ExecutionPolicy Bypass", "launch it minimized",
-                     "count running instances", "stop a REAPER it started"):
+        for fact in ("one Python process of its own", ".engine", "beside the plugin"):
             self.assertIn(fact, both)
 
-    def test_the_install_is_disclosed_down_to_the_file_it_edits(self):
+    def test_the_audio_device_is_disclosed_with_the_host_apis(self):
         both = f"{catalog_description()} {readme_section()}"
-        for fact in ("Lua bridge", "REAPER resource path", "__startup.lua", "removes both on uninstall"):
+        for fact in ("opens the audio interface", "kernel streaming", "CoreAudio", "ALSA",
+                     "keeps it open while the amp is on"):
             self.assertIn(fact, both)
 
-    def test_the_long_lived_channel_is_disclosed_with_its_rate(self):
+    def test_reads_and_writes_outside_its_own_data_are_disclosed(self):
         both = f"{catalog_description()} {readme_section()}"
-        self.assertIn("long-lived background request channel", both)
-        self.assertIn("150 ms", both, "the poll rate is the part that makes it a background process")
-
-    def test_reads_outside_its_own_data_are_disclosed(self):
-        both = f"{catalog_description()} {readme_section()}"
-        for fact in ("track names", "FX chain", "parameters", "master fader", "project"):
+        for fact in ("`.nam`", "`.wav`", "settings file", "amphead_settings action=set",
+                     "~/.amphead2.json"):
             self.assertIn(fact, both)
-        self.assertIn("from a session it did not create", both)
+
+    def test_the_folder_walk_is_disclosed_with_its_depth(self):
+        both = f"{catalog_description()} {readme_section()}"
+        self.assertIn("four levels deep", both)
+        self.assertIn("reading file names only", both, "the depth is the part that needs a reason")
 
     def test_what_it_does_not_do_is_stated_as_plainly(self):
         both = f"{catalog_description()} {readme_section()}"
-        for fact in ("never touches audio files", "stores no credentials", "no network calls"):
+        for fact in ("no network calls", "no telemetry", "stores no credentials",
+                     "does not launch, steer or read any other application"):
             self.assertIn(fact, both)
 
 

@@ -1,4 +1,4 @@
-"""The no-DAW engine: our own device, our own buffer, our own chain.
+"""The engine: our own device, our own buffer, our own chain, no host application.
 
 One duplex stream, not two. Two streams have to hand blocks over a queue, and every
 block standing in that queue is a block of delay between the string and the speaker:
