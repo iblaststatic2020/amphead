@@ -462,8 +462,18 @@ class Engine:
 
     @property
     def running(self) -> bool:
+        """Whether audio is flowing. A device that was pulled out mid-take makes the question
+        itself raise, so this answers False and keeps the reason instead of taking `status()`,
+        and every tool that reads it, down with it."""
         stream = self._duplex if self._duplex is not None else self._in_stream
-        return stream is not None and stream.active
+        if stream is None:
+            return False
+        try:
+            return bool(stream.active)
+        except Exception as exc:  # PortAudioError once the interface is gone
+            if not self._last_error:
+                self._last_error = f"{type(exc).__name__}: {exc}"
+            return False
 
     @property
     def latency_ms(self) -> float | None:

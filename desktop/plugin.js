@@ -354,6 +354,20 @@ const folderOf = (items, path) => {
 // The last segment of a path, for a sentence that has to fit on a 300px plate.
 const leafOf = (path) => String(path || '').split(/[\\/]/).filter(Boolean).pop() || ''
 
+// What the pane says in place after a call. A handler that answers in two lines puts the bad
+// news second ("capture=X | apply=True" then "not loaded: ..."), and taking the first line
+// showed a cheerful sentence over a call that did nothing.
+const FAILED_LINE = /^(REFUSED|NOT|CANNOT|ERROR|NO )/
+const headline = (out) => {
+  const lines = String((out && (out.output || out.summary)) || '').split('\n').map(s => s.trim()).filter(Boolean)
+  if (!lines.length) return out && out.ok === false ? 'that did not work' : 'done'
+  if (out && out.ok === false) {
+    const bad = lines.find((line) => FAILED_LINE.test(line.toUpperCase().split(':')[0]))
+    return bad || lines[lines.length - 1]
+  }
+  return lines[0]
+}
+
 // A cabinet or an amp: a search box and the files under it. 600 captures is a list nobody scrolls,
 // so typing narrows it, and the folder under each name tells two close relatives apart.
 //
@@ -1058,9 +1072,9 @@ function AmpFace({ rest }) {
     setSaid('')
     try {
       const out = await rest(path, { method: 'POST', body })
-      setSaid(String((out && out.output) || 'done').split('\n')[0])
+      setSaid(headline(out))
       client.invalidateQueries({ queryKey: ['amphead2'] })
-      if (out && out.ok === false) host.notify({ kind: 'warning', message: String(out.output).split('\n')[0] })
+      if (out && out.ok === false) host.notify({ kind: 'warning', message: headline(out) })
       return out
     } catch (err) {
       // A 404 here means the gateway is still running yesterday's plugin code: say so instead of
@@ -1081,7 +1095,7 @@ function AmpFace({ rest }) {
     const norm = Math.max(0, Math.min(1, (db + TONE_RANGE) / (TONE_RANGE * 2)))
     try {
       const answer = await rest('/knob', { method: 'POST', body: { param: index, fx: 1, value: norm, mode: 'norm', track: 1 } })
-      if (answer && answer.ok === false) setSaid(String(answer.output || 'that knob would not move').split('\n')[0])
+      if (answer && answer.ok === false) setSaid(headline(answer) || 'that knob would not move')
       return answer
     } catch (err) {
       setSaid(`that knob would not move: ${err && err.message ? err.message : err}`)

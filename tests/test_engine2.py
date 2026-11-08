@@ -267,3 +267,27 @@ class TestChoosingTheDevice(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class A_vanished_device_is_not_an_exception(unittest.TestCase):
+    """Pulling the interface out makes `stream.active` raise, not return False.
+
+    That question is asked by every status answer, so raising there used to blank the pane with
+    a traceback instead of saying the device is gone.
+    """
+
+    def test_reading_active_that_raises_says_not_running(self):
+        from amphead.engine2 import Engine
+
+        class Gone:
+            @property
+            def active(self):
+                raise RuntimeError("PortAudioError: device unavailable")
+
+        engine = object.__new__(Engine)
+        engine._duplex = Gone()
+        engine._in_stream = engine._out_stream = None
+        engine._last_error = None
+
+        self.assertFalse(engine.running)
+        self.assertIn("device unavailable", engine._last_error)

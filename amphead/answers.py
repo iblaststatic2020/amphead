@@ -35,11 +35,19 @@ FAILURE_WORDS = ("REFUSED", "NOT", "CANNOT", "ERROR", "NO ")
 
 
 def ok(summary: str) -> bool:
-    """Whether a sentence reports success, judged on its opening clause."""
-    clause = summary.strip().split(":")[0].upper()
-    if clause.startswith(FAILURE_WORDS):
-        return False
-    return " NOT " not in f" {clause} "
+    """Whether a sentence reports success, judged on the opening clause of every line.
+
+    Every line, because a handler that answers in two lines says the bad news second: "capture=X
+    | apply=True" followed by "not loaded: the engine is not running" is a failure, and reading
+    only the first line called it a success.
+    """
+    for line in summary.splitlines() or [summary]:
+        clause = line.strip().split(":")[0].upper()
+        if clause.startswith(FAILURE_WORDS):
+            return False
+        if " NOT " in " " + clause + " ":
+            return False
+    return True
 
 
 def json_answer(name: str, summary: str) -> str:
@@ -53,6 +61,13 @@ def json_answer(name: str, summary: str) -> str:
             fields[key] = value.strip()
     if fields:
         payload["fields"] = fields
+        # The words can be cheerful while the numbers say otherwise: "panicked=False | ...
+        # | problems=master is at 0.0 dB" opens like a report. Trust the fields over the prose.
+        problems = fields.get("problems", "none").strip().lower()
+        if payload["ok"] and problems not in ("", "none"):
+            payload["ok"] = False
+        if payload["ok"] and fields.get("panicked", "").strip().lower() == "false":
+            payload["ok"] = False
     return json.dumps(payload, ensure_ascii=False)
 
 

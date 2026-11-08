@@ -91,14 +91,15 @@ TONE_SCHEMA = _schema(
 
 LIVE_SCHEMA = _schema(
     "amphead_live",
-    "Arm or disarm the amp. Arming sets the master to the safe -6 dB and starts monitoring, so a "
-    "quiet DI comes out at a sane level without a howl. Refuses without confirm=true; on=false "
-    "disarms and parks the master.",
+    "Arm or disarm the amp. Arming starts monitoring and leaves the master exactly where it already "
+    "is, so a rig you parked stays parked and a rig you left at a playing level does not jump; pass "
+    "master_db to set it in the same call. At the floor it makes no sound. Refuses to arm above the "
+    "floor without confirm=true; on=false disarms and parks the master.",
     {"on": {"type": "boolean", "description": "true arms, false disarms (default true)."},
      "confirm": {"type": "boolean",
-                 "description": "Required to arm. This is the one call that can make sound."},
+                 "description": "Required to arm above the floor. This is the one call that can make sound."},
      "master_db": {"type": "number",
-                   "description": "Level to arm at (default -6, the measured safe level).",
+                   "description": "Level to arm at. Omitted: keep the rig's current master.",
                    "minimum": -60, "maximum": 0}},
 )
 
@@ -301,14 +302,16 @@ def handle_tone(args: dict[str, Any], **_kw) -> str:
     chosen_capture = None
     if args.get("capture"):
         chosen_capture = _pick(captures, str(args["capture"]).lower().split())
-        chosen_capture = chosen_capture or {"name": str(args["capture"]), "path": str(args["capture"])}
+        chosen_capture = chosen_capture or {"name": f"{args['capture']} (your words, not in the "
+                                            f"library)", "path": str(args["capture"])}
     elif words:
         chosen_capture = _pick(captures, words)
 
     chosen_cab = None
     if args.get("cab"):
         chosen_cab = _pick(cabs, str(args["cab"]).lower().split())
-        chosen_cab = chosen_cab or {"name": str(args["cab"]), "path": str(args["cab"])}
+        chosen_cab = chosen_cab or {"name": f"{args['cab']} (your words, not in the library)",
+                                    "path": str(args["cab"])}
     elif words:
         chosen_cab = _pick(cabs, words)
 
@@ -423,8 +426,11 @@ def handle_panic(args: dict[str, Any], **_kw) -> str:
                      ("armed", bool(RIG.state().get("armed"))),
                      ("next", "call amphead_live if you want to play")])
     problems: list[str] = []
-    if float(level.get("db") or 0.0) > STANDBY_DB + 0.5:
-        problems.append(f"master is at {level.get('db')} dB")
+    heard = level.get("db")
+    if heard is None:
+        problems.append("the master level could not be read back")
+    elif float(heard) > STANDBY_DB + 0.5:
+        problems.append(f"master is at {heard} dB")
     if RIG.state().get("armed"):
         problems.append("the engine is still armed")
     if live_fx:

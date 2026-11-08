@@ -78,7 +78,12 @@ class Server:
             if target.is_dir():
                 target = target / f"{recording.default_name(self.engine.samplerate)}.wav"
         else:
-            target = self.recordings_dir() / f"{name or recording.default_name(self.engine.samplerate)}.wav"
+            # A take name arrives from an agent, so it is a name, not a path: keep the last
+            # component and drop what a filename cannot hold. "..\..\x" must not walk out of
+            # the recordings folder.
+            clean = str(name or "").replace("\\", "/").split("/")[-1]
+            clean = "".join(ch for ch in clean if ch.isprintable() and ch not in '<>:"|?*').strip(" .")
+            target = self.recordings_dir() / f"{clean or recording.default_name(self.engine.samplerate)}.wav"
         # A take is recorded after the master, so a master at the bottom writes silence. Refuse
         # with the fix rather than hand back a wav full of nothing.
         live = self.status()

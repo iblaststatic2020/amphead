@@ -93,6 +93,45 @@ class TestATake(unittest.TestCase):
         self.assertEqual(said["dropped"], said["dropped"])  # a number, not an exception
         self.assertFalse(said["recording"])
 
+    def test_a_dead_writer_does_not_hang_the_stop(self):
+        """A full disk kills the writer and leaves a queue nobody drains.
+
+        Waiting for room in that queue is how a failed take hangs the engine, so stop has to
+        come back by itself and say what happened.
+        """
+        class Broken:
+            def writeframes(self, block):
+                raise OSError("no space left on device")
+
+            def close(self):
+                pass
+
+        take = Take(self.path, 44100, queue_blocks=4).open()
+        take._wave = Broken()
+        block = np.zeros(128, dtype=np.float32)
+        for _ in range(50):
+            take.push(block)
+
+        done = []
+        import threading
+        thread = threading.Thread(target=lambda: done.append(take.stop()), daemon=True)
+        thread.start()
+        thread.join(timeout=15.0)
+        self.assertFalse(thread.is_alive(), "stop() waited on a queue no writer was draining")
+        self.assertTrue(done, "stop() never returned a summary")
+        self.assertIn("no space", done[0].get("error", ""))
+        self.assertFalse(take.state()["recording"], "a dead writer must not look live")
+
+    def test_the_length_said_is_the_length_in_the_file(self):
+        take = Take(self.path, 44100, queue_blocks=2).open()
+        block = np.ones(128, dtype=np.float32) * 0.1
+        for _ in range(500):
+            take.push(block)
+        said = take.stop()
+        with wave.open(str(self.path), "rb") as got:
+            self.assertEqual(said["frames"], got.getnframes(),
+                             "dropped blocks were counted as if they reached the disk")
+
 
 class TestTheAmpWritesWhatItPlays(unittest.TestCase):
     """The engine hands the recorder the same block it hands the device."""

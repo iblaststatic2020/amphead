@@ -113,12 +113,16 @@ class Take:
         return self
 
     def _drain(self) -> None:
+        import numpy as np
+
         while True:
             block = self._queue.get()
             if block is None:
                 break
             try:
                 self._wave.writeframes(_pcm24(block))
+                with self._lock:
+                    self._frames += int(np.size(block)) // self.channels
             except Exception as exc:                  # a full disk must not look like audio
                 with self._lock:
                     self._error = f"{type(exc).__name__}: {exc}"
@@ -138,7 +142,6 @@ class Take:
                 a = np.repeat(a.reshape(-1, 1), self.channels, axis=1).reshape(-1)
         with self._lock:
             self._peak = max(self._peak, peak)
-            self._frames += int(a.size) // self.channels
         try:
             self._queue.put_nowait(a)
         except queue.Full:
@@ -146,12 +149,32 @@ class Take:
                 self._dropped += 1
 
     def stop(self) -> dict:
-        """Close the file and say what was written. Safe to call twice."""
+        """Close the file and say what was written. Safe to call twice.
+
+        A writer that died on a full disk leaves a queue nobody drains, so the closing
+        sentinel has to be dropped in without waiting for room. Waiting there is how a
+        failed take turns into a hung engine.
+        """
         if self._writer is None:
             return self.summary()
-        self._queue.put(None)
+        if self._writer.is_alive():
+            try:
+                self._queue.put(None, timeout=10.0)
+            except queue.Full:
+                self._writer.join(timeout=1.0)
+        else:
+            try:
+                while True:
+                    self._queue.get_nowait()
+            except queue.Empty:
+                pass
+            self._queue.put_nowait(None)
         self._writer.join(timeout=10.0)
-        self._writer = None
+        if self._writer.is_alive():
+            with self._lock:
+                self._error = self._error or "the writer thread did not finish in 10 s"
+        else:
+            self._writer = None
         try:
             self._wave.close()
         except Exception:
@@ -184,10 +207,14 @@ class Take:
 
     def state(self) -> dict:
         with self._lock:
-            frames, peak, dropped = self._frames, self._peak, self._dropped
-        return {"recording": self._writer is not None,
+            frames, peak, dropped, error = self._frames, self._peak, self._dropped, self._error
+        recording = self._writer is not None and self._writer.is_alive() and not error
+        said = {"recording": recording,
                 "path": str(self.path),
                 "name": self.path.name,
                 "seconds": round(frames / float(self.samplerate), 2) if self.samplerate else 0.0,
                 "peak_db": None if peak <= 0.0 else round(_db(peak), 1),
                 "dropped": dropped}
+        if error:
+            said["error"] = error
+        return said
