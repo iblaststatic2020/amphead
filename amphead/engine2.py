@@ -29,6 +29,8 @@ import time
 from collections import deque
 from dataclasses import dataclass, field, replace
 
+from .gate import FLOOR_DB as GATE_FLOOR_DB, Gate
+
 #: Where the master sits when the chain is disarmed. Quiet enough to be harmless,
 #: not muted, so a wrong arm is audible as "too quiet" rather than silent-but-live.
 SAFE_MASTER_DB = -60.0
@@ -53,12 +55,12 @@ PRIME_BLOCKS = 2
 #: and the speaker. AMPHEAD_LATENCY_MS overrides it for a driver that cannot hold it.
 TARGET_LATENCY_MS = float(os.environ.get("AMPHEAD_LATENCY_MS") or 5.0)
 
-#: Frames per callback. 512 is the measured sweet spot here: the device reports the
-#: same 20 ms round trip at 128, 256 and 512 because kernel-streaming latency comes
-#: from the driver buffer, not the block, while CPU per second of audio falls from
-#: 32% of a core at 128 to 15% at 512 and starved output blocks go from 9 per minute
-#: to zero. Going smaller buys nothing and costs reliability.
-DEFAULT_BLOCKSIZE = 512
+#: Frames per callback, measured rather than guessed. The felt round trip is the driver
+#: buffer plus one block, so 256 is 5.8 ms of block on top of ~10 ms of buffer, and 128
+#: buys 2.9 ms at the price of 0.7 ms of headroom, which overruns in practice. A chain
+#: that gets heavier than the box can render at 256 asks the amp to measure again rather
+#: than hoping (see amphead/tune.py).
+DEFAULT_BLOCKSIZE = 256
 
 
 def db_to_gain(db: float) -> float:
@@ -132,6 +134,10 @@ class Chain:
     master_db: float = SAFE_MASTER_DB
     input_gain_db: float = 0.0
     output_gain_db: float = 0.0
+    # A gate is a stage like any other: present, switchable, off by default, because
+    # silence is a choice the player makes rather than one the amp makes for them.
+    gate: object | None = None
+    gate_db: float = GATE_FLOOR_DB
     amp: object | None = None
     tone: object | None = None
     cab: object | None = None
@@ -151,6 +157,9 @@ class Meter:
     rms_out: float = 0.0
     overflows: int = 0
     underflows: int = 0
+    # A callback that took longer than its block is already a miss even when the driver
+    # never complains: on kernel streaming a gap is silent until someone hears it.
+    late: int = 0
     blocks: int = 0
     stamp: float = field(default_factory=time.time)
 
@@ -164,7 +173,12 @@ def process_chain(x, chain: Chain):
     """
     import numpy as np
 
-    y = np.asarray(x, dtype=np.float32).reshape(-1) * db_to_gain(chain.input_gain_db)
+    y = np.asarray(x, dtype=np.float32).reshape(-1)
+    # The gate hears the guitar, not the amp: in front of the drive, so the threshold means
+    # the same thing whatever the input gain is doing.
+    if chain.gate is not None:
+        y = chain.gate.process(y)
+    y = y * db_to_gain(chain.input_gain_db)
     if chain.amp is not None and chain.amp_on:
         y = chain.amp.process(y)
     if chain.tone is not None and chain.tone_on:
@@ -206,7 +220,8 @@ class Engine:
         self.input_channels = 0
         self.mode: str | None = None
         self._lock = threading.Lock()
-        self._chain = Chain()
+        self._gate = Gate(threshold_db=GATE_FLOOR_DB, rate=self.samplerate)
+        self._chain = Chain(gate=self._gate)
         self._meter = Meter()
         self._duplex = None
         self._in_stream = None
@@ -242,6 +257,24 @@ class Engine:
             # being a level and becomes a distortion control that clips the master anyway.
             db = max(-24.0, min(24.0, float(db)))
         return self.update(**{name: float(db)})
+
+    def reset_counters(self) -> None:
+        """Counters belong to one stream. Carrying them across opens turns a 10 s soak into a
+        running total and makes a fresh block size look busy when it is not."""
+        self._meter.blocks = self._meter.underflows = self._meter.overflows = 0
+        self._meter.late = 0
+
+    @property
+    def counters(self) -> dict:
+        """Starved and dropped blocks since the stream opened. The only honest latency check."""
+        return {"underflows": self._meter.underflows, "overflows": self._meter.overflows,
+                "late": self._meter.late, "blocks": self._meter.blocks}
+
+    def set_gate(self, db: float) -> Chain:
+        """Move the gate threshold. The bottom of the range is off, not -80 dB."""
+        db = max(GATE_FLOOR_DB, min(-20.0, float(db)))
+        self._gate.set_threshold(db)
+        return self.update(gate_db=db)
 
     # lifecycle -------------------------------------------------------------
     def _open_split(self, sd, exclusive: bool, wasapi: bool = True):
@@ -292,6 +325,7 @@ class Engine:
         )
 
     def start(self) -> str:
+        self.reset_counters()
         """Open the device and report which mode took.
 
         Order is deliberate: duplex first, because a single stream cannot hold the
@@ -464,7 +498,10 @@ class Engine:
             self._meter.rms_out = 0.0
             return np.zeros(frames, dtype=np.float32)
 
+        started = time.perf_counter()
         y = process_chain(x, chain)
+        if frames and (time.perf_counter() - started) > frames / float(self.samplerate):
+            self._meter.late += 1
         self._meter.peak_out = float(np.max(np.abs(y))) if y.size else 0.0
         self._meter.rms_out = float(np.sqrt(np.mean(np.square(y)))) if y.size else 0.0
         if self._capturing:

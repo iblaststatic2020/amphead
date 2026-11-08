@@ -14,7 +14,12 @@ sit down, say "set up my crunch tone", and Hermes is the amp. Nothing else needs
 - Gives you the knobs a head has: bass, mid, treble, plus input gain (how hard the capture is driven)
   and output gain (how the cabinet is balanced against the room), and a master on top.
 - Parks the master at -60 dB before anything is armed. The chain is born disarmed; only an explicit
-  confirm arms it, and arming uses -6 dB, measured on a -18 dBFS DI so it peaks near -3 dBFS.
+  confirm arms it, and arming uses the master the amp already has, so nothing arrives louder than the
+  knob says.
+- Puts a noise gate in front of the capture, off by default (the bottom of the knob is `off`), with a
+  hold and a slow close so a decaying chord fades instead of being chopped.
+- Measures its own timing. `TUNE` soaks every block size on the real device, picks the smallest one
+  that ran clean, confirms it on a longer pass, and writes it to the settings file.
 - Answers in plain language and reports what it read back: `amphead_ready` says `READY`, `STANDBY`,
   `NO SIGNAL`, `NO CHAIN`, `CLIPPING`, `DEVICE CLOSED` or `ENGINE OFF`, with the reason.
 - Has a dead man's switch. `amphead_panic` parks the master, disarms and bypasses every stage, then
@@ -30,13 +35,13 @@ capture and cabinet named on it, the knobs in a row, a meter, and the files. It 
 |---|---|
 | verdict | one word, plus a sentence naming the thing to fix |
 | the switch | `SET UP` opens the engine silent, `STANDBY` is open and parked, `GO LIVE` arms at -6 dB, `CLOSE ENGINE` releases the device |
-| the plate | tone named from the two files on the chain, with rate, block size and round trip under it |
+| the plate | tone named from the two files on the chain, with rate, block size, round trip and `TUNE` under it |
 | files | capture and cabinet pickers, listing what is actually in the folders |
-| the knobs | `IN`, `BASS`, `MID`, `TREBLE`, `OUT`, `MASTER`, each labelled in place |
+| the knobs | `GATE`, `IN`, `BASS`, `MID`, `TREBLE`, `OUT`, `MASTER`, each labelled in place |
 
 Routes: `GET /state`, `GET /meter`, `GET /library`, `GET /input`, `POST /setup`, `/live`, `/teardown`,
-`/master`, `/input_gain`, `/output_gain`, `/knob`, `/tweak`, `/input`, `/capture`, `/cab`, `/preset`,
-`/panic`. The pane polls `/state` at 1.5 s and `/meter` at 150 ms.
+`/master`, `/gate`, `/tune`, `/input_gain`, `/output_gain`, `/knob`, `/tweak`, `/input`, `/capture`,
+`/cab`, `/preset`, `/panic`. The pane polls `/state` at 1.5 s and `/meter` at 150 ms.
 
 Every write route calls the same handler chat calls, so a knob drag and the sentence "more low end"
 cannot do different things, and `/state` runs the same `verdict.judge` as `amphead_ready`.
@@ -44,8 +49,12 @@ cannot do different things, and `/state` runs the same `verdict.judge` as `amphe
 ## The knobs, in order
 
 ```
-guitar -> input gain -> capture (NAM) -> bass/mid/treble -> cabinet (IR) -> output gain -> master
+guitar -> gate -> input gain -> capture (NAM) -> bass/mid/treble -> cabinet (IR) -> output gain -> master
 ```
+
+The gate is first because it is the only stage that can hear the guitar before the capture makes the
+hiss louder. It is off at the bottom of its travel: a gate that arrives switched on eats the quiet
+part of a first take.
 
 Input gain is a tone decision as much as a level one, so it is not the master. Output gain sits after
 the cabinet so two captures can be balanced without moving the master off a level known to be safe.

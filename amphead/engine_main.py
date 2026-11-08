@@ -19,6 +19,7 @@ import sys
 import traceback
 
 from . import settings
+from . import tune
 from .engine2 import ARM_MASTER_DB, SAFE_MASTER_DB, Engine
 
 
@@ -68,6 +69,10 @@ class Server:
             "round_trip_ms": (None if self.engine.latency_ms is None else
                               round(self.engine.latency_ms +
                                     1000.0 * self.engine.blocksize / self.engine.samplerate, 1)),
+            # Starved and dropped blocks since the stream opened: the honest latency check.
+            "underflows": self.engine.counters["underflows"],
+            "overflows": self.engine.counters["overflows"],
+            "late": self.engine.counters["late"],
             "input_device": self.engine.input_device,
             "input_channel": self.engine.input_channel + 1,
             "input_channels": self.engine.input_channels,
@@ -75,6 +80,7 @@ class Server:
             "master_db": chain.master_db,
             "input_gain_db": chain.input_gain_db,
             "output_gain_db": chain.output_gain_db,
+            "gate_db": chain.gate_db,
             "capture": self.capture_name,
             "cab": self.cab_name,
             "stages": {"capture": chain.amp_on, "tone": chain.tone_on,
@@ -132,6 +138,11 @@ class Server:
         # Started means an open device, not a live amp: the master stays at the floor
         # until arm() asks for a level, so "armed: false" is silent rather than quiet.
         engine.update(master_db=SAFE_MASTER_DB, armed=False)
+        # The gate is a preference, not a performance setting: it comes back the way the
+        # player left it, and the settings file is where "left it" is written down.
+        gate_db = kw.get("gate_db", settings.load().get("gate_db"))
+        if gate_db is not None:
+            engine.set_gate(float(gate_db))
         played = self._remembered_chain(kw)
         return {"mode": mode, "latency_ms": engine.latency_ms,
                 "last_error": engine.last_error, "chain": played}
@@ -256,6 +267,18 @@ class Server:
             "output_gain_db": chain.output_gain_db,
         }
 
+    def gate(self, db: float | None = None) -> dict:
+        """Threshold for the noise gate in front of the amp. The floor is off."""
+        if db is not None:
+            self.engine.set_gate(float(db))
+            # Remembered, because a gate someone dialled in is a decision, not a session detail.
+            try:
+                settings.save({"gate_db": float(self.engine.chain.gate_db)})
+            except Exception:
+                pass
+        chain = self.engine.chain
+        return {"gate_db": chain.gate_db, "open": chain.gate is not None and not chain.gate.off}
+
     def arm(self, master_db: float | None = None) -> dict:
         # No level means the master the amp already has. Lifting it to a fixed -6 dB here is
         # how a caller that said only "arm" got a rig that came up louder than the knob.
@@ -315,6 +338,75 @@ class Server:
             "peak_out": float(np.max(np.abs(pcm)) / 32768.0) if pcm.size else 0.0,
         }
 
+    def tune(self, blocksize: int | None = None, apply: bool = True,
+             live: bool = True, seconds: float = 2.0) -> dict:
+        """Find the quickest block size this rig can actually feed, and reopen on it.
+
+        The measurement is a soak on the real device, because a render stopwatch without a
+        driver deadline flatters small blocks. Arming survives the trip: this changes how the
+        rig is timed, not whether the player is holding a guitar.
+        """
+        was_running = self.engine.running
+        armed = self.engine.chain.armed
+        if was_running:
+            self.engine.stop()
+        rows: list[dict] = []
+        try:
+            if live:
+                try:
+                    rows = tune.soak_all(self.engine, seconds=seconds)
+                    picked = int(blocksize) if blocksize else tune.choose_soak(rows)
+                    # A two second pass is a screenshot, not a verdict. Whatever it picked gets
+                    # a longer run before the amp is left at that size, and if the longer run
+                    # drops blocks the next size up is tried instead.
+                    if not blocksize and picked:
+                        for _ in range(2):
+                            confirm = tune.soak(self.engine, picked, seconds=max(5.0, seconds * 2))
+                            if confirm["ok"]:
+                                break
+                            bigger = [r for r in rows if r["blocksize"] > picked and r["ok"]]
+                            if not bigger:
+                                break
+                            picked = int(min(bigger, key=lambda r: r["blocksize"])["blocksize"])
+                    words = tune.soak_verdict(rows, picked)
+                except Exception:
+                    rows, picked, words = [], None, ""
+            else:
+                words = ""
+            if not rows:
+                rows = tune.measure(self.engine.chain, self.engine.samplerate)
+                picked = int(blocksize) if blocksize else tune.choose(rows)
+                words = tune.verdict(rows, picked)
+            changed = picked is not None and picked != self.engine.blocksize
+            if apply and picked:
+                self.engine.blocksize = int(picked)
+                # Write it down: a measured size that evaporates on the next start is a
+                # measurement the player has to repeat every session.
+                try:
+                    settings.save({"audio": {"blocksize": int(picked)}})
+                except Exception:
+                    pass
+        finally:
+            # Only reopen what was open. Measuring a parked amp must not switch it on.
+            if was_running:
+                self.engine.start()
+                if armed:
+                    self.engine.update(armed=True)
+        return {
+            "blocksize": self.engine.blocksize,
+            "picked": picked,
+            "changed": changed,
+            "rows": rows,
+            "live": bool(rows and "underflows" in rows[0]),
+            "verdict": words,
+            "running": self.engine.running,
+            "armed": self.engine.chain.armed,
+            "block_ms": round(1000.0 * self.engine.blocksize / self.engine.samplerate, 2),
+            "round_trip_ms": (None if self.engine.latency_ms is None else
+                              round(self.engine.latency_ms +
+                                    1000.0 * self.engine.blocksize / self.engine.samplerate, 1)),
+        }
+
     # dispatch -------------------------------------------------------------
     VERBS = {
         "status": "status",
@@ -330,11 +422,13 @@ class Server:
         "clear_cab": "clear_cab",
         "tone": "tone_set",
         "gain": "gain",
+        "gate": "gate",
         "arm": "arm",
         "disarm": "disarm",
         "panic": "panic",
         "meter": "meter",
         "render": "render",
+        "tune": "tune",
     }
 
     def handle(self, request: dict) -> dict:

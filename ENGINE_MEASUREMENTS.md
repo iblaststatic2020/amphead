@@ -141,3 +141,26 @@ are stored separately from the master:
 Neither is allowed past 24 dB: beyond that the capture is already clipping whatever
 the master says, so a wider range would be a distortion control wearing a level's
 label. The master keeps its own `-60 .. +12 dB` range on top of both.
+
+## What TUNE actually measures (2026-11-07)
+
+`TUNE` does not guess a block size from a CPU chart. It opens the real device at each size in
+turn, arms the chain at the floor (silent to the speaker, full work per block), and counts what
+went wrong: driver-reported underflows and overflows, plus callbacks that took longer than their
+own block.
+
+| block | block in ms | blocks in 2 s | underflows | overflows | over-budget callbacks | runs clean |
+|---|---|---|---|---|---|---|
+| 64 | 1.45 | 1354 | 0 | 0 | 4 | no |
+| 128 | 2.90 | 688 | 0 | 0 | 0 | yes |
+| 256 | 5.81 | 343 | 0 | 0 | 0 | yes |
+| 512 | 11.61 | 171 | 0 | 0 | 0 | yes |
+| 1024 | 23.22 | 85 | 0 | 0 | 0 | yes |
+
+On the measured rig the pick is 128, confirmed by a further 5 s pass with nothing dropped, and the
+amp reopens on 12.9 ms round trip instead of 15.8 ms. The number is written to the settings file,
+because a measurement that evaporates on the next start is a measurement the player has to repeat.
+
+A soak that can hear itself is not a soak, so the chain arms at -60 dB. An unarmed chain returns
+zeros before it reaches the capture, which is why an early version of this probe measured nothing
+at all and called 64 frames clean.

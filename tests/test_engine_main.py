@@ -108,6 +108,19 @@ class VerbTest(unittest.TestCase):
         self.assertEqual(result["tone"]["bass"], 4.0)
         self.assertEqual(result["tone"]["mid"], 0.0)
 
+    def test_the_gate_starts_off_and_moves(self):
+        self.assertEqual(self.server.gate()["gate_db"], -80.0)
+        self.assertFalse(self.server.gate()["open"])
+        self.assertEqual(self.server.gate(-38.0)["gate_db"], -38.0)
+        self.assertTrue(self.server.gate()["open"])
+
+    def test_tune_measures_without_opening_the_device(self):
+        got = self.server.tune(live=False)
+        self.assertEqual(got["running"], False)
+        self.assertIn(got["picked"], (64, 128, 256, 512, 1024))
+        self.assertTrue(got["rows"])
+        self.assertIn("frames", got["verdict"])
+
     def test_gain_refuses_an_unknown_name(self):
         self.server.handle({"cmd": "gain", "master_db": -6})
         self.assertEqual(self.server.handle({"cmd": "status"})["result"]["master_db"], -6.0)

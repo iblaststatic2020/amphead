@@ -134,10 +134,10 @@ READY_SCHEMA = _schema(
 
 SET_SCHEMA = _schema(
     "amphead_set",
-    "Turn one control and answer with the value that reads back. Controls: master, in, out, bass, "
+    "Turn one control and answer with the value that reads back. Controls: master, gate, in, out, bass, "
     "mid, treble, input (which socket of the interface the guitar is on, counted from 1).",
     {"param": {"type": "string",
-               "description": "master | in | out | bass | mid | treble | input"},
+               "description": "master | gate | in | out | bass | mid | treble | input"},
      "value": {"type": "number", "description": "The value to write."},
      "unit": {"type": "string", "description": "dB for the levels, 0-10 for the tone knobs."},
      "mode": {"type": "string", "description": "auto (default), db or 0-10."}},
@@ -506,6 +506,10 @@ def handle_set(args: dict[str, Any], **_kw) -> str:
         if param in ("master", "level", "volume"):
             wrote = RIG.set_master(db=max(STANDBY_DB, min(12.0, value)))
             return _fmt([("set", wrote.get("db")), ("param", "master"), ("unit", "dB")])
+        if param in ("gate", "noise gate", "noisegate"):
+            wrote = RIG.set_gate(db=max(-80.0, min(-20.0, value)))
+            return _fmt([("set", wrote.get("db")), ("param", "gate"), ("unit", "dB"),
+                         ("off_below", -79.5)])
         if param in ("in", "input_gain", "input gain"):
             wrote = RIG.set_input_gain(db=max(-24.0, min(24.0, value)))
             return _fmt([("set", wrote.get("db")), ("param", "in"), ("unit", "dB")])
@@ -526,7 +530,7 @@ def handle_set(args: dict[str, Any], **_kw) -> str:
     except (TypeError, ValueError, LookupError) as exc:
         return f"NOT SET: {exc}"
     return (f"NOT SET: {param!r} is not a control on this amp | "
-            "controls=master, in, out, bass, mid, treble, input")
+            "controls=master, gate, in, out, bass, mid, treble, input")
 
 
 def _settings_path() -> str:

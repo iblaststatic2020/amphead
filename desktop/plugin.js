@@ -27,6 +27,10 @@ const MASTER_HIGH = 12
 // DI drive a lead capture, and enough to sit a loud cabinet beside a quiet one.
 const GAIN_LOW = -24
 const GAIN_HIGH = 24
+// Noise gate in front of the amp. The bottom of the range means off, and off is the default:
+// a gate that arrives switched on eats the quiet parts of the first take.
+const GATE_LOW = -80
+const GATE_HIGH = -20
 
 const toDb = (peak) => (peak <= 0.000001 ? -60 : Math.max(-60, 20 * Math.log10(peak)))
 const dbWords = (db) => `${db > 0 ? '+' : ''}${Number(db).toFixed(1)} dB`
@@ -939,6 +943,23 @@ function AmpFace({ rest }) {
                     children: (s.round_trip_ms || s.latency_ms)
                       ? `round trip ${Number(s.round_trip_ms || s.latency_ms).toFixed(1)} ms`
                       : ''
+                  }),
+                  // Measured, not guessed: the same probe the CLI runs, on whatever capture and
+                  // cabinet are loaded, so a rig that got heavier can find its own block size.
+                  jsx('button', {
+                    type: 'button',
+                    disabled: busy || !running,
+                    onClick: () => act('/tune', {}),
+                    className: 'shrink-0 text-[0.5rem] uppercase leading-none tracking-[0.1em] underline-offset-2 hover:underline',
+                    style: {
+                      color: SECOND.color,
+                      cursor: busy || !running ? 'default' : 'pointer',
+                      background: 'transparent',
+                      border: 0,
+                      padding: 0,
+                      font: 'inherit'
+                    },
+                    children: 'tune'
                   })
                 ]
               }),
@@ -976,12 +997,25 @@ function AmpFace({ rest }) {
               jsx('div', {
                 style: {
                   display: 'grid',
-                  gridTemplateColumns: 'repeat(3, 1fr)',
+                  gridTemplateColumns: 'repeat(4, 1fr)',
                   justifyItems: 'center',
                   rowGap: 6,
                   columnGap: 2
                 },
                 children: [
+                  jsx(ChickenKnob, {
+                    label: 'GATE',
+                    size: 40,
+                    // A threshold, not a level: the knob shows the point the amp starts
+                    // hearing you, so the number is the one a player sets against hiss.
+                    db: Number(typeof s.gate_db === 'number' ? s.gate_db : GATE_LOW),
+                    min: GATE_LOW,
+                    max: GATE_HIGH,
+                    neutral: GATE_LOW,
+                    busy,
+                    disabled: !running,
+                    onCommit: (db) => act('/gate', { db })
+                  }, 'gate'),
                   jsx(ChickenKnob, {
                     label: 'IN',
                     size: 40,

@@ -173,6 +173,7 @@ def state() -> dict[str, Any]:
                                            live.get("cab_path") or ""),
         "input_gain_db": live.get("input_gain_db"),
         "output_gain_db": live.get("output_gain_db"),
+        "gate_db": live.get("gate_db"),
         "aim": lastchain.load().get("aim") or "",
         "aim_confidence": lastchain.load().get("aim_confidence") or "",
         "stages": live.get("stages") or {},
@@ -337,6 +338,41 @@ def input_gain(body: dict) -> dict[str, Any]:
 @router.post("/output_gain")
 def output_gain(body: dict) -> dict[str, Any]:
     return _trim("output", body)
+
+
+@router.post("/gate")
+def gate(body: dict) -> dict[str, Any]:
+    """Threshold for the gate in front of the amp. The bottom of the range is off."""
+    try:
+        asked = float(body.get("db"))
+    except (TypeError, ValueError):
+        return {"output": "NO LEVEL: say how many dB", "ok": False}
+    if not math.isfinite(asked):
+        return {"output": "NO LEVEL: say how many dB", "ok": False}
+    db = max(-80.0, min(-20.0, asked))
+    try:
+        wrote = RIG.set_gate(db=db)
+    except port.NoRig:
+        return {"output": "NOT SET: the engine is not running", "ok": False}
+    except port.RigError as exc:
+        return {"output": f"NOT SET: {exc}", "ok": False}
+    landed = wrote.get("db")
+    word = "off" if landed is None or float(landed) <= -79.5 else f"{float(landed):.0f} dB"
+    return {"output": f"gate {word}", "ok": True, "db": landed}
+
+
+@router.post("/tune")
+def tune(body: dict) -> dict[str, Any]:
+    """Measure this chain and reopen the amp on the quickest block that holds it."""
+    try:
+        wrote = RIG.tune()
+    except port.NoRig:
+        return {"output": "NOT MEASURED: the engine is not running", "ok": False}
+    except port.RigError as exc:
+        return {"output": f"NOT MEASURED: {exc}", "ok": False}
+    return {"output": wrote.get("verdict") or "measured", "ok": True,
+            "blocksize": wrote.get("blocksize"), "changed": wrote.get("changed"),
+            "round_trip_ms": wrote.get("round_trip_ms")}
 
 
 @router.post("/knob")

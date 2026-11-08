@@ -80,6 +80,16 @@ class FakeRig:
         self.out_db = db
         return {"db": db}
 
+    def set_gate(self, db=-80.0):
+        self.calls.append(("gate", db))
+        self.gate_db = db
+        return {"db": db}
+
+    def tune(self):
+        self.calls.append(("tune",))
+        return {"verdict": "256 frames, 5.8 ms a block, 3.1 ms of work, with room to spare",
+                "blocksize": 256, "changed": False, "round_trip_ms": 15.8}
+
     def set_param(self, track=1, fx=1, param=None, value=None, mode="auto"):
         self.calls.append(("param", param, value))
         got = {("bass", "mid", "treble")[i]: name for i, name in
@@ -204,6 +214,31 @@ class TrimTest(ApiTest):
     def test_the_trims_stop_at_the_engine_ceiling(self):
         self.assertEqual(plugin_api.input_gain({"db": 99})["db"], 24.0)
         self.assertEqual(plugin_api.output_gain({"db": -99})["db"], -24.0)
+
+    def test_the_gate_is_written_and_echoed(self):
+        out = plugin_api.gate({"db": -42.0})
+        self.assertTrue(out["ok"])
+        self.assertIn(("gate", -42.0), self.rig.calls)
+        self.assertEqual(out["db"], -42.0)
+
+    def test_the_gate_floor_is_off_and_says_so(self):
+        out = plugin_api.gate({"db": -999})
+        self.assertEqual(out["db"], -80.0)
+        self.assertIn("off", out["output"])
+
+    def test_the_gate_stops_at_its_ceiling(self):
+        self.assertEqual(plugin_api.gate({"db": 12})["db"], -20.0)
+
+    def test_a_word_instead_of_a_gate_number_is_refused(self):
+        out = plugin_api.gate({"db": "hiss"})
+        self.assertFalse(out["ok"])
+        self.assertIn("NO LEVEL", out["output"])
+
+    def test_tune_answers_in_the_probes_words(self):
+        out = plugin_api.tune({})
+        self.assertTrue(out["ok"])
+        self.assertEqual(out["blocksize"], 256)
+        self.assertIn("256 frames", out["output"])
 
     def test_a_master_write_is_clamped_between_the_floor_and_the_ceiling(self):
         self.assertEqual(plugin_api.master_level({"db": 99})["db"], 12.0)

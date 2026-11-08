@@ -396,6 +396,18 @@ class AmpHead2Rig:
         DI is made to drive an amp, which is a tone control as much as a level."""
         return {"db": self._call(cmd="gain", input_gain_db=float(db)).get("input_gain_db")}
 
+    def set_gate(self, db: float = -80.0, **kw: Any) -> dict:
+        """Threshold of the noise gate in front of the amp. -80 is off.
+
+        A gate is the one control that has to be reachable without a menu: hiss between
+        takes is the first thing anyone wants gone, and the answer is one number.
+        """
+        return {"db": self._call(cmd="gate", db=float(db)).get("gate_db")}
+
+    def tune(self, **kw: Any) -> dict:
+        """Measure this chain and reopen the amp on the quickest block size that holds."""
+        return self._call(cmd="tune")
+
     def set_output_gain(self, db: float = 0.0, **kw: Any) -> dict:
         """Level between the cabinet and the master, so balancing two captures never means
         moving the master and losing the number that was safe to be loud at."""
@@ -518,6 +530,7 @@ class AmpHead2Rig:
             "blocksize": got.get("blocksize"),
             "input_gain_db": got.get("input_gain_db"),
             "output_gain_db": got.get("output_gain_db"),
+            "gate_db": got.get("gate_db"),
             "latency_ms": latency,
             "block_ms": got.get("block_ms"),
             "round_trip_ms": got.get("round_trip_ms"),

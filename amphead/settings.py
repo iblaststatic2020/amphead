@@ -38,6 +38,9 @@ DEFAULTS: dict[str, Any] = {
     "cab_dirs": [],
     # Interpreter with numpy and sounddevice, if it is not the bundled engine venv.
     "engine_python": "",
+    # Noise gate threshold in dBFS in front of the amp. -80 is off, which is the default:
+    # a gate that arrives switched on is a gate that eats a quiet riff on the first take.
+    "gate_db": -80.0,
     "audio": {
         "input_device": None,
         "output_device": None,
@@ -45,8 +48,9 @@ DEFAULTS: dict[str, Any] = {
         # input, which is where most interfaces put the instrument jack.
         "input_channel": 1,
         "samplerate": 44100,
-        # 256: the block is what is felt on top of the driver buffer, and 256 holds
-        # realtime with room to spare while 128 does not. See engine2.Engine.
+        # 256: the block is felt on top of the driver buffer, and 256 holds realtime on the
+        # measured rig. The tune control soaks each size and writes back whichever the chain
+        # actually feeds. See amphead/tune.py.
         "blocksize": 256,
         # Per direction. 5 ms is the tightest that held realtime on the measured rig.
         "latency_ms": 5.0,

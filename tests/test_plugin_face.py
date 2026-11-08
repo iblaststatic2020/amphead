@@ -224,6 +224,29 @@ class TestTheFaceLooksLikeAnAmp(unittest.TestCase):
         self.assertIn("jsx(Grille, { lit, heat })", source)
 
 
+class TestTheGateIsOnTheFace(unittest.TestCase):
+    """A gate is set against hiss between takes, so it lives on the panel, not in a menu."""
+
+    def test_the_gate_knob_sits_before_the_input_trim(self):
+        source = face()
+        self.assertLess(source.index("label: 'GATE'"), source.index("label: 'IN'"))
+
+    def test_the_gate_runs_from_off_to_its_ceiling(self):
+        source = face()
+        self.assertIn("const GATE_LOW = -80", source)
+        self.assertIn("const GATE_HIGH = -20", source)
+        self.assertIn("neutral: GATE_LOW", source)
+
+    def test_the_gate_knob_posts_the_gate_route(self):
+        source = face()
+        self.assertIn("act('/gate', { db })", source)
+
+    def test_there_is_a_tune_button_beside_the_latency(self):
+        source = face()
+        self.assertIn("act('/tune', {})", source)
+        self.assertIn("children: 'tune'", source)
+
+
 class TestTheAimIsOnTheFace(unittest.TestCase):
     """What the agent was asked to aim at, printed in the tool's own words.
 
