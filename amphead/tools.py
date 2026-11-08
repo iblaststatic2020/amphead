@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import subprocess
 import time
 from pathlib import Path
 from typing import Any
@@ -592,6 +593,187 @@ def handle_settings(args: dict[str, Any], **_kw) -> str:
     return "\n".join(lines)
 
 
+AIM_SCHEMA = _schema(
+    "amphead_aim",
+    "Aim the amp at a sound. Research the rig first (amp family, cabinet, speaker, mic), then pass "
+    "those words: this ranks the captures and cabinets already on the machine, reports how close "
+    "the library got, and can load the best pair. action=measure compares a reference recording "
+    "with your own render in octave bands and reports the distance in dB plus the curve that would "
+    "close it. It never claims a tone is an artist's: confidence is exact, family or nearest.",
+    {"action": {"type": "string", "enum": ["find", "apply", "measure"],
+                "description": "find (default) ranks, apply loads the best pair, measure scores two wavs."},
+     "artist": {"type": "string",
+                "description": "Label for the answer, e.g. AC/DC. Not used for matching."},
+     "amp": {"type": "string",
+             "description": "Researched amp family, e.g. plexi, jcm800, 5150, ac30, rectifier."},
+     "cab": {"type": "string",
+             "description": "Researched speaker or cabinet, e.g. greenback, vintage30, creamback."},
+     "mic": {"type": "string", "description": "Optional mic or position, e.g. close, sm57."},
+     "reference": {"type": "string", "description": "The recording to measure against (measure)."},
+     "take": {"type": "string", "description": "Your own render of the same part (measure)."},
+     "input_gain_db": {"type": "number", "description": "Input trim to set while applying."},
+     "output_gain_db": {"type": "number", "description": "Output trim to set while applying."},
+     "bass": {"type": "number", "description": "Tone knob 0-10 to set while applying."},
+     "mid": {"type": "number", "description": "Tone knob 0-10 to set while applying."},
+     "treble": {"type": "number", "description": "Tone knob 0-10 to set while applying."}},
+)
+
+
+class _NoAnalyser(Exception):
+    """The engine interpreter could not run the measurement."""
+
+
+def _measure(reference: str, take: str) -> str:
+    """Run the octave-band comparison in the engine interpreter, which is the one with numpy.
+
+    The plugin process has no numpy by design, and giving it one to save a subprocess would make the
+    install heavier than the feature is worth.
+    """
+    from . import local_port
+
+    try:
+        exe = local_port.engine_python(None)
+    except local_port.EngineNotInstalled as exc:
+        raise _NoAnalyser(str(exc)) from exc
+
+    root = str(Path(__file__).resolve().parent.parent)
+    code = (
+        "import sys;"
+        f"sys.path.insert(0, {root!r});"
+        "from amphead import analyse;"
+        f"analyse._print_report({reference!r}, {take!r})"
+    )
+    try:
+        done = subprocess.run(
+            [str(exe), "-c", code],
+            capture_output=True, text=True, timeout=180, cwd=root,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise _NoAnalyser(f"{type(exc).__name__}: {exc}") from exc
+    if done.returncode != 0:
+        last = (done.stderr or done.stdout or "").strip().splitlines()
+        raise _NoAnalyser(last[-1] if last else f"exit {done.returncode}")
+    return done.stdout.strip()
+
+
+def _confidence(caps: list[dict], cabs: list[dict], want: dict) -> str:
+    """The weakest link decides: a perfect cab does not rescue a capture that is only a neighbour."""
+    from . import target
+
+    asked = [bool(want.get("amp")), bool(want.get("cab"))]
+    found = [bool(caps), bool(cabs)]
+    exact = [
+        bool(caps) and caps[0]["confidence"] == target.CONFIDENCE_EXACT,
+        bool(cabs) and cabs[0]["confidence"] == target.CONFIDENCE_EXACT,
+    ]
+    checks = [want.get("amp") and exact[0], want.get("cab") and exact[1]]
+    if all(check for check, asked_here in zip(checks, asked) if asked_here):
+        return target.CONFIDENCE_EXACT
+    if any(found):
+        return target.CONFIDENCE_FAMILY
+    return target.CONFIDENCE_NEAREST
+
+
+def handle_aim(args: dict[str, Any], **_kw) -> str:
+    """Aim at a researched rig, or measure how far a take landed from a reference."""
+    from . import lastchain, library, target
+
+    action = str(args.get("action") or "find").strip().lower()
+
+    if action == "measure":
+        reference = str(args.get("reference") or "").strip()
+        take = str(args.get("take") or "").strip()
+        if not reference or not take:
+            return "NEED TWO FILES: reference=<the recording> take=<your own render>"
+        for path in (reference, take):
+            if not Path(path).is_file():
+                return f"MISSING FILE: {path}"
+        try:
+            return _measure(reference, take)
+        except _NoAnalyser as exc:
+            return f"CANNOT MEASURE: {exc}"
+
+    want = {
+        key: str(args[key]).strip()
+        for key in ("amp", "cab", "mic")
+        if str(args.get(key) or "").strip()
+    }
+    if not want:
+        return "NEED WORDS: say amp=plexi cab=greenback, the rig you researched"
+
+    label = str(args.get("artist") or "").strip() or want.get("amp", "")
+    try:
+        live = RIG.state() if RIG.running else {}
+    except port.RigError:
+        live = {}
+    menus = library.listing(live.get("capture_path") or "", live.get("cab_path") or "")
+    caps = target.rank(menus.get("captures") or [], want, kind="captures")
+    cabs = target.rank(menus.get("cabs") or [], want, kind="cabs")
+
+    cap_line = target.verdict(caps, want, "captures")
+    cab_line = target.verdict(cabs, want, "cabs")
+    missing: list[str] = []
+    if want.get("amp") and not (caps and caps[0]["confidence"] == target.CONFIDENCE_EXACT):
+        missing.append(f"amp:{want['amp']}")
+    if want.get("cab") and not (cabs and cabs[0]["confidence"] == target.CONFIDENCE_EXACT):
+        missing.append(f"cab:{want['cab']}")
+
+    if not caps and not cabs:
+        words = " ".join(str(v) for v in want.values())
+        return (f"NO MATCH for {label}: nothing in the library answers {words!r} | "
+                f"captures={len(menus.get('captures') or [])} cabs={len(menus.get('cabs') or [])} | "
+                f"look for a file with {want.get('amp') or want.get('cab')} in its name")
+
+    confidence = _confidence(caps, cabs, want)
+    matched = [word for entry in (caps[:1], cabs[:1]) for word in (entry[0]["matched"] if entry else [])]
+
+    lines = [
+        f"AIMED AT {label}",
+        _fmt([("amp", want.get("amp") or "-"), ("cab", want.get("cab") or "-"),
+              ("confidence", confidence), ("matched", ", ".join(matched) or "none"),
+              ("missing", ", ".join(missing) or "none")]),
+        f"capture: {cap_line}",
+        f"cab: {cab_line}",
+    ]
+
+    best_capture = caps[0] if caps else None
+    best_cab = cabs[0] if cabs else None
+
+    if action != "apply":
+        if best_capture:
+            lines.append(f"would_load_capture={best_capture['name']}")
+        if best_cab:
+            lines.append(f"would_load_cab={best_cab['name']}")
+        lastchain.save(aim=f"aimed at {label}: {cap_line}; {cab_line}", aim_confidence=confidence)
+        return "\n".join(lines)
+
+    if not RIG.running:
+        lastchain.save(aim=f"aimed at {label}: {cap_line}; {cab_line}", aim_confidence=confidence)
+        return "\n".join(lines + ["not loaded: the engine is not running, call amphead_setup first"])
+
+    try:
+        if best_capture:
+            RIG.open_capture(best_capture["path"])
+        if best_cab:
+            RIG.open_cab(best_cab["path"])
+        for name, setter in (("input_gain_db", RIG.set_input_gain),
+                             ("output_gain_db", RIG.set_output_gain)):
+            if args.get(name) is not None:
+                setter(float(args[name]))
+        for name in ("bass", "mid", "treble"):
+            if args.get(name) is not None:
+                RIG.set_param(track=1, fx=1, param=name, value=float(args[name]), mode="auto")
+    except port.RigError as exc:
+        lastchain.save(aim=f"aimed at {label}: {cap_line}; {cab_line}", aim_confidence=confidence)
+        return "\n".join(lines + [f"not loaded: {exc}"])
+
+    now = RIG.state()
+    lines.append(_fmt([("loaded_capture", now.get("capture") or "unchanged"),
+                       ("loaded_cab", now.get("cab") or "unchanged")]))
+    lastchain.save(aim=f"aimed at {label}: {cap_line}; {cab_line}", aim_confidence=confidence)
+    return "\n".join(lines)
+
+
 def run_call(cmd: str, **kwargs) -> dict:
     """Small indirection so tests can stub the wire without a live engine."""
     return RIG.debug_call(cmd, **kwargs)
@@ -608,6 +790,7 @@ TOOLS = (
     ("amphead_ready", READY_SCHEMA, handle_ready, "✅"),
     ("amphead_set", SET_SCHEMA, handle_set, "🎚️"),
     ("amphead_settings", SETTINGS_SCHEMA, handle_settings, "⚙️"),
+    ("amphead_aim", AIM_SCHEMA, handle_aim, "🎯"),
 )
 
 # ---- the shape the host sees -------------------------------------------------------------

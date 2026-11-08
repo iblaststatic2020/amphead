@@ -27,7 +27,7 @@ _ROOT = Path(__file__).resolve().parent.parent
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-from amphead import library as amp_library, port, verdict  # noqa: E402
+from amphead import lastchain, library as amp_library, port, verdict  # noqa: E402
 
 RIG = port.active()
 
@@ -124,7 +124,9 @@ def state() -> dict[str, Any]:
                 "reason": "the engine is not running: the switch reads SET UP",
                 "running": False, "armed": False, "chain": [], "knobs": [],
                 "device": {"closed": True}, "meter": {"peak": 0.0}, "presets": [],
-                "capture": "", "cab": "", "tone": {}, "tone_name": ""}
+                "capture": "", "cab": "", "tone": {}, "tone_name": "",
+                "aim": lastchain.load().get("aim") or "",
+                "aim_confidence": lastchain.load().get("aim_confidence") or ""}
 
     peak, clip = 0.0, False
     master = live.get("master_db")
@@ -171,6 +173,8 @@ def state() -> dict[str, Any]:
                                            live.get("cab_path") or ""),
         "input_gain_db": live.get("input_gain_db"),
         "output_gain_db": live.get("output_gain_db"),
+        "aim": lastchain.load().get("aim") or "",
+        "aim_confidence": lastchain.load().get("aim_confidence") or "",
         "stages": live.get("stages") or {},
         "samplerate": live.get("samplerate"),
         "blocksize": live.get("blocksize"),

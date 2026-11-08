@@ -222,3 +222,24 @@ class TestTheFaceLooksLikeAnAmp(unittest.TestCase):
         source = face()
         self.assertIn("const lit = running && armed", source)
         self.assertIn("jsx(Grille, { lit, heat })", source)
+
+
+class TestTheAimIsOnTheFace(unittest.TestCase):
+    """What the agent was asked to aim at, printed in the tool's own words.
+
+    The face must not improve on the answer: an aim is a claim about a file, so the confidence word
+    is shown beside it and the sentence underneath is the one the tool returned.
+    """
+
+    def test_the_aim_line_exists_and_comes_from_state(self):
+        source = face()
+        self.assertIn("s.aim_confidence", source)
+        self.assertIn("children: s.aim", source)
+
+    def test_the_confidence_word_is_coloured_by_strength(self):
+        source = face()
+        self.assertIn("const aimColor = aimConfidence === 'exact'", source)
+
+    def test_the_face_says_nothing_when_nothing_was_aimed_at(self):
+        source = face()
+        self.assertIn("s.aim\n                ? jsxs('div'", source)

@@ -10,7 +10,10 @@ import unittest
 import wave
 from pathlib import Path
 
-import numpy as np
+try:
+    import numpy as np
+except ImportError:  # the plugin process has no numpy on purpose; the engine interpreter has it
+    raise unittest.SkipTest("numpy lives in the engine interpreter, not the plugin process")
 
 from amphead import analyse
 

@@ -32,6 +32,9 @@ const rig = {
   capture_path: CAPTURES[1].path,
   cab: 'Vintage 30 4x12 close',
   cab_path: CABS[1].path,
+  // What an aim looks like on the face: the tool's words, and the strength of the claim.
+  aim: 'aimed at AC/DC: cab matched: Greenback; no capture in the library answers that rig',
+  aim_confidence: 'family',
   stages: [
     { i: 0, name: 'Capture', enabled: true },
     { i: 1, name: 'Tone', enabled: true },
@@ -48,7 +51,7 @@ export const state = () => {
       reason: 'the local engine is not running: press Setup',
       project: 'AmpHead 2', ui: 'hidden', running: false, armed: false, monitor: false,
       master_db: null, input_gain_db: null, output_gain_db: null, demo: false, problems: [], chain: [], knobs: [], tone: null,
-      tone_name: '', capture: '', capture_path: '', cab: '', cab_path: '',
+      tone_name: '', capture: '', capture_path: '', cab: '', cab_path: '', aim: '', aim_confidence: '',
       samplerate: 0, blocksize: 0, latency_ms: 0, mode: '',
       device: { driver: '', buffer: '', rate: '', out_ms: 0, closed: true }
     }
@@ -69,6 +72,8 @@ export const state = () => {
     tone_name: toneName(),
     capture: rig.capture, capture_path: rig.capture_path,
     cab: rig.cab, cab_path: rig.cab_path,
+    // Let the harness show what an aim looks like without a live agent turn.
+    aim: rig.aim || '', aim_confidence: rig.aim_confidence || '',
     samplerate: 44100, blocksize: 512, latency_ms: 20.0, mode: 'wdm-ks',
     device: { driver: 'WDM-KS', buffer: 512, rate: 44100, out_ms: 10.0, closed: false }
   }

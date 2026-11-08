@@ -101,6 +101,49 @@ Music and the cloud folders inside them, four levels down, and lists the folders
 `action="show"` reports what is set, whether each folder exists, and where each value came from.
 Read-only unless you say `set`.
 
+## Asking for a sound
+
+`amphead_aim` is for the thing an agent is actually good at: looking up how a record was made, then
+finding out whether this machine can make it. It is not a button labelled with a band name, and it
+never says it made you sound like one.
+
+Ask in the ordinary way ("set me up with the AC/DC rhythm sound"), and the agent researches the rig
+first: amplifier family, cabinet, speakers, microphone. It then calls:
+
+```
+amphead_aim artist=AC/DC amp=plexi cab=greenback
+```
+
+The tool ranks the captures and cabinets already on your disk by name and answers with the
+strength of its claim:
+
+```
+AIMED AT AC/DC
+amp=plexi | cab=greenback | confidence=family | matched=greenback | missing=amp:plexi
+capture: no capture in the library answers that rig
+cab: cab matched: Greenback
+would_load_cab=Greenback
+```
+
+`confidence=exact` means every word of the researched rig was found in a file name.
+`family` means part of it was, and `missing=` names the part that was not. That word is also drawn
+on the amp face beside the sentence, so the pane cannot flatter the result.
+
+`action="apply"` loads the pair it found and can set the trims and tone knobs in the same call:
+`input_gain_db`, `output_gain_db`, `bass`, `mid`, `treble`.
+
+There is a second action for when you have a recording and want to know how far off you are:
+
+```
+amphead_aim action=measure reference=<the record> take=<your render>
+```
+
+It compares the two in eight octave bands, prints the difference per band, the distance in dB, and
+the curve that would close the gap. Measurement runs in the engine interpreter, because that is the
+one with numpy; the plugin process stays dependency-free. Two guidelines worth knowing: compare
+program material with program material (two raw impulse responses are not a useful comparison), and
+treat the distance as a direction to move, not a verdict.
+
 ## What this touches
 
 The catalog asks for an explicit disclosure, so this is the whole list, not the flattering part.
@@ -118,6 +161,10 @@ walks Documents, Downloads, Desktop, Music and the cloud folders inside them, fo
 reading file names only. It remembers the last capture and cabinet in `~/.amphead2.json`. Once
 running it makes no network calls, sends no telemetry, stores no credentials, and does not launch,
 steer or read any other application: there is no other application.
+
+`amphead_aim` reads the same file names, nothing else: no audio is opened unless you pass
+`action="measure"`, which reads the two wav files you name and writes nothing. It stores one line of
+its own answer in `~/.amphead2.json` so the face can show what was last asked for.
 
 ## Honest limits
 

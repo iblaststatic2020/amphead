@@ -772,6 +772,12 @@ function AmpFace({ rest }) {
   const running = s.running === true
   const tone = s.tone || {}
   const toneName = s.tone_name || [s.capture, s.cab].filter(Boolean).join(' + ') || ''
+  // An aim is a claim about a file, never about a record. The colour states how strong it is, so
+  // "family" cannot be read as "this is the band".
+  const aimConfidence = String(s.aim_confidence || '')
+  const aimColor = aimConfidence === 'exact'
+    ? 'var(--ui-accent)'
+    : aimConfidence === 'family' ? SECOND.color : MUTED.color
   const files = library.data || {}
 
   async function act(path, body) {
@@ -924,7 +930,27 @@ function AmpFace({ rest }) {
                   jsx('span', { children: s.blocksize ? `${s.blocksize} frames` : '' }),
                   jsx('span', { children: s.latency_ms ? `${Number(s.latency_ms).toFixed(0)} ms` : '' })
                 ]
-              })
+              }),
+              // What the agent was asked to sound like, and how far the library actually got. The
+              // line is the tool's own words, so the face cannot overstate the match.
+              s.aim
+                ? jsxs('div', {
+                  className: 'mt-1 flex items-baseline gap-1.5 border-t pt-1',
+                  style: { borderColor: 'var(--ui-stroke-secondary)' },
+                  children: [
+                    jsx('span', {
+                      className: 'shrink-0 text-[0.4375rem] font-bold uppercase leading-none tracking-[0.12em]',
+                      style: { color: aimColor },
+                      children: aimConfidence || 'aim'
+                    }),
+                    jsx('span', {
+                      className: 'truncate text-[0.5rem] leading-tight',
+                      style: MUTED,
+                      children: s.aim
+                    })
+                  ]
+                })
+                : null
             ]
           }),
 
