@@ -483,6 +483,230 @@ function PowerButton({ running, armed, busy, onSetup, onLive }) {
   })
 }
 
+// ---- the part that makes it read as an amp head and not a control panel ----
+//
+// A metal badge with the script name on it, over a woven grille cloth, with a rank of output valves
+// standing on the floor of the window. Stacked, never overlapped: an earlier pass drew the plate
+// across the middle of the valves and the glass read as dark squares, which is the sort of thing a
+// screenshot catches and a unit test does not.
+//
+// The valves only heat while the engine is open AND armed. A dark amp is an amp with no power; a
+// face that glowed on a closed device would be lying about the one thing the eye can check. Their
+// brightness follows the meter, so they answer the strings and not just the switch.
+const GRILLE = {
+  position: 'relative',
+  overflow: 'hidden',
+  height: 112,
+  borderRadius: 8,
+  border: '1px solid color-mix(in srgb, var(--ui-text-primary) 20%, transparent)',
+  // woven cloth: two diagonal weaves over a dark ground, then a warm wash from the valves below
+  background:
+    'radial-gradient(115% 85% at 50% 120%, color-mix(in srgb, var(--ui-accent) 16%, transparent) 0%, transparent 64%),' +
+    'repeating-linear-gradient(45deg, rgba(0,0,0,0.42) 0 1px, transparent 1px 3px),' +
+    'repeating-linear-gradient(-45deg, rgba(255,255,255,0.075) 0 1px, transparent 1px 3px),' +
+    'linear-gradient(180deg, var(--ui-bg-secondary) 0%, var(--ui-bg-primary) 100%)',
+  boxShadow:
+    'inset 0 1px 0 color-mix(in srgb, var(--ui-text-primary) 12%, transparent),' +
+    ' inset 0 -2px 12px rgba(0,0,0,0.45)'
+}
+
+// Two slow loops, not a strobe: valves breathe, they do not blink.
+const FACE_CSS = `
+@keyframes amphead-heat { 0%, 100% { opacity: 0.84 } 37% { opacity: 1 } 62% { opacity: 0.9 } }
+`
+
+// One of the four screws that hold the grille baffle on. Physicality by the cheapest honest means:
+// a recessed slot and a highlight on one edge.
+function Screw({ style }) {
+  return jsx('div', {
+    style: {
+      position: 'absolute',
+      width: 7,
+      height: 7,
+      borderRadius: '50%',
+      border: '1px solid color-mix(in srgb, var(--ui-text-primary) 26%, transparent)',
+      background: 'radial-gradient(circle at 34% 30%, var(--ui-bg-quaternary) 0%, var(--ui-bg-primary) 70%)',
+      boxShadow: 'inset 0 1px 1px rgba(255,255,255,0.14), 0 1px 1px rgba(0,0,0,0.5)',
+      ...style
+    }
+  })
+}
+
+// A valve, drawn rather than photographed, in five parts: halo, glass, specular edge, plate, mica,
+// filament. The halo is not decoration: on a 300px pane a bare 3-pixel filament reads as a scratch.
+function Valve({ heat, delay }) {
+  const warm = heat > 0
+  const glow = warm ? 0.4 + heat * 0.6 : 0
+  return jsxs('div', {
+    className: 'relative shrink-0',
+    style: { width: 22, height: 42, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', alignItems: 'center' },
+    children: [
+      // bloom around the glass
+      jsx('div', {
+        style: {
+          position: 'absolute',
+          left: '50%',
+          bottom: 6,
+          width: 30,
+          height: 34,
+          marginLeft: -15,
+          borderRadius: '50%',
+          background: 'radial-gradient(circle, color-mix(in srgb, var(--ui-accent) 60%, transparent) 0%, transparent 70%)',
+          filter: 'blur(4px)',
+          opacity: glow,
+          transition: 'opacity 700ms ease',
+          pointerEvents: 'none'
+        }
+      }),
+      jsxs('div', {
+        style: {
+          position: 'relative',
+          width: 22,
+          height: 31,
+          borderRadius: '11px 11px 3px 3px',
+          overflow: 'hidden',
+          border: `1px solid ${warm ? 'color-mix(in srgb, var(--ui-accent) 50%, transparent)' : 'color-mix(in srgb, var(--ui-text-primary) 30%, transparent)'}`,
+          background: warm
+            ? 'linear-gradient(180deg, color-mix(in srgb, var(--ui-accent) 20%, var(--ui-bg-primary)) 0%,' +
+              ' color-mix(in srgb, var(--ui-accent) 9%, var(--ui-bg-primary)) 100%)'
+            : 'linear-gradient(180deg, color-mix(in srgb, var(--ui-text-primary) 14%, transparent) 0%,' +
+              ' color-mix(in srgb, var(--ui-text-primary) 5%, transparent) 100%)',
+          boxShadow: 'inset 0 1px 2px rgba(255,255,255,0.2), inset 0 -3px 6px rgba(0,0,0,0.35)',
+          transition: 'background 700ms ease, border-color 700ms ease'
+        },
+        children: [
+          // the anode plates either side of the filament
+          jsx('div', { style: { position: 'absolute', left: 3, top: '22%', width: 3, height: '46%', borderRadius: 1, background: 'rgba(0,0,0,0.34)' } }),
+          jsx('div', { style: { position: 'absolute', right: 3, top: '22%', width: 3, height: '46%', borderRadius: 1, background: 'rgba(0,0,0,0.34)' } }),
+          // the mica disc, a hairline of light across the top
+          jsx('div', { style: { position: 'absolute', left: 2, right: 2, top: '15%', height: 1, background: 'rgba(255,255,255,0.2)' } }),
+          // specular edge down the left of the glass
+          jsx('div', {
+            style: {
+              position: 'absolute',
+              left: 2,
+              top: 3,
+              width: 2,
+              height: '76%',
+              borderRadius: 3,
+              background: 'linear-gradient(180deg, rgba(255,255,255,0.30) 0%, rgba(255,255,255,0.04) 100%)',
+              opacity: 0.5
+            }
+          }),
+          // the filament itself
+          jsx('div', {
+            style: {
+              position: 'absolute',
+              left: '50%',
+              top: 6,
+              bottom: 5,
+              width: 3,
+              marginLeft: -1.5,
+              borderRadius: 2,
+              background: warm ? 'var(--ui-accent)' : 'color-mix(in srgb, var(--ui-text-primary) 18%, transparent)',
+              boxShadow: warm ? '0 0 10px 3px color-mix(in srgb, var(--ui-accent) 75%, transparent)' : 'none',
+              animation: warm ? 'amphead-heat 2.8s ease-in-out infinite' : 'none',
+              animationDelay: `${delay}s`
+            }
+          })
+        ]
+      }),
+      // bakelite socket
+      jsx('div', {
+        style: {
+          width: 17,
+          height: 8,
+          marginTop: -2,
+          borderRadius: '1px 1px 3px 3px',
+          border: '1px solid var(--ui-stroke-primary)',
+          background: 'linear-gradient(180deg, var(--ui-bg-quaternary) 0%, var(--ui-bg-primary) 100%)',
+          boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.10)'
+        }
+      })
+    ]
+  })
+}
+
+// The window: badge plate up top, valves along the floor, screws at the corners. Nothing here is a
+// control, so nothing here is clickable.
+function Grille({ lit, heat }) {
+  const level = lit ? Math.max(0.32, Math.min(1, heat)) : 0
+  return jsxs('div', {
+    style: GRILLE,
+    children: [
+      // the plate the script is stamped into: brushed metal, lit from above
+      jsx('div', {
+        style: {
+          position: 'absolute',
+          left: '50%',
+          top: 8,
+          width: '86%',
+          height: 46,
+          transform: 'translateX(-50%)',
+          borderRadius: 4,
+          border: '1px solid color-mix(in srgb, var(--ui-text-primary) 30%, transparent)',
+          background:
+            'linear-gradient(180deg, color-mix(in srgb, var(--ui-text-primary) 34%, var(--ui-bg-secondary)) 0%,' +
+            ' var(--ui-bg-secondary) 42%,' +
+            ' color-mix(in srgb, var(--ui-bg-primary) 90%, var(--ui-accent) 10%) 100%)',
+          boxShadow: lit
+            ? '0 0 20px -4px color-mix(in srgb, var(--ui-accent) 45%, transparent),' +
+              ' inset 0 1px 0 color-mix(in srgb, var(--ui-text-primary) 30%, transparent),' +
+              ' inset 0 -1px 0 rgba(0,0,0,0.55)'
+            : 'inset 0 1px 0 color-mix(in srgb, var(--ui-text-primary) 22%, transparent), inset 0 -1px 0 rgba(0,0,0,0.5)'
+        }
+      }),
+      jsxs('div', {
+        style: { position: 'absolute', left: 0, right: 0, top: 13, textAlign: 'center', pointerEvents: 'none' },
+        children: [
+          jsx('span', {
+            style: {
+              display: 'block',
+              fontFamily: '"Segoe Script", "Brush Script MT", "Snell Roundhand", "Lucida Handwriting", cursive',
+              fontWeight: 700,
+              fontSize: 26,
+              lineHeight: 1.0,
+              letterSpacing: '-0.01em',
+              color: 'color-mix(in srgb, var(--ui-text-primary) 88%, var(--ui-accent) 12%)',
+              // stamped, not printed: a dark lip under the stroke and a thin light one above
+              textShadow: lit
+                ? '0 1px 0 rgba(0,0,0,0.6), 0 -1px 0 rgba(255,255,255,0.10), 0 0 14px color-mix(in srgb, var(--ui-accent) 45%, transparent)'
+                : '0 1px 0 rgba(0,0,0,0.55), 0 -1px 0 rgba(255,255,255,0.08)',
+              transition: 'text-shadow 700ms ease'
+            },
+            children: 'Amphead'
+          }),
+          jsx('span', {
+            className: 'mt-0.5 block text-[0.4375rem] font-semibold uppercase',
+            style: { letterSpacing: '0.34em', color: 'var(--ui-text-tertiary)' },
+            children: 'valve · 100'
+          })
+        ]
+      }),
+      // the rank of valves, standing on the bottom lip
+      jsx('div', {
+        style: {
+          position: 'absolute',
+          left: 0,
+          right: 0,
+          bottom: 4,
+          padding: '0 12px',
+          display: 'flex',
+          alignItems: 'flex-end',
+          justifyContent: 'space-between',
+          opacity: lit ? 0.62 + level * 0.38 : 0.28,
+          transition: 'opacity 700ms ease'
+        },
+        children: [0, 1, 2, 3, 4, 5].map((i) => jsx(Valve, { heat: level, delay: i * 0.34 }, `valve-${i}`))
+      }),
+      jsx(Screw, { style: { left: 5, top: 5 } }),
+      jsx(Screw, { style: { right: 5, top: 5 } }),
+      jsx(Screw, { style: { left: 5, bottom: 5 } }),
+      jsx(Screw, { style: { right: 5, bottom: 5 } })
+    ]
+  })
+}
+
 function AmpFace({ rest }) {
   const client = useQueryClient()
   const shown = useOnScreen()
@@ -517,6 +741,9 @@ function AmpFace({ rest }) {
 
   const verdict = s.verdict || 'CONNECTING'
   const armed = !!s.armed
+  // How hot the valves look: the meter squashed to 0..1 over the top 40 dB, so quiet playing still
+  // lights them and the very bottom of the range does not.
+  const heat = Math.max(0, Math.min(1, (toDb(peak) + 40) / 40))
   // Only the engine saying it is open counts as open. A state that has not arrived yet, or a
   // route that failed, must leave the face offering SET UP: the safe press is the one that
   // opens a device and stays silent, never the one that arms an amp we cannot see.
@@ -561,11 +788,20 @@ function AmpFace({ rest }) {
     }
   }
 
+  const lit = running && armed
   return jsxs('div', {
     className: 'flex h-full flex-col gap-2 overflow-y-auto p-2.5',
     children: [
+      jsx('style', { children: FACE_CSS }),
       jsxs('div', {
-        style: { ...BOX, padding: 10 },
+        style: {
+          ...BOX,
+          padding: 10,
+          // an open, armed amp gets a warm edge; a closed one stays a plain box
+          boxShadow: lit
+            ? `${BOX.boxShadow}, 0 0 26px -8px color-mix(in srgb, var(--ui-accent) 55%, transparent)`
+            : BOX.boxShadow
+        },
         className: 'flex flex-col gap-2',
         children: [
           // ---- the top rail: lamp, name, power ----
@@ -603,6 +839,9 @@ function AmpFace({ rest }) {
               })
             ]
           }),
+
+          // ---- the front of a head: valves behind a grille, the script across them ----
+          jsx(Grille, { lit, heat }),
 
           // ---- the engine is up: say so in words, and give the way back down ----
           // Setup opens the device and away it stays. Without this row the switch could only be

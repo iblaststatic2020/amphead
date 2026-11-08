@@ -194,3 +194,31 @@ class TestTheChassisWearsTheTheme(unittest.TestCase):
 
     def test_the_face_does_not_paint_its_own_background(self):
         self.assertNotRegex(face(), r"background(Color)?:\s*'(white|black|#[0-9a-fA-F]{6})'")
+
+class TestTheFaceLooksLikeAnAmp(unittest.TestCase):
+    """A head with a badge and valves, not a form with knobs stuck to it.
+
+    The tubes are the part a screenshot cannot check for you, so the tests pin the two rules that
+    make them honest: six of them, and lit only when the engine is both open and armed.
+    """
+
+    def test_there_is_a_grille_with_the_name_on_it(self):
+        source = face()
+        self.assertIn("function Grille(", source)
+        self.assertIn("function Valve(", source)
+        self.assertIn("children: 'Amphead'", source)
+        self.assertIn("valve · 100", source)
+
+    def test_six_valves_stand_on_the_floor_of_the_grille(self):
+        self.assertIn("[0, 1, 2, 3, 4, 5].map", face())
+
+    def test_a_valve_lights_from_the_meter_and_not_from_the_switch(self):
+        """Heat is the meter, squashed over the top 40 dB, so quiet playing still shows."""
+        source = face()
+        self.assertIn("const heat = Math.max(0, Math.min(1, (toDb(peak) + 40) / 40))", source)
+        self.assertIn("const warm = heat > 0", source)
+
+    def test_the_valves_are_dark_unless_the_engine_is_open_and_armed(self):
+        source = face()
+        self.assertIn("const lit = running && armed", source)
+        self.assertIn("jsx(Grille, { lit, heat })", source)

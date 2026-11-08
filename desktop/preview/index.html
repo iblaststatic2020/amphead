@@ -6,19 +6,29 @@
     <!-- The frame the app gives a pane: the theme tokens, the app font, no page margins. The
          harness supplies them itself so the face is judged against the same variables. -->
     <style>
+      /* The full token set the app hands a plugin pane, at the app's dark-theme values. The face
+         only ever reads these names, so a missing one silently renders as nothing: keep this list
+         in step with the app's --ui-* variables, not with whatever the face happens to use today. */
       :root {
-        --ui-text: #e6e1da;
-        --ui-text-secondary: #a9a29a;
-        --ui-text-quaternary: #6f685f;
-        --ui-stroke-secondary: #2a2521;
+        --ui-bg-primary: #14100e;
+        --ui-bg-secondary: #1a1512;
+        --ui-bg-tertiary: #211a16;
+        --ui-bg-quaternary: #2a221d;
+        --ui-bg-quinary: #34291f;
+        --ui-text-primary: #ece5dc;
+        --ui-text-secondary: #b3a89c;
+        --ui-text-tertiary: #8d8378;
+        --ui-text-quaternary: #6b625a;
+        --ui-stroke-primary: #3a312a;
+        --ui-stroke-secondary: #2a231e;
         --ui-accent: #d98b3a;
-        --ui-card: #141110;
+        --ui-card: #100d0b;
       }
       body {
         margin: 0;
         padding: 16px;
         background: #0d0b0a;
-        color: var(--ui-text);
+        color: var(--ui-text-primary);
         font-family: -apple-system, 'Segoe UI', system-ui, sans-serif;
       }
       .label {
