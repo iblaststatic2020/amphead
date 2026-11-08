@@ -70,6 +70,24 @@ def judge(state: dict, reading: dict, chain: list[dict] | None = None) -> dict[s
     if callback_errors:
         problems.append(f"the audio callback failed {callback_errors} time(s) and the amp "
                         f"disarmed itself")
+    # A block that misses its deadline is not a CPU number on a graph: the driver plays silence
+    # in its place, which is the crackle and drag a player calls "shaky". The pane has to say so
+    # where the levels are read, or the only advice left is "try things".
+    late = int(state.get("late") or 0)
+    if late:
+        problems.append(f"{late} block(s) reached the driver too late, so playback cracks and "
+                        f"drags: run tune, or raise blocksize in settings.json")
+
+    # Playing a capture at the wrong rate is not silence and not an error code: it is a tone
+    # that is close but not the one that was bought. Say the numbers, because the fix lives in
+    # the interface's own control panel and nowhere else.
+    mismatch = state.get("rate_mismatch") or {}
+    if mismatch.get("capture_hz") and mismatch.get("stream_hz"):
+        dark = round(100 * (1 - float(mismatch["stream_hz"]) / float(mismatch["capture_hz"])))
+        problems.append(f"this capture was trained at {int(mismatch['capture_hz'])} Hz and the "
+                        f"engine runs at {int(mismatch['stream_hz'])} Hz, so it plays about "
+                        f"{dark}% dark: set the interface to {int(mismatch['capture_hz'])} Hz to "
+                        f"hear it exactly")
 
     if not state.get("open"):
         return {"verdict": ENGINE_OFF,

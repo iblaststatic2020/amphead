@@ -63,6 +63,10 @@ class Server:
         self.engine = engine
         self.capture_name: str | None = None
         self.cab_name: str | None = None
+        # A capture whose training rate the device will not run. The amp still plays it, because
+        # a library that loads with a named tone error beats a library that refuses to load, but
+        # the pane has to carry the reason.
+        self.rate_mismatch: dict | None = None
         self.tone = {"bass": 0.0, "mid": 0.0, "treble": 0.0}
         #: The last take this engine finished, so asking what was just recorded answers with
         #: that take rather than with whatever wav happens to be newest in the folder.
@@ -169,6 +173,9 @@ class Server:
             "gate_db": chain.gate_db,
             "capture": self.capture_name,
             "cab": self.cab_name,
+            # Not an error, a tone fact: the pane has to be able to say it where the player
+            # reads the amp, not only in the reply to the load call.
+            "rate_mismatch": dict(self.rate_mismatch) if self.rate_mismatch else None,
             "stages": {"capture": chain.amp_on, "tone": chain.tone_on,
                        "cabinet": chain.cab_on},
             "tone": dict(self.tone),
@@ -283,17 +290,65 @@ class Server:
         # A capture is not just weights: it is weights for one sample rate. Playing an 8 kHz
         # trained model on a 48 kHz stream runs its filters at six times the frequency they
         # were fit to, which reads as a thin, fizzy amp rather than as an error, and the player
-        # blames the capture. Refuse and name both rates.
+        # blames the capture. So the stream follows the capture: most .nam files are 48 kHz and
+        # the old default was 44.1, and refusing those made the whole library look broken.
         rate = getattr(model, "sample_rate", None)
+        followed = None
         if rate and int(rate) != int(self.engine.samplerate):
-            raise ValueError(
-                f"this capture was trained at {int(rate)} Hz but the engine is running at "
-                f"{self.engine.samplerate} Hz, so it would play at the wrong pitch and the wrong "
-                f"speed. Load a {self.engine.samplerate} Hz capture, or open the engine at "
-                f"{int(rate)} Hz")
+            if self.engine.running and self.engine.take_state().get("recording"):
+                raise ValueError(
+                    f"this capture was trained at {int(rate)} Hz and the engine is running at "
+                    f"{self.engine.samplerate} Hz. Changing rate would end the take that is "
+                    f"recording, so stop the take and load it again")
+            try:
+                mode = self.engine.reopen(int(rate))
+            except Exception as exc:
+                # The device will not run at the capture's rate. Refusing the load left 1009 of
+                # this rig's 2928 captures unplayable, which is not "safe", it is the plugin
+                # being wrong about the library. It plays, and it says what it is doing: the
+                # filters were fitted at one rate and are being driven at another, so the top
+                # end sits a little lower than the capture intends.
+                self.rate_mismatch = {"capture_hz": int(rate),
+                                      "stream_hz": int(self.engine.samplerate),
+                                      "why": str(exc).split(": ")[0]}
+                followed = None
+                mode = None
+            else:
+                followed = int(rate)
+                self.rate_mismatch = None
+                # The cabinet and the tone stack were built for the old rate: a 44.1 kHz cabinet
+                # in a 48 kHz chain is a different cabinet, so both are rebuilt at the new one.
+                if self.cab_name:
+                    self.load_cab(self.cab_name)
+                if self.engine.chain.tone is not None:
+                    self._rebuild_tone(int(rate))
+        else:
+            self.rate_mismatch = None
         self.engine.update(amp=model)
         self.capture_name = str(path)
-        return {"capture": self.capture_name, "receptive_field": model.receptive_field}
+        said = {"capture": self.capture_name, "receptive_field": model.receptive_field,
+                "samplerate": self.engine.samplerate}
+        if followed:
+            said["followed_capture_rate"] = followed
+            said["mode"] = mode
+        if self.rate_mismatch:
+            said["rate_mismatch"] = dict(self.rate_mismatch)
+            said["warning"] = (
+                f"this capture was trained at {self.rate_mismatch['capture_hz']} Hz and this "
+                f"device only opens at {self.rate_mismatch['stream_hz']} Hz, so its tone is "
+                f"about {round(100 * (1 - self.rate_mismatch['stream_hz'] / self.rate_mismatch['capture_hz']))}% "
+                f"dark. Set the interface to {self.rate_mismatch['capture_hz']} Hz in its own "
+                f"control panel (Windows sound settings cannot) to hear it exactly")
+        return said
+
+    def _rebuild_tone(self, rate: int) -> None:
+        """Move a dialled-in tone stack to another sample rate without losing the settings."""
+        from .tone import ToneStack
+
+        stack = ToneStack(rate)
+        for name, value in self.tone.items():
+            stack.set(name, float(value))
+        self.engine.update(tone=stack)
 
     def bypass(self, stage: str = "", on: bool = True) -> dict:
         """Switch a stage out of the path, or back in, without unloading it.
@@ -315,6 +370,7 @@ class Server:
     def clear_capture(self) -> dict:
         self.engine.update(amp=None)
         self.capture_name = None
+        self.rate_mismatch = None
         return {"capture": None}
 
     def load_cab(self, path: str, gain_db: float | None = None) -> dict:
@@ -471,7 +527,7 @@ class Server:
         }
 
     def tune(self, blocksize: int | None = None, apply: bool = True,
-             live: bool = True, seconds: float = 2.0) -> dict:
+             live: bool = True, seconds: float = 6.0) -> dict:
         """Find the quickest block size this rig can actually feed, and reopen on it.
 
         The measurement is a soak on the real device, because a render stopwatch without a
@@ -488,12 +544,12 @@ class Server:
                 try:
                     rows = tune.soak_all(self.engine, seconds=seconds)
                     picked = int(blocksize) if blocksize else tune.choose_soak(rows)
-                    # A two second pass is a screenshot, not a verdict. Whatever it picked gets
-                    # a longer run before the amp is left at that size, and if the longer run
-                    # drops blocks the next size up is tried instead.
+                    # A six second pass is still a snapshot. Whatever it picked gets a longer
+                    # run before the amp is left at that size, and if the longer run drops
+                    # blocks the next size up is tried instead.
                     if not blocksize and picked:
                         for _ in range(2):
-                            confirm = tune.soak(self.engine, picked, seconds=max(5.0, seconds * 2))
+                            confirm = tune.soak(self.engine, picked, seconds=max(10.0, seconds * 2))
                             if confirm["ok"]:
                                 break
                             bigger = [r for r in rows if r["blocksize"] > picked and r["ok"]]

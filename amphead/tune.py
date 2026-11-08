@@ -22,6 +22,13 @@ MEASURED = 40
 # A block has to be filled with the time it takes to fill the *next* one, so half the
 # budget is the line between "it fits" and "it fits until something else happens".
 HEADROOM = 0.5
+# The smallest block that survives a quiet soak is not the smallest block a rig can run.
+# A soak sees this process and the driver; it cannot see the browser, the recording app or
+# the update check that lands two minutes into a take, and every one of those is a missed
+# deadline at 64 frames while 256 frames swallows it whole. So the floor is the size a
+# player can leave set all day: 5.8 ms a block at 44.1 kHz, still well under the 40 ms
+# where playing starts to feel late. Smaller sizes stay reachable by asking for one.
+SAFE_FLOOR = 256
 
 
 def _signal(blocksize: int):
@@ -68,14 +75,25 @@ def measure(chain, samplerate: int, candidates=CANDIDATES, warmup: int = WARMUP,
     return rows
 
 
-def choose(rows: list[dict]) -> int | None:
-    """The smallest block that fits with room to spare, and the fallback if none does."""
+def choose(rows: list[dict], floor: int = SAFE_FLOOR) -> int | None:
+    """The smallest block that fits with room to spare, and the fallback if none does.
+
+    `floor` is the smallest size the answer may name when a bigger one also fits: a rig that
+    can technically run 64 frames should still be left at 256, because the measurement was
+    taken while the machine was doing nothing else.
+    """
+    floor = int(floor or 0)
     for row in sorted(rows, key=lambda r: r["blocksize"]):
-        if row["fits"]:
+        if row["fits"] and row["blocksize"] >= floor:
             return int(row["blocksize"])
-    fitting = [r for r in rows if r["render_ms"] <= r["block_ms"]]
+    # Nothing at or above the floor fits: name the safest size that still runs in time, so the
+    # answer is the least bad one rather than the smallest.
+    fitting = [r for r in rows if r["render_ms"] <= r["block_ms"] and r["blocksize"] >= floor]
     if fitting:
         return int(min(fitting, key=lambda r: r["render_ms"] / r["block_ms"])["blocksize"])
+    fitting = [r for r in rows if r["render_ms"] <= r["block_ms"]]
+    if fitting:
+        return int(max(fitting, key=lambda r: r["blocksize"])["blocksize"])
     return None
 
 
@@ -133,25 +151,36 @@ def soak_all(engine, candidates=CANDIDATES, seconds: float = 2.0) -> list[dict]:
     return rows
 
 
-def choose_soak(rows: list[dict]) -> int | None:
-    """The smallest block that ran clean, else the smallest that dropped least."""
-    clean = [r for r in rows if r["ok"]]
+def choose_soak(rows: list[dict], floor: int = SAFE_FLOOR) -> int | None:
+    """The smallest block at or above the floor that ran clean, else the least bad one.
+
+    Same rule as choose(): the soak shows what this machine can do while nothing else runs,
+    and the size that survives a quiet two seconds is not the size to leave a guitar rig at.
+    """
+    floor = int(floor or 0)
+    clean = [r for r in rows if r["ok"] and r["blocksize"] >= floor]
     if clean:
         return int(min(clean, key=lambda r: r["blocksize"])["blocksize"])
-    live = [r for r in rows if r["blocks"]]
+    live = [r for r in rows if r["blocks"] and r["blocksize"] >= floor]
+    if not live:
+        live = [r for r in rows if r["blocks"]]
     if not live:
         return None
-    best = min(live, key=lambda r: (r["underflows"] + r["overflows"] + r.get("late", 0),
-                                    r["blocksize"]))
-    return int(best["blocksize"])
+    return int(max(live, key=lambda r: r["blocksize"])["blocksize"])
 
 
-def soak_verdict(rows: list[dict], picked: int | None) -> str:
+def soak_verdict(rows: list[dict], picked: int | None, floor: int = SAFE_FLOOR) -> str:
     if picked is None:
         return "the device would not open at any block size"
     row = next(r for r in rows if r["blocksize"] == picked)
     bad = row["underflows"] + row["overflows"] + row.get("late", 0)
     if row["ok"]:
+        smaller = [r for r in rows if r["ok"] and r["blocksize"] < picked]
+        if smaller:
+            return (f"{picked} frames, {row['block_ms']:.1f} ms a block, {row['seconds']:.0f} s "
+                    f"with nothing dropped. {smaller[0]['blocksize']} frames also ran clean, "
+                    f"but leaves no room for another app to interrupt: ask for it by name if "
+                    f"you want it")
         return (f"{picked} frames, {row['block_ms']:.1f} ms a block, "
                 f"{row['seconds']:.0f} s with nothing dropped")
     return (f"{picked} frames, {row['block_ms']:.1f} ms a block, "

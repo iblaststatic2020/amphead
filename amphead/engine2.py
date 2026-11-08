@@ -294,6 +294,43 @@ class Engine:
     def meter(self) -> Meter:
         return self._meter
 
+    def reopen(self, samplerate: int) -> str:
+        """Open the same device at another rate, keeping the chain where it is.
+
+        A capture is weights fitted at one rate, so the stream has to meet it, not the
+        other way round: most .nam files are 48 kHz while 44.1 kHz was the old default,
+        and refusing those turned the plugin's whole library into "incompatible". The
+        device is asked for the capture's rate; if the driver will not open there, the
+        old rate is restored and the failure is raised so the caller can name both.
+        """
+        samplerate = int(samplerate)
+        if samplerate == self.samplerate:
+            return self.mode or ""
+        old = self.samplerate
+        was_running = self.running
+        if was_running:
+            self.stop()
+        self.samplerate = samplerate
+        self._gate = Gate(threshold_db=self._gate.threshold_db, rate=samplerate)
+        with self._lock:
+            self._chain = replace(self._chain, gate=self._gate,
+                                  gate_db=self._gate.threshold_db)
+        if not was_running:
+            return ""
+        try:
+            return self.start()
+        except Exception:
+            self.samplerate = old
+            self._gate = Gate(threshold_db=self._gate.threshold_db, rate=old)
+            with self._lock:
+                self._chain = replace(self._chain, gate=self._gate,
+                                      gate_db=self._gate.threshold_db)
+            try:
+                self.start()
+            except Exception:
+                pass
+            raise
+
     def update(self, **kwargs) -> Chain:
         """Swap the whole chain atomically. Anything the callback sees is complete."""
         with self._lock:

@@ -139,7 +139,7 @@ class TheProbePicksABlockSize(unittest.TestCase):
             self.assertGreater(row["render_ms"], 0.0)
             self.assertAlmostEqual(row["block_ms"], round(1000.0 * row["blocksize"] / 44100, 2))
 
-    def test_the_pick_is_the_smallest_block_that_fits(self):
+    def test_the_pick_is_the_smallest_block_that_fits_above_the_floor(self):
         try:
             from amphead import tune
         except Exception as exc:  # pragma: no cover
@@ -149,7 +149,10 @@ class TheProbePicksABlockSize(unittest.TestCase):
             {"blocksize": 128, "block_ms": 2.9, "render_ms": 1.0, "fits": True},
             {"blocksize": 256, "block_ms": 5.8, "render_ms": 1.0, "fits": True},
         ]
-        self.assertEqual(tune.choose(rows), 128)
+        # 128 fits, but a soak cannot see the next app that interrupts: the answer a player is
+        # left with is the floor, and asking for 128 by name is how you get it.
+        self.assertEqual(tune.choose(rows), 256)
+        self.assertEqual(tune.choose(rows, floor=0), 128)
 
     def test_a_chain_that_fits_nowhere_still_answers(self):
         try:
@@ -221,7 +224,7 @@ class TheTuneSoaksQuietly(unittest.TestCase):
         self.assertFalse(row["ok"])
         self.assertIn("dropped", tune.soak_verdict([row], 128))
 
-    def test_the_pick_is_the_smallest_size_that_held(self):
+    def test_the_pick_is_the_smallest_size_that_held_above_the_floor(self):
         from amphead import tune
         rows = [{"blocksize": 64, "ok": False, "blocks": 10, "underflows": 2, "overflows": 0,
                  "late": 0, "block_ms": 1.5, "seconds": 3},
@@ -229,5 +232,8 @@ class TheTuneSoaksQuietly(unittest.TestCase):
                  "late": 0, "block_ms": 2.9, "seconds": 3},
                 {"blocksize": 256, "ok": True, "blocks": 5, "underflows": 0, "overflows": 0,
                  "late": 0, "block_ms": 5.8, "seconds": 3}]
-        self.assertEqual(tune.choose_soak(rows), 128)
-        self.assertIn("128 frames", tune.soak_verdict(rows, 128))
+        self.assertEqual(tune.choose_soak(rows), 256)
+        self.assertEqual(tune.choose_soak(rows, floor=0), 128)
+        words = tune.soak_verdict(rows, 256)
+        self.assertIn("256 frames", words)
+        self.assertIn("128 frames also ran clean", words)

@@ -170,27 +170,42 @@ class TestWhatWasJustRecorded(unittest.TestCase):
                          "an old file was reported as this session's take")
 
 
-class TestACaptureIsPlayedAtItsOwnRate(unittest.TestCase):
-    def test_a_capture_trained_at_another_rate_is_refused_with_both_rates(self):
+class TestACaptureSetsTheRate(unittest.TestCase):
+    def _server_with_model_rate(self, rate):
         from amphead.nam import WaveNet
+        import amphead.nam as nam
 
         fixture = Path(__file__).parent / "fixtures" / "tiny_wavenet.nam"
         model = WaveNet.load(fixture)
-        model.sample_rate = 8000
-        server = engine_main.Server(_engine())
-        real = engine_main.WaveNet if hasattr(engine_main, "WaveNet") else None
-        import amphead.nam as nam
+        model.sample_rate = rate
         original = nam.WaveNet.load
-
-        def fake_load(path):
-            return model
-
-        nam.WaveNet.load = staticmethod(fake_load)
+        nam.WaveNet.load = staticmethod(lambda path: model)
         self.addCleanup(setattr, nam.WaveNet, "load", original)
-        with self.assertRaises(ValueError) as caught:
-            server.load_capture(str(fixture))
-        self.assertIn("8000", str(caught.exception))
-        self.assertIn("44100", str(caught.exception))
+        return engine_main.Server(_engine()), fixture
+
+    def test_the_stream_follows_the_capture_instead_of_refusing_it(self):
+        server, fixture = self._server_with_model_rate(48000)
+        said = server.load_capture(str(fixture))
+        self.assertEqual(server.engine.samplerate, 48000)
+        self.assertEqual(said["followed_capture_rate"], 48000)
+        self.assertIs(server.engine.chain.amp.sample_rate, 48000,
+                      "the capture was loaded at a rate the stream is not running at")
+
+    def test_a_device_that_will_not_open_at_the_capture_rate_still_plays_it_and_says_why(self):
+        server, fixture = self._server_with_model_rate(48000)
+        def refuse(rate):
+            raise RuntimeError("invalid sample rate 48000")
+
+        server.engine.reopen = refuse
+        said = server.load_capture(str(fixture))
+        self.assertEqual(said["rate_mismatch"], {"capture_hz": 48000, "stream_hz": 44100,
+                                                 "why": "invalid sample rate 48000"})
+        self.assertIn("8% dark", said["warning"])
+        self.assertIs(server.engine.chain.amp.sample_rate, 48000,
+                      "the capture did not load at all, which is what the library cannot afford")
+        self.assertEqual(server.status()["rate_mismatch"]["capture_hz"], 48000)
+        server.clear_capture()
+        self.assertIsNone(server.status()["rate_mismatch"])
 
 
 class TestAToneChangeNeverSplitsACoefficientSet(unittest.TestCase):
@@ -305,6 +320,19 @@ class TestACallbackFailureReachesTheVerdict(unittest.TestCase):
         said = verdict.judge(state, reading)
         self.assertTrue(any("callback failed 3 time" in p for p in said["problems"]),
                         said["problems"])
+
+
+class TestALateBlockReachesTheVerdict(unittest.TestCase):
+    def test_shaky_playback_is_named_where_the_levels_are_read(self):
+        from amphead import verdict
+
+        state = {"open": True, "late": 17, "armed": True, "master_db": -6.0,
+                 "samplerate": 44100, "blocksize": 64}
+        reading = {"peak_in": 0.2, "peak_out": 0.2, "master_db": -6.0, "underflows": 0}
+        said = verdict.judge(state, reading)
+        self.assertTrue(any("17 block(s) reached the driver too late" in p
+                            for p in said["problems"]), said["problems"])
+        self.assertTrue(any("tune" in p for p in said["problems"]))
 
 
 class TestTheFinishedTakeSaysWhatTheLiveStateSays(unittest.TestCase):
