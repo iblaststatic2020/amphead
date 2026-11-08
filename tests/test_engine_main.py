@@ -142,6 +142,24 @@ class VerbTest(unittest.TestCase):
     def test_quit_stops_the_loop(self):
         self.assertTrue(self.server.handle({"cmd": "quit"})["stop"])
 
+    def test_the_library_lists_both_kinds_of_file_by_folder(self):
+        """The pane offers what is on the machine; a player needs the folder, not the root."""
+        import tempfile
+
+        room = Path(tempfile.mkdtemp())
+        (room / "caps").mkdir()
+        (room / "irs").mkdir()
+        (room / "caps" / "Amp A.nam").write_text("{}")
+        (room / "irs" / "Cab A.wav").write_bytes(b"RIFF")
+        with mock.patch.dict("os.environ", {
+            "AMPHEAD_CAPTURE_DIR": str(room / "caps"),
+            "AMPHEAD_CAB_DIR": str(room / "irs"),
+        }, clear=False):
+            got = self.server.handle({"cmd": "library"})["result"]
+        self.assertIn("Amp A", [c["name"] for c in got["captures"]])
+        self.assertIn("Cab A", [c["name"] for c in got["cabs"]])
+        self.assertTrue(all(c["folder"] for c in got["captures"]))
+
 
 @unittest.skipIf(np is None, "numpy is not installed")
 class LoopTest(unittest.TestCase):

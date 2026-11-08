@@ -7,6 +7,7 @@ opening an interface or making a sound.
 """
 
 import os
+import pathlib
 import subprocess
 import unittest
 from unittest import mock
@@ -229,6 +230,40 @@ class InputTest(unittest.TestCase):
         out = r.set_input(track=1, spec=2)
         self.assertEqual(out["recinput"], 1)
         self.assertEqual(r.client.calls[-1], {"cmd": "input", "channel": 2})
+
+
+class MenuTest(unittest.TestCase):
+    """The amp and cabinet menus exist whether or not the interface is open."""
+
+    def down(self) -> local_port.AmpHead2Rig:
+        client = FakeClient()
+        client.running = False
+        return local_port.AmpHead2Rig(client=client)
+
+    def test_the_menu_lists_files_before_the_engine_is_running(self):
+        import tempfile
+
+        room = pathlib.Path(tempfile.mkdtemp())
+        (room / "caps").mkdir()
+        (room / "irs").mkdir()
+        (room / "caps" / "Amp A.nam").write_text("{}")
+        (room / "irs" / "Cab A.wav").write_bytes(b"RIFF")
+        with mock.patch.dict("os.environ", {
+            "AMPHEAD_CAPTURE_DIR": str(room / "caps"),
+            "AMPHEAD_CAB_DIR": str(room / "irs"),
+        }, clear=False):
+            got = self.down().library()
+        self.assertIn("Amp A", [row["name"] for row in got["captures"]])
+        self.assertIn("Cab A", [row["name"] for row in got["cabs"]])
+
+    def test_a_choice_made_before_setup_is_remembered_for_setup(self):
+        """Setup plays the last chain; picking an amp while parked is that same path."""
+        saved = {}
+        with mock.patch("amphead.lastchain.save", lambda **kw: saved.update(kw)):
+            got = self.down().open_capture("C:/amps/Bugera 6262/Lead.nam")
+        self.assertTrue(got["on_setup"])
+        self.assertEqual(got["capture"], "Lead")
+        self.assertEqual(saved["capture"], "C:/amps/Bugera 6262/Lead.nam")
 
 
 if __name__ == "__main__":

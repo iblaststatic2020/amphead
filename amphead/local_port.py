@@ -25,6 +25,16 @@ from . import port
 
 LABEL = "AmpHead 2"
 
+
+def _name(path: Any) -> str:
+    """A file as a player says it: the stem, not forty levels of folder above it."""
+    if not path:
+        return ""
+    try:
+        return Path(str(path)).stem
+    except (OSError, ValueError):
+        return str(path)
+
 #: The chain the engine runs, named the way a player reads a signal path.
 STAGES = ("Capture", "Tone", "Cabinet")
 
@@ -234,7 +244,17 @@ class AmpHead2Rig:
         return self._call(cmd="status")
 
     def status(self, **kw: Any) -> dict:
-        return self._call(cmd="status")
+        """The engine's own state, with its files named the way a player says them.
+
+        The engine holds paths; the pane says names and needs the path beside it for a menu
+        to show which row is loaded. Both are answered here so no route has to parse a path.
+        """
+        got = self._call(cmd="status")
+        for stage in ("capture", "cab"):
+            path = got.get(stage) or ""
+            got[f"{stage}_path"] = path
+            got[stage] = _name(path)
+        return got
 
     def liveness(self) -> tuple[str, str]:
         if self.client.running:
@@ -499,6 +519,7 @@ class AmpHead2Rig:
                     "path": "", "tracks": 1, "device": {"closed": True}, "engine": self.name}
         got = self._call(cmd="status")
         latency = got.get("latency_ms")
+        tone = got.get("tone") or {}
         return {
             "bridge": "live",
             "rig_tab": True,
@@ -514,6 +535,18 @@ class AmpHead2Rig:
                 "mode": got.get("mode"),
             },
             "engine": self.name,
+            # What is actually in the chain, in the engine's own words. The face cannot show
+            # a capture by name if the adapter keeps the name to itself.
+            "capture": _name(got.get("capture")),
+            "capture_path": got.get("capture") or "",
+            "cab": _name(got.get("cab")),
+            "cab_path": got.get("cab") or "",
+            "tone": {k: float(tone.get(k) or 0.0) for k in ("bass", "mid", "treble")},
+            "stages": got.get("stages") or {},
+            "samplerate": got.get("samplerate"),
+            "blocksize": got.get("blocksize"),
+            "latency_ms": latency,
+            "mode": got.get("mode"),
         }
 
     def host_alive(self) -> bool:
@@ -544,6 +577,48 @@ class AmpHead2Rig:
         self.client.check_env()
         return type("Installed", (), {"bridge_path": self.client.python,
                                       "startup_action": "nothing to install"})()
+
+    def library(self, **kw: Any) -> dict:
+        """What can be loaded, and what is loaded: the pane's amp and cabinet menus.
+
+        A menu is not a device. The folders are on this disk whether or not the engine has
+        opened the interface, so a player can see the amp they want before pressing Setup;
+        only the *loaded* names need the engine to answer.
+        """
+        from . import lastchain, library
+
+        held = lastchain.load()
+        if not self.client.running:
+            return library.listing(_name(held.get("capture")), _name(held.get("cab")))
+        return self._call(cmd="library")
+
+    def open_capture(self, path: str, **kw: Any) -> dict:
+        """Load one capture, and say the name it will be called from now on.
+
+        With the engine down there is nothing to load into, but the choice is still real:
+        it is remembered and Setup plays it. That is what a picker is for.
+        """
+        from . import lastchain
+
+        if not self.client.running:
+            lastchain.save(capture=str(path))
+            return {"capture": _name(str(path)), "path": str(path), "on_setup": True}
+        got = self._call(cmd="load_capture", path=str(path))
+        lastchain.save(capture=str(path))
+        return {"capture": _name(got.get("capture")), "path": got.get("capture"),
+                "receptive_field": got.get("receptive_field")}
+
+    def open_cab(self, path: str, **kw: Any) -> dict:
+        """Load one cabinet, and remember it the same way."""
+        from . import lastchain
+
+        if not self.client.running:
+            lastchain.save(cab=str(path))
+            return {"cab": _name(str(path)), "path": str(path), "on_setup": True}
+        got = self._call(cmd="load_cab", path=str(path))
+        lastchain.save(cab=str(path))
+        return {"cab": _name(got.get("cab")), "path": got.get("cab"),
+                "file_rate": got.get("file_rate"), "resampled": got.get("resampled")}
 
     def prepare_file(self, path: Any, **kw: Any) -> Any:
         return None

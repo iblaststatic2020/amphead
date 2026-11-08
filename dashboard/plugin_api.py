@@ -31,7 +31,7 @@ _ROOT = Path(__file__).resolve().parent.parent
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-from amphead import appdecl, demo, port, tones, verdict  # noqa: E402
+from amphead import appdecl, demo, library as amp_library, port, tones, verdict  # noqa: E402
 
 #: Which rig a request is talking to. Empty means "the one AMPHEAD_ENGINE names", which is how
 #: the tools and the original pane behave. The second pane sends ?engine=amphead2, so the two
@@ -313,6 +313,25 @@ def state() -> dict[str, Any]:
         "knobs": _knobs(track_no) if live.get("bridge") == "live" else [],
         "presets": _presets(),
         "demo": False,
+        # The local engine is not a plug-in and has no VST parameters, so it reports what it
+        # is actually playing: the capture by name, the cabinet by name, and the three tone
+        # knobs it really has. The face needs these to say what the tone is.
+        "engine": live.get("engine") or "reaper",
+        "capture": live.get("capture") or "",
+        "capture_path": live.get("capture_path") or "",
+        "cab": live.get("cab") or "",
+        "cab_path": live.get("cab_path") or "",
+        "tone": live.get("tone") or {},
+        # The two files together, said the way a player says it, so "what tone is this" has an
+        # answer that is not a file name. Derived, never stored: the name cannot drift from
+        # what is actually loaded.
+        "tone_name": amp_library.tone_name(live.get("capture_path") or "",
+                                      live.get("cab_path") or ""),
+        "stages": live.get("stages") or {},
+        "samplerate": live.get("samplerate"),
+        "blocksize": live.get("blocksize"),
+        "latency_ms": live.get("latency_ms"),
+        "mode": live.get("mode"),
     }
 
 
@@ -361,6 +380,50 @@ def setup_rig(body: dict | None = None) -> dict[str, Any]:
     return {"output": out, "ok": not out.startswith(("NOT", "NO "))}
 
 
+@router.get("/library")
+def library() -> dict[str, Any]:
+    """The captures and cabinets this machine has, so the pane can offer a menu.
+
+    An engine with no file picker is an amp with one sound. This lists what it can load; it
+    changes nothing, and it works whether or not the engine is currently running.
+    """
+    try:
+        return RIG.library()
+    except port.NoRig as exc:
+        return {"captures": [], "cabs": [], "capture": "", "cab": "",
+                "why": str(exc) or "the local engine is not running"}
+
+
+@router.post("/capture")
+def choose_capture(body: dict) -> dict[str, Any]:
+    """Load one amp capture, by path, which is the whole of "change the amp"."""
+    path = (body or {}).get("path")
+    if not path:
+        return {"output": "NO CAPTURE: say which file", "ok": False}
+    try:
+        got = RIG.open_capture(str(path))
+    except port.NoRig as exc:
+        return {"output": f"NOT LOADED: {exc}", "ok": False}
+    except (port.RigError, OSError, ValueError) as exc:
+        return {"output": f"NOT LOADED: {exc}", "ok": False}
+    return {"output": f"amp: {got['capture']}", "ok": True, **got}
+
+
+@router.post("/cab")
+def choose_cab(body: dict) -> dict[str, Any]:
+    """Load one cabinet, which is the other half of the tone."""
+    path = (body or {}).get("path")
+    if not path:
+        return {"output": "NO CABINET: say which file", "ok": False}
+    try:
+        got = RIG.open_cab(str(path))
+    except port.NoRig as exc:
+        return {"output": f"NOT LOADED: {exc}", "ok": False}
+    except (port.RigError, OSError, ValueError) as exc:
+        return {"output": f"NOT LOADED: {exc}", "ok": False}
+    return {"output": f"cabinet: {got['cab']}", "ok": True, **got}
+
+
 @router.post("/panic")
 def panic(body: dict) -> dict[str, Any]:
     if demo.enabled():
@@ -389,11 +452,17 @@ def master_level(body: dict) -> dict[str, Any]:
         return {"output": "NO LEVEL: say how many dB", "ok": False}
     if not math.isfinite(asked):
         return {"output": "NO LEVEL: say how many dB", "ok": False}
-    db = max(-60.0, min(0.0, asked))
+    # 0 dB was the old ceiling, and it was the wrong one: a clean DI through a lead capture
+    # sits well below the interface's own peak, so "maxed out" was still quiet. A player needs
+    # headroom above unity on the engine's own output gain. REAPER's track volume stays at 0.
     # The ramp is the step that makes sound, so it must reach whichever rig the request named.
     # This one took the module-level RIG, which is REAPER: an Amp 2 drag answered "REAPER is
     # not running" while the engine held the speakers.
     with _speaking_to_tools() as tools:
+        # The ceiling belongs to the rig that is about to hear the number, not to the one
+        # that happened to be chosen when this module was imported.
+        ceiling = 12.0 if getattr(tools.RIG, "name", "") == "amphead2" else 0.0
+        db = max(-60.0, min(ceiling, asked))
         try:
             tools.RIG.set_master(db=db, expect=tools.active_path())
             level = tools.RIG.master().get("db")
@@ -423,6 +492,24 @@ def knob(body: dict) -> dict[str, Any]:
         return {"output": "NO PARAM: say which knob to turn", "ok": False}
     if body.get("value") is None:
         return {"output": "NO VALUE: say what to set it to", "ok": False}
+    # A rig with its own knobs answers for itself. The local engine's tone stage is three
+    # parameters it really has, so a drag on Amp 2 writes the engine's tone, not REAPER's.
+    if hasattr(RIG, "set_param") and getattr(RIG, "name", "") == "amphead2":
+        try:
+            got = RIG.set_param(
+                fx=int(body.get("fx") if body.get("fx") is not None else 1),
+                param=param, value=float(body["value"]),
+                unit=str(body.get("mode") or "norm"),
+                track=int(body.get("track") or 1),
+            )
+        except port.NoRig as exc:
+            return {"output": f"NOT SET: {exc}", "ok": False}
+        except (port.RigError, LookupError, TypeError, ValueError) as exc:
+            return {"output": f"NOT SET: {exc}", "ok": False}
+        return {"output": f"{got['param_name']} {got['fmt']}", "ok": True,
+                "norm": got["norm"], "value": got["fmt"], "raw": got["raw"],
+                "clamped": not got["landed"], "retried": False,
+                "param": got["param_name"]}
     try:
         done = rig.set_param(
             body.get("fx", 0), param, float(body["value"]),

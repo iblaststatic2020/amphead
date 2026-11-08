@@ -215,6 +215,17 @@ class TestMasterRoute(unittest.TestCase):
         self.assertEqual(seen, [0.0])
         self.assertTrue(payload["ok"])
 
+    def test_master_allows_headroom_on_the_engine(self):
+        """Amp 2's output gain is the engine's own, and a lead capture left room at 0 dB."""
+        seen = []
+        rig = self.fake_rig(seen)
+        rig.name = "amphead2"
+        with mock.patch.object(API.port, "choose", lambda name=None: rig), \
+             mock.patch("amphead.tools.active_path", return_value="amphead2"):
+            payload = MASTER({"db": 9})
+        self.assertEqual(seen, [9.0])
+        self.assertTrue(payload["ok"])
+
     def test_master_clamps_below_the_floor(self):
         seen = []
         with mock.patch.object(API.port, "choose", lambda name=None: self.fake_rig(seen)), \

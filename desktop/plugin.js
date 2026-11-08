@@ -146,7 +146,8 @@ function Panel({ title, caption, children, className }) {
 // The volume the player actually hears. Boot and Live both leave the master at the floor, so this
 // is the control that makes the rig audible, and it says so before it is touched: a sliver of
 // movement on a hot amp model is already loud, so the caption asks for steps, not a yank.
-function MasterRamp({ db, busy, armed, onCommit }) {
+function MasterRamp({ db, busy, armed, onCommit, ceiling = 0 }) {
+  const top = Number.isFinite(ceiling) ? ceiling : 0
   const [value, setValue] = useState(typeof db === 'number' ? db : -60)
   const [dragging, setDragging] = useState(false)
   useEffect(() => {
@@ -156,7 +157,7 @@ function MasterRamp({ db, busy, armed, onCommit }) {
   // A drag can end two ways (mouse up, key up) and the refetch in between can hand back a reading
   // that is not a number. Every screen and every commit uses `level`, so neither gesture can post a
   // NaN at the rig and turn the master into a value nothing can read.
-  const level = Number.isFinite(value) ? Math.max(-60, Math.min(0, value)) : -60
+  const level = Number.isFinite(value) ? Math.max(-60, Math.min(top, value)) : -60
   const silent = level <= -60
   const commit = () => {
     setDragging(false)
@@ -185,7 +186,7 @@ function MasterRamp({ db, busy, armed, onCommit }) {
       jsx('input', {
         type: 'range',
         min: -60,
-        max: 0,
+        max: top,
         step: 1,
         value: level,
         disabled: busy || !armed,
@@ -896,6 +897,115 @@ function useOnScreen() {
 
 const meterEvery = (armed) => (armed ? METER_MS : METER_IDLE_MS)
 
+// --- Amp 2's own face, in the engine's own words ---------------------------------------
+// A plug-in has parameters; the engine has three files and three knobs. Rather than dress the
+// engine up as a VST and then show nothing, the face asks the engine what it is playing and
+// offers exactly those choices: which capture, which cabinet, three tone knobs. The name of the
+// chain is the two file names, because that is what a player calls "the tone".
+
+function toneWords(tone) {
+  const rows = [['bass', 'bass'], ['mid', 'mid'], ['treble', 'treble']]
+  const moved = rows
+    .map(([key, word]) => [word, Number(tone && tone[key] || 0)])
+    .filter(([, db]) => Math.abs(db) >= 0.05)
+  if (!moved.length) return 'flat: all three knobs at zero'
+  return moved.map(([word, db]) => `${word} ${db > 0 ? '+' : ''}${db.toFixed(1)} dB`).join(', ')
+}
+
+function ChainPlate({ name, capture, cab, tone, rate, block, latency }) {
+  const title = name || [capture, cab].filter(Boolean).join(' + ') || 'nothing loaded yet'
+  const facts = [
+    rate ? `${Math.round(rate / 100) / 10} kHz` : '',
+    block ? `${block} frames` : '',
+    latency ? `${Number(latency).toFixed(0)} ms round trip` : ''
+  ].filter(Boolean).join(' · ')
+  const row = (label, value) => jsxs('div', {
+    className: 'flex items-baseline justify-between gap-2',
+    children: [
+      jsx('span', {
+        className: 'text-[0.5rem] font-semibold uppercase tracking-[0.14em]',
+        style: { color: FACE_DIM }, children: label
+      }),
+      jsx('span', {
+        className: 'text-right text-[0.625rem] leading-snug', style: { color: FACE }, children: value
+      })
+    ]
+  })
+  return jsxs('div', {
+    className: 'rounded-md px-2.5 py-2',
+    style: { background: PLATE, border: '1px solid rgba(255,255,255,0.07)' },
+    children: [
+      jsx('div', {
+        className: 'text-[0.8125rem] font-semibold leading-tight', style: { color: FACE }, children: title
+      }),
+      jsx('div', {
+        className: 'mb-1 text-[0.5rem] leading-snug', style: { color: FACE_DIM },
+        children: 'what is on the signal path right now'
+      }),
+      jsxs('div', { className: 'flex flex-col gap-0.5', children: [
+        row('amp', capture || 'not loaded'),
+        row('cabinet', cab || 'no cabinet: raw amp'),
+        row('tone', toneWords(tone)),
+        facts ? row('engine', facts) : null
+      ]})
+    ]
+  })
+}
+
+function FileMenu({ title, caption, current, currentPath, items, busy, onPick }) {
+  const list = items || []
+  return jsx(Panel, {
+    title,
+    caption,
+    children: jsxs('div', {
+      className: 'flex flex-col gap-1',
+      children: [
+        jsx('div', {
+          className: 'text-[0.6875rem] font-semibold leading-tight', style: { color: FACE },
+          children: current || 'nothing loaded'
+        }),
+        list.length
+          ? jsx('select', {
+            className: 'w-full rounded-sm px-1 py-1 text-[0.625rem]',
+            style: { background: WELL, color: FACE, border: '1px solid rgba(255,255,255,0.08)' },
+            value: currentPath || '',
+            disabled: busy,
+            'aria-label': `choose the ${title}`,
+            onChange: (event) => { if (event.target.value) onPick(event.target.value) },
+            children: list.map((file) => jsx('option', {
+              value: file.path, children: `${file.name} — ${file.folder}`
+            }, file.path))
+          })
+          : jsx('div', {
+            className: 'text-[0.5625rem] leading-snug', style: { color: FACE_DIM },
+            children: 'no files in the usual folders; set AMPHEAD_CAPTURE_DIR or AMPHEAD_CAB_DIR'
+          })
+      ]
+    })
+  })
+}
+
+function TonePanel({ tone, busy, onTurn }) {
+  const knobs = [['bass', 'Bass'], ['mid', 'Mid'], ['treble', 'Treble']].map(([key, label], index) => {
+    const db = Number((tone && tone[key]) || 0)
+    return {
+      name: label,
+      index,
+      norm: Math.max(0, Math.min(1, (db + 12) / 24)),
+      value: `${db > 0 ? '+' : ''}${db.toFixed(1)} dB`,
+      steps: 0
+    }
+  })
+  return jsx(Panel, {
+    title: 'tone',
+    caption: 'three knobs, ±12 dB; all three at zero is off',
+    children: jsx('div', {
+      className: 'grid grid-cols-3 place-items-center gap-2',
+      children: knobs.map((knob) => jsx(Knob, { knob, busy, size: 'lg', onTurn }, knob.name))
+    })
+  })
+}
+
 function AmpFace({ rest }) {
   const client = useQueryClient()
   const shown = useOnScreen()
@@ -915,6 +1025,15 @@ function AmpFace({ rest }) {
   const clipped = useRef(false)
 
   const s = state.data || {}
+  // Amp 2 answers with what it is actually playing, so the face can offer the files on this
+  // machine. REAPER's face never asks: its amp is a plug-in with parameters, not a file.
+  const engine = s.engine === 'amphead2'
+  const library = useQuery({
+    queryKey: ['amphead2', 'library'],
+    queryFn: () => rest('/library'),
+    enabled: engine,
+    staleTime: 20000
+  })
   const reading = meter.data || {}
   const peak = Math.max(reading.l || 0, reading.r || 0)
   // A dB number is a claim that something was measured. With no rig the meter reads zero, and
@@ -1003,6 +1122,121 @@ function AmpFace({ rest }) {
     }
   }
 
+  // One array of panels, built for whichever rig is behind the pane. The engine has files
+  // and knobs it really owns; REAPER has a plug-in and its parameters. Neither is dressed up
+  // as the other, and the face never shows a control that cannot answer.
+  const extras = []
+  if (engine) {
+    extras.push(jsx(ChainPlate, {
+      name: s.tone_name, capture: s.capture, cab: s.cab, tone: s.tone,
+      rate: s.samplerate, block: s.blocksize, latency: s.latency_ms
+    }))
+    extras.push(jsx(FileMenu, {
+      title: 'amp',
+      caption: 'the capture: the amp model the engine runs',
+      current: s.capture, currentPath: s.capture_path,
+      items: (library.data || {}).captures || [], busy,
+      onPick: (path) => act('/capture', { path })
+    }))
+    extras.push(jsx(FileMenu, {
+      title: 'cabinet',
+      caption: 'the speaker: the impulse response after the amp',
+      current: s.cab, currentPath: s.cab_path,
+      items: (library.data || {}).cabs || [], busy,
+      onPick: (path) => act('/cab', { path })
+    }))
+    extras.push(jsx(TonePanel, { tone: s.tone, busy, onTurn: turnKnob }))
+  } else {
+    extras.push(...[
+        jsx(SignalPath, {
+          chain,
+          ui: s.ui,
+          onFocus: async (which) => {
+            const answer = await act('/focus', { fx: which })
+            return answer && answer.output
+          }
+        }),
+
+        socketKnob
+          ? jsx(Panel, {
+            title: 'input',
+            // Said in place, because the numbers are the thing that gets confused: a track is a lane
+            // in the project, an input is a socket on the interface, and they share no arithmetic.
+            caption: `the socket on ${device.driver || 'the interface'}, not the track number`,
+            children: jsxs('div', {
+              className: 'flex flex-col items-center gap-1',
+              children: [
+                // Two sockets is two positions, which is a switch; anything with more places to be
+                // is a knob that steps. The control follows the count instead of hard-coding either.
+                socket.count === 2
+                  ? jsx(Switch, { knob: socketKnob, busy, onTurn: turnInput })
+                  : jsx(Knob, { knob: socketKnob, busy, size: 'lg', onTurn: turnInput }),
+                jsx('div', {
+                  className: 'text-[0.5625rem] leading-snug',
+                  style: { color: FACE_DIM },
+                  children: `track ${socket.track || 1} records from ${socket.name || socket.value} ` +
+                            `of ${socket.count} socket${socket.count === 1 ? '' : 's'}`
+                })
+              ]
+            })
+          })
+          : null,
+
+        ampGroup
+          ? jsx(Panel, {
+            title: ampGroup.title,
+            caption: ampGroup.caption,
+            children: jsx(KnobGrid, {
+              group: ampGroup,
+              busy,
+              size: 'lg',
+              onTurn: turnKnob
+            })
+          })
+          : jsx(Panel, {
+            title: 'amp',
+            caption: plugin.name ? `${plugin.name}, no model loaded` : 'not loaded',
+            children: jsx('div', {
+              className: 'text-[0.625rem]',
+              style: { color: FACE_DIM },
+              children: 'no amp in the chain yet'
+            })
+          }),
+
+        pedalGroup
+          ? jsx(Panel, {
+            title: pedalGroup.title,
+            caption: pedalGroup.caption,
+            children: jsx(KnobGrid, {
+              group: pedalGroup,
+              busy,
+              onTurn: turnKnob
+            })
+          })
+          : null,
+
+        hostGroup
+          ? jsx(Panel, {
+            title: hostGroup.title,
+            caption: hostGroup.caption,
+            children: jsx(KnobGrid, {
+              group: hostGroup,
+              busy,
+              onTurn: turnKnob
+            })
+          })
+          : null,
+
+        jsx(ToneRow, {
+          presets: s.presets || [],
+          busy,
+          onPick: (key) => act('/preset', { query: key })
+        }),
+
+        jsx(Strip, { device, master: s.master_db, project: s.project }),
+    ].filter(Boolean))
+  }
+
   return jsxs('div', {
     className: 'flex h-full flex-col gap-2 overflow-y-auto p-2.5',
     style: { background: TOLEX, borderTop: '2px solid rgba(255,179,71,0.18)' },
@@ -1070,95 +1304,14 @@ function AmpFace({ rest }) {
         db: s.master_db,
         busy,
         armed,
+        // The engine's own output gain goes above unity: a clean DI through a lead capture
+        // still had room at 0 dB, which is why 'maxed out' sounded quiet. REAPER stays at 0.
+        ceiling: engine ? 12 : 0,
         onCommit: (db) => act('/master', { db })
       }),
 
-      jsx(SignalPath, {
-        chain,
-        ui: s.ui,
-        onFocus: async (which) => {
-          const answer = await act('/focus', { fx: which })
-          return answer && answer.output
-        }
-      }),
+      ...extras,
 
-      socketKnob
-        ? jsx(Panel, {
-          title: 'input',
-          // Said in place, because the numbers are the thing that gets confused: a track is a lane
-          // in the project, an input is a socket on the interface, and they share no arithmetic.
-          caption: `the socket on ${device.driver || 'the interface'}, not the track number`,
-          children: jsxs('div', {
-            className: 'flex flex-col items-center gap-1',
-            children: [
-              // Two sockets is two positions, which is a switch; anything with more places to be
-              // is a knob that steps. The control follows the count instead of hard-coding either.
-              socket.count === 2
-                ? jsx(Switch, { knob: socketKnob, busy, onTurn: turnInput })
-                : jsx(Knob, { knob: socketKnob, busy, size: 'lg', onTurn: turnInput }),
-              jsx('div', {
-                className: 'text-[0.5625rem] leading-snug',
-                style: { color: FACE_DIM },
-                children: `track ${socket.track || 1} records from ${socket.name || socket.value} ` +
-                          `of ${socket.count} socket${socket.count === 1 ? '' : 's'}`
-              })
-            ]
-          })
-        })
-        : null,
-
-      ampGroup
-        ? jsx(Panel, {
-          title: ampGroup.title,
-          caption: ampGroup.caption,
-          children: jsx(KnobGrid, {
-            group: ampGroup,
-            busy,
-            size: 'lg',
-            onTurn: turnKnob
-          })
-        })
-        : jsx(Panel, {
-          title: 'amp',
-          caption: plugin.name ? `${plugin.name}, no model loaded` : 'not loaded',
-          children: jsx('div', {
-            className: 'text-[0.625rem]',
-            style: { color: FACE_DIM },
-            children: 'no amp in the chain yet'
-          })
-        }),
-
-      pedalGroup
-        ? jsx(Panel, {
-          title: pedalGroup.title,
-          caption: pedalGroup.caption,
-          children: jsx(KnobGrid, {
-            group: pedalGroup,
-            busy,
-            onTurn: turnKnob
-          })
-        })
-        : null,
-
-      hostGroup
-        ? jsx(Panel, {
-          title: hostGroup.title,
-          caption: hostGroup.caption,
-          children: jsx(KnobGrid, {
-            group: hostGroup,
-            busy,
-            onTurn: turnKnob
-          })
-        })
-        : null,
-
-      jsx(ToneRow, {
-        presets: s.presets || [],
-        busy,
-        onPick: (key) => act('/preset', { query: key })
-      }),
-
-      jsx(Strip, { device, master: s.master_db, project: s.project }),
 
       said
         ? jsx('div', { className: 'text-[0.5625rem] leading-snug', style: { color: FACE_DIM }, children: said })
@@ -1166,7 +1319,7 @@ function AmpFace({ rest }) {
       jsx('div', {
         className: 'mt-auto text-center text-[0.5rem] leading-snug',
         style: { color: 'rgba(240,226,200,0.3)' },
-        children: 'REAPER stays on the taskbar'
+        children: engine ? 'the engine is its own process: Hermes never touches a song' : 'REAPER stays on the taskbar'
       })
     ]
   })

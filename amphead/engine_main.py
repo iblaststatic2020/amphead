@@ -73,6 +73,19 @@ class Server:
             "outputs": [{"index": i, "name": r["name"]} for i, r in enumerate(rows) if r["max_output_channels"] > 0],
         }
 
+    def library(self, **kw) -> dict:
+        """The captures and cabinets on this machine, so the pane can offer a choice.
+
+        Two kinds of file, two places people keep them, and no way for the pane to guess
+        either. The loaded file's own folder is scanned too, so a capture that lives
+        somewhere unusual is still reachable after it has been played once. The scanning
+        itself lives in ``amphead.library`` because the pane asks the same question before
+        the engine is running.
+        """
+        from amphead import library
+
+        return library.listing(self.capture_name, self.cab_name)
+
     def start(self, **kw) -> dict:
         engine = self.engine
         if engine.running:
@@ -271,6 +284,7 @@ class Server:
     VERBS = {
         "status": "status",
         "devices": "devices",
+        "library": "library",
         "start": "start",
         "stop": "stop",
         "input": "set_input",
