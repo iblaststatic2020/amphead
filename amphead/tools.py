@@ -258,7 +258,8 @@ def handle_setup(args: dict[str, Any], **_kw) -> str:
         ("armed", bool(now.get("armed"))),
         ("capture", now.get("capture") or "none"),
         ("cab", now.get("cab") or "none"),
-        ("next", "call amphead_live with confirm=true to arm at -6 dB"),
+        ("next", "call amphead_live with confirm=true to take the interface; "
+                     "the master stays where SET UP parked it"),
         ("was_open", bool(state.get("open"))),
     ])
 

@@ -23,6 +23,12 @@ class TheWordsAreReadAllTheWayDown(unittest.TestCase):
         # "ARMED: ... gate is not set" is a report, and the old rule existed to keep it one.
         self.assertTrue(answers.ok("ARMED: the amp is up, the gate is not set"))
 
+    def test_a_report_with_not_in_the_middle_is_still_ok(self):
+        # "device not open yet" is a description of standby, not a failure. Only a line that
+        # opens with the failure word counts.
+        self.assertTrue(answers.ok(
+            "state=STANDBY (device not open yet) | engine=open | master_db=-60.0"))
+
 
 class TheFieldsOutrankTheCheerfulOpening(unittest.TestCase):
     def test_panicked_false_is_not_ok(self):

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 from typing import Any
 
 
@@ -45,7 +46,9 @@ def ok(summary: str) -> bool:
         clause = line.strip().split(":")[0].upper()
         if clause.startswith(FAILURE_WORDS):
             return False
-        if " NOT " in " " + clause + " ":
+        # Parentheses describe, they do not verdict. "STANDBY (device not open yet)" is standby,
+        # while "ENGINE NOT RUNNING" is a failure; the difference is inside the brackets.
+        if " NOT " in " " + re.sub(r"\([^)]*\)", " ", clause) + " ":
             return False
     return True
 
