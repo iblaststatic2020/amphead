@@ -39,6 +39,9 @@ class Server:
             "samplerate": self.engine.samplerate,
             "blocksize": self.engine.blocksize,
             "latency_ms": self.engine.latency_ms,
+            "input_device": self.engine.input_device,
+            "input_channel": self.engine.input_channel + 1,
+            "input_channels": self.engine.input_channels,
             "armed": chain.armed,
             "master_db": chain.master_db,
             "input_gain_db": chain.input_gain_db,
@@ -77,6 +80,8 @@ class Server:
         for key in ("samplerate", "blocksize", "input_device", "output_device"):
             if kw.get(key) is not None:
                 setattr(engine, key, int(kw[key]))
+        if kw.get("input_channel") is not None:
+            engine.input_channel = max(0, int(kw["input_channel"]) - 1)
         mode = engine.start()
         # Started means an open device, not a live amp: the master stays at the floor
         # until arm() asks for a level, so "armed: false" is silent rather than quiet.
@@ -113,6 +118,19 @@ class Server:
     def stop(self) -> dict:
         self.engine.stop()
         return {"running": False}
+
+    def set_input(self, channel: int = 1) -> dict:
+        """Point the amp at one socket on the interface, numbered the way the front panel is.
+
+        The stream already carries every socket, so this is live: no reopen, no gap.
+        """
+        number = int(channel)
+        count = self.engine.input_channels
+        if number < 1 or (count and number > count):
+            raise ValueError(f"input {number} does not exist; this interface has "
+                             f"{count or 'an unknown number of'} inputs")
+        self.engine.input_channel = number - 1
+        return {"input_channel": number, "input_channels": count}
 
     def load_capture(self, path: str) -> dict:
         from .nam import WaveNet
@@ -255,6 +273,7 @@ class Server:
         "devices": "devices",
         "start": "start",
         "stop": "stop",
+        "input": "set_input",
         "load_capture": "load_capture",
         "clear_capture": "clear_capture",
         "bypass": "bypass",

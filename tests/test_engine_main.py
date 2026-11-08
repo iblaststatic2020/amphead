@@ -102,6 +102,33 @@ class VerbTest(unittest.TestCase):
         result = self.server.handle({"cmd": "status"})["result"]
         self.assertIsNone(result["capture"])
 
+    def test_the_amp_hears_input_one_until_told_otherwise(self):
+        status = self.server.handle({"cmd": "status"})["result"]
+        self.assertEqual(status["input_channel"], 1)
+
+    def test_input_switches_the_socket_live(self):
+        self.server.engine.input_channels = 2
+        done = self.server.handle({"cmd": "input", "channel": 2})["result"]
+        self.assertEqual(done, {"input_channel": 2, "input_channels": 2})
+        self.assertEqual(self.server.engine.input_channel, 1)
+
+    def test_input_refuses_a_socket_the_interface_does_not_have(self):
+        self.server.engine.input_channels = 2
+        reply = self.server.handle({"cmd": "input", "channel": 3})
+        self.assertFalse(reply.get("ok", True))
+        self.assertEqual(self.server.engine.input_channel, 0)
+
+    def test_the_callback_reads_the_chosen_socket(self):
+        engine = self.server.engine
+        engine.input_channel = 1
+        block = np.zeros((4, 2), dtype=np.float32)
+        block[:, 1] = 0.5
+        engine._process_block(block, 4)
+        self.assertAlmostEqual(engine._meter.peak_in, 0.5)
+        engine.input_channel = 0
+        engine._process_block(block, 4)
+        self.assertAlmostEqual(engine._meter.peak_in, 0.0)
+
     def test_unknown_command_is_an_error_not_a_crash(self):
         reply = self.server.handle({"cmd": "make_me_a_sandwich"})
         self.assertFalse(reply["ok"])

@@ -280,10 +280,15 @@ class AmpHead2Rig:
                 "overflows": m.get("overflows"), "underflows": m.get("underflows")}
 
     def inputs(self, **kw: Any) -> dict:
-        got = self._call(cmd="devices")
-        rows = [{"index": row["index"], "name": row["name"], "channels": 1}
-                for row in got.get("inputs", [])]
-        return {"count": len(rows), "channels": rows}
+        """The sockets on the interface the engine has open, numbered like its front panel.
+
+        Not the list of Windows audio devices: a switch with a stop per device would offer
+        the webcam mic and Stereo Mix as "input 7" and never reach the AudioBox's input 2.
+        """
+        got = self._call(cmd="status")
+        count = int(got.get("input_channels") or 0) if got.get("running") else 0
+        rows = [{"i": k, "name": f"IN {k + 1}"} for k in range(count)]
+        return {"count": count, "channels": rows}
 
     def describe_input(self, value: Any) -> str:
         if value is None or value == "":
@@ -388,10 +393,13 @@ class AmpHead2Rig:
         return {"db": self._call(cmd="gain", output_gain_db=float(db)).get("output_gain_db")}
 
     def set_input(self, track: int = 1, spec: Any = 1, **kw: Any) -> dict:
-        index = int(spec if spec not in (None, "") else 0)
-        got = self._call(cmd="start", input_device=index)
-        return {"recinput": index, "mode": got.get("mode"),
-                "latency_ms": got.get("latency_ms")}
+        """`spec` is the socket number off the front panel: 1 is IN 1. Never a device index."""
+        number = int(spec if spec not in (None, "") else 1)
+        if not self._call(cmd="status").get("running"):
+            self._call(cmd="start", input_channel=number)
+        got = self._call(cmd="input", channel=number)
+        return {"recinput": int(got["input_channel"]) - 1,
+                "count": got.get("input_channels")}
 
     def arm(self, track: int = 1, monitor: bool = True, allow_loud: bool = False,
             **kw: Any) -> dict:
@@ -468,8 +476,15 @@ class AmpHead2Rig:
         )
 
     def teardown(self, *args: Any, **kw: Any) -> dict:
-        self._call(cmd="stop")
-        return {"closed": "engine stopped", "host": "no host to stop"}
+        # Close the device first, then end the process. Teardown that leaves the engine
+        # running keeps the pane on "live" and leaves a background process behind.
+        if self.client.running:
+            try:
+                self._call(cmd="stop")
+            except port.RigError:
+                pass
+        self.client.stop()
+        return {"closed": "engine stopped", "host": "engine process exited"}
 
     # the host it does not have ---------------------------------------------
     def find(self) -> str:
@@ -512,6 +527,7 @@ class AmpHead2Rig:
         got = self._call(cmd="start")
         devices = self._call(cmd="devices")
         return {
+            "count": int(self._call(cmd="status").get("input_channels") or 0),
             "inputs": len(devices.get("inputs") or []),
             "outputs": len(devices.get("outputs") or []),
             "mode": got.get("mode"),
@@ -537,5 +553,7 @@ class AmpHead2Rig:
 
     # helpers ---------------------------------------------------------------
     def _input_spec(self, got: dict) -> Any:
-        """The engine opens whatever device it was given, so a live rig has an input."""
-        return 0 if got.get("running") else port.INPUT_NONE
+        """The socket the engine is really reading, as REAPER would number it (from zero)."""
+        if not got.get("running"):
+            return port.INPUT_NONE
+        return max(0, int(got.get("input_channel") or 1) - 1)

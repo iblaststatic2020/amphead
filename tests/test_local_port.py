@@ -21,6 +21,7 @@ class FakeClient:
         self.tone = {"bass": 0.0, "mid": 0.0, "treble": 0.0}
         self.capture = ""
         self.cab = ""
+        self.input_channel = 1
         self.master_db = port.SAFE_MASTER_DB
         self.armed = False
         self.stages = {"capture": True, "tone": True, "cabinet": True}
@@ -35,7 +36,11 @@ class FakeClient:
             return {"ok": True, "running": True, "armed": self.armed,
                     "master_db": self.master_db, "samplerate": 44100, "blocksize": 512,
                     "capture": self.capture, "cab": self.cab, "tone": dict(self.tone),
-                    "stages": dict(self.stages), "mode": "wdm-ks", "latency_ms": 20.0}
+                    "stages": dict(self.stages), "mode": "wdm-ks", "latency_ms": 20.0,
+                    "input_channel": self.input_channel, "input_channels": 2}
+        if cmd == "input":
+            self.input_channel = int(request["channel"])
+            return {"input_channel": self.input_channel, "input_channels": 2}
         if cmd == "tone":
             for key in ("bass", "mid", "treble"):
                 if key in request:
@@ -207,6 +212,23 @@ class ArmTest(unittest.TestCase):
 
     def test_a_capture_is_not_a_guessed_default(self):
         self.assertIsNone(rig().project())
+
+
+class InputTest(unittest.TestCase):
+    def test_the_switch_offers_the_interfaces_sockets_not_windows_devices(self):
+        r = rig()
+        out = r.inputs()
+        self.assertEqual(out["count"], 2)
+        self.assertEqual([row["name"] for row in out["channels"]], ["IN 1", "IN 2"])
+
+    def test_the_track_reads_input_one_by_default(self):
+        self.assertEqual(rig()._input_spec({"running": True, "input_channel": 1}), 0)
+
+    def test_set_input_names_a_socket_not_a_device(self):
+        r = rig()
+        out = r.set_input(track=1, spec=2)
+        self.assertEqual(out["recinput"], 1)
+        self.assertEqual(r.client.calls[-1], {"cmd": "input", "channel": 2})
 
 
 if __name__ == "__main__":

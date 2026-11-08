@@ -149,12 +149,17 @@ class Engine:
         input_device: int | None = None,
         output_device: int | None = None,
         channels: int = 1,
+        input_channel: int = 0,
     ) -> None:
         self.samplerate = int(samplerate)
         self.blocksize = int(blocksize)
         self.input_device = input_device
         self.output_device = output_device
         self.channels = int(channels)
+        # Which socket on the interface the amp hears, counted from zero. The stream opens every
+        # socket the device has, so switching sockets is one number, not a device reopen.
+        self.input_channel = int(input_channel)
+        self.input_channels = 0
         self.mode: str | None = None
         self._lock = threading.Lock()
         self._chain = Chain()
@@ -197,7 +202,7 @@ class Engine:
             device=self.input_device,
             samplerate=self.samplerate,
             blocksize=self.blocksize,
-            channels=self.channels,
+            channels=max(self.channels, self.input_channels, self.input_channel + 1),
             dtype="float32",
             latency="low",
             callback=self._on_in,
@@ -233,6 +238,13 @@ class Engine:
 
         def hostapi(index) -> str:
             return str(apis[sd.query_devices(int(index))["hostapi"]]["name"])
+
+        try:
+            self.input_channels = int(sd.query_devices(int(self.input_device))["max_input_channels"])
+        except Exception:
+            self.input_channels = self.channels
+        if self.input_channels and self.input_channel >= self.input_channels:
+            self.input_channel = 0
 
         wasapi = "WASAPI" in hostapi(self.input_device) or "WASAPI" in hostapi(self.output_device)
         named = "wdm-ks" if "WDM-KS" in hostapi(self.output_device) else (
@@ -344,7 +356,9 @@ class Engine:
         import numpy as np
 
         chain = self._chain
-        x = np.asarray(indata[:frames, 0], dtype=np.float32)
+        col = min(self.input_channel, indata.shape[1] - 1) if getattr(indata, "ndim", 2) > 1 else 0
+        x = np.asarray(indata[:frames, col] if getattr(indata, "ndim", 2) > 1 else indata[:frames],
+                       dtype=np.float32)
         self._meter.peak_in = float(np.max(np.abs(x))) if frames else 0.0
         self._meter.blocks += 1
         self._meter.stamp = time.time()

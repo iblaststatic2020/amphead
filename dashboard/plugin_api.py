@@ -458,7 +458,10 @@ def input_switch(body: dict) -> dict[str, Any]:
         # Every write carries the project the player is looking at as `expect`. Without it the
         # bridge's guard refuses, and rightly: a record input is per project, so a write that does
         # not name a project could land in a tab nobody meant to touch.
-        expect = RIG.project()
+        # AmpHead 2 has no projects: one chain, one interface. Its name stands in for the project
+        # so the guard below does not refuse a rig that has nothing to guard.
+        expect = RIG.project() or (getattr(RIG, "label", None) if _ENGINE.get() == "amphead2"
+                                   else None)
         got = RIG.inputs()
     except port.NoRig:
         return {"output": "NOT SET: REAPER is not running", "ok": False}
