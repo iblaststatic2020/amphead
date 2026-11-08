@@ -57,7 +57,7 @@ def _device(state: dict) -> dict:
         "buffer": device.get("buffer") or "",
         "rate": device.get("rate") or "",
         "out_ms": device.get("latency_out_ms") or 0.0,
-        "round_trip_ms": state.get("latency_ms") or 0.0,
+        "round_trip_ms": state.get("round_trip_ms") or state.get("latency_ms") or 0.0,
         "closed": bool(device.get("closed")),
     }
 
@@ -179,6 +179,8 @@ def state() -> dict[str, Any]:
         "samplerate": live.get("samplerate"),
         "blocksize": live.get("blocksize"),
         "latency_ms": live.get("latency_ms"),
+        "block_ms": live.get("block_ms"),
+        "round_trip_ms": live.get("round_trip_ms"),
         "mode": live.get("mode"),
         "meter": {"peak": peak, "clip": clip},
         "demo": False,
@@ -211,7 +213,9 @@ def _rejoin_stages(track: int = 1) -> list[str]:
 @router.post("/live")
 def live_switch(body: dict) -> dict[str, Any]:
     on = bool(body.get("on"))
-    db = body.get("master_db", port.ARM_DB)
+    # No master in the request means the amp keeps the one it has. The old default was a
+    # fixed -6 dB, so any caller that forgot the field armed the rig louder than the knob.
+    db = body.get("master_db")
     with _speaking_to_tools() as tools:
         back = _rejoin_stages() if on and RIG.running else []
         out = tools.handle_live({"on": on, "confirm": True, "master_db": db})

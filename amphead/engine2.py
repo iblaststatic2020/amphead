@@ -184,7 +184,12 @@ class Engine:
     def __init__(
         self,
         samplerate: int = 44100,
-        blocksize: int = 512,
+        # 256, not 512: kernel streaming gives about 10 ms of driver buffer either way,
+        # and the block is what the player actually feels on top of it. At 512 the felt
+        # round trip was about 21 ms; at 256 it is about 13 ms with 3.3 ms of render
+        # headroom left with a WaveNet capture and a 262k-tap cabinet. At 128 that
+        # headroom is 0.7 ms and the output buffer starts overflowing.
+        blocksize: int = 256,
         input_device: int | None = None,
         output_device: int | None = None,
         channels: int = 1,

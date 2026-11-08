@@ -27,17 +27,24 @@ silent about it above the seam: `mode` reports `wdm-ks`, `wasapi-exclusive` or
 
 ## Block size
 
-Kernel-streaming latency comes from the driver buffer, not the block, so block size
-here is free latency-wise and expensive elsewhere:
+The driver buffer is fixed at about 10 ms either way on this interface, and the block
+sits on top of it, so block size is *not* free latency-wise. The number a player feels
+is the driver buffer plus one block, which is what the engine now reports as
+`round_trip_ms`. Measuring only the driver figure is how a 512-frame build looked as
+quick as a 256-frame one while sounding a block slower in the hands.
 
-| frames | round trip | CPU, one core | starved output blocks in 60 s |
-|---|---|---|---|
-| 128 | 20.0 ms | 32% | 9 |
-| 256 | 20.0 ms | 20% | 1 |
-| 512 | 20.0 ms | 15% | 0 |
+| frames | driver buffer | one block | felt round trip | median render* | headroom | starved or overrun |
+|---|---|---|---|---|---|---|
+| 512 | 9.98 ms | 11.61 ms | 21.6 ms | 3.06 ms | 8.55 ms | 0 in 5 s |
+| 256 | 9.98 ms | 5.80 ms | **15.8 ms** | 2.47 ms | 3.33 ms | **0 in 60 s** |
+| 128 | 9.98 ms | 2.90 ms | 12.9 ms | 2.19 ms | 0.71 ms | 17 overruns in 30 s |
 
-Default is 512. Smaller blocks buy no latency on this path and cost reliability,
-because a Python callback that is late by one block is an audible gap.
+*WaveNet capture plus the 262 144-tap cabinet, 44.1 kHz, same box. The per-call
+overhead dominates at small blocks, which is why 128 has almost no room left: the
+callback itself is 2.19 ms of a 2.90 ms block.
+
+Default is 256. 128 is 3 ms quicker and audibly glitchy when anything else on the
+machine looks at the disk, which is the trade a CPU-heavy amp cannot take.
 
 ## Gain staging
 
@@ -46,14 +53,16 @@ A synthetic DI at -18 dBFS peak through the capture and cabinet, engine armed:
 | setting | out peak | out RMS | clipped samples |
 |---|---|---|---|
 | disarmed (master -60) | -180.0 dBFS | -180.0 dBFS | 0 |
-| armed, master -6 (default) | -2.9 dBFS | -14.4 dBFS | 0 |
+| armed, master -6 (the old fixed level) | -2.9 dBFS | -14.4 dBFS | 0 |
 | armed, master 0 | 0.0 dBFS | -8.5 dBFS | 920 |
 | armed -6, bass +6 | -1.5 dBFS | -13.7 dBFS | 0 |
 | armed -6, treble +6 | 0.0 dBFS | -11.9 dBFS | 6 |
 | armed -6, mid -6 | -3.5 dBFS | -15.5 dBFS | 0 |
 
-So the chain is about +15 dB at the default and arming at 0 dB clips a normal DI.
--6 dB is the default for that reason. A treble boost of +6 dB still reaches the
+So the chain is about +15 dB at -6 dB and arming at 0 dB clips a normal DI. Nothing arms
+at a fixed level any more: the switch opens at whatever the master knob shows, and a fresh
+amp shows the floor, so the first press is silent rather than loud. -6 dB is the level to
+start from once you are raising it by ear. A treble boost of +6 dB still reaches the
 ceiling on a hot DI, which is a headroom question, not a bug: pull the master or the
 interface gain, exactly as with a real amp.
 
@@ -65,6 +74,9 @@ for a 2048-tap IR and fatal for a real close-mic'd 4x12:
 | cabinet | taps | per 512-frame block | share of the 11.6 ms block |
 |---|---|---|---|
 | Vintage 30 4x12 close, whole-IR transform | 262 144 | **13.6 ms** | **117%** |
+
+Partitioned, the same cabinet costs 1024 partitions of 256 frames and about 2.5 ms of
+a 5.8 ms block alongside the capture, measured above.
 
 At 117% the callback cannot finish one block before the next is due, so the queue
 drains and the output starves: the "shaky, cutting in and out" a player hears is

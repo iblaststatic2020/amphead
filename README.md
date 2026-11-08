@@ -6,8 +6,9 @@ sit down, say "set up my crunch tone", and Hermes is the amp. Nothing else needs
 
 ## What it does
 
-- Starts a low-latency audio engine of its own: one duplex stream on the interface, 512-frame blocks,
-  44.1 kHz, about 10 ms round trip on the kernel-streaming driver this was measured against.
+- Starts a low-latency audio engine of its own: one duplex stream on the interface, 256-frame blocks,
+  44.1 kHz, about 16 ms round trip on the kernel-streaming driver this was measured against (10 ms of
+  driver buffer plus the 5.8 ms block the callback fills).
 - Loads a NAM capture (a real amp, captured) and a cabinet IR (a real speaker, measured), with the IR
   resampled to the engine's rate so a 44.1 kHz IR does not play 8.8% sharp at 48 kHz.
 - Gives you the knobs a head has: bass, mid, treble, plus input gain (how hard the capture is driven)
@@ -74,14 +75,14 @@ pushed. Those live in one JSON file:
     "output_device": 38,
     "input_channel": 1,
     "samplerate": 44100,
-    "blocksize": 512,
+    "blocksize": 256,
     "latency_ms": 5.0
   }
 }
 ```
 
 Nothing has to be set. An empty file means the usual folders (the Neural Amp Modeler convention under
-Documents, plus the IR library folders), the first input channel, 44.1 kHz, 512 frames, and the 5 ms
+Documents, plus the IR library folders), the first input channel, 44.1 kHz, 256 frames, and the 5 ms
 per direction that held realtime on the machine this was measured on. The file exists so a guess can
 be corrected without editing code.
 
@@ -177,8 +178,11 @@ its own answer in `~/.amphead2.json` so the face can show what was last asked fo
   Without them it is a clean path with a tone stack.
 - **Silence on the meter is ambiguous.** A guitar on its stand, a muted input and a closed device all
   read -60 dB, so the verdict names the state instead of trusting the meter.
-- **Latency is measured, not promised.** The number comes from the driver's own report plus what the
-  stream callback sees; 10 ms round trip is what this interface does, not a floor for every machine.
+- **Latency is measured, not promised.** The number is the driver's own report *plus one block*, because
+  that block is also in the way; 16 ms round trip is what this interface does at 256 frames, not a floor
+  for every machine. The face shows the sum, not the flattering half.
+- **Nothing arms loud.** GO LIVE opens at whatever the master knob shows, and a fresh amp shows the
+  floor, so the first press is silence you raise yourself rather than a fixed level.
 
 ## Where the maths comes from
 
@@ -199,7 +203,8 @@ with that project, and no capture or cabinet is redistributed with this repo.
 and a 262 144-tap cabinet, the 117%-of-realtime bug that made a 4x12 cut in and out, and the duplex
 stream that took the round trip from about 20 ms to about 10 ms. The short version: a cabinet longer
 than one block is convolved in partitions, so a 262 144-tap 4x12 costs 1.83 ms of an 11.6 ms block
-instead of 13.6 ms, and one duplex stream replaced the two-stream queue whose cushion was the latency.
+instead of 13.6 ms, one duplex stream replaced the two-stream queue whose cushion was the latency, and
+the block went from 512 frames to 256 because the block, not the driver, was the part a player felt.
 
 ## Layout
 

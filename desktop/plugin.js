@@ -452,7 +452,7 @@ function PowerButton({ running, armed, busy, onSetup, onLive }) {
   const state = !running ? 'setup' : armed ? 'live' : 'standby'
   const look = {
     setup: { text: 'SET UP', sub: 'open the engine', fill: 'var(--ui-accent)', ink: 'var(--ui-bg-primary)' },
-    standby: { text: 'GO LIVE', sub: 'arm at the safe level', fill: 'var(--ui-bg-quaternary)', ink: 'var(--ui-text-primary)' },
+    standby: { text: 'GO LIVE', sub: 'opens at the knob', fill: 'var(--ui-bg-quaternary)', ink: 'var(--ui-text-primary)' },
     live: { text: 'LIVE', sub: 'press to stand by', fill: '#e5533d', ink: '#fff' }
   }[state]
   // A lamp beside the words, the way a real front panel has one. It is the only part of the switch
@@ -863,7 +863,12 @@ function AmpFace({ rest }) {
                 armed,
                 busy,
                 onSetup: () => act('/setup', {}),
-                onLive: () => act('/live', { on: !armed, master_db: -6 })
+                // Open at the level the knob is showing, never at a fixed one: the knob
+                // starts on the floor, so the amp cannot come up loud on the first press.
+                onLive: () => act('/live', {
+                  on: !armed,
+                  master_db: Number(typeof s.master_db === 'number' ? s.master_db : MASTER_LOW)
+                })
               })
             ]
           }),
@@ -928,7 +933,13 @@ function AmpFace({ rest }) {
                   jsx('span', { children: s.cab ? `cab ${s.cab}` : 'no cabinet' }),
                   jsx('span', { children: s.samplerate ? `${Math.round(s.samplerate / 100) / 10} kHz` : '' }),
                   jsx('span', { children: s.blocksize ? `${s.blocksize} frames` : '' }),
-                  jsx('span', { children: s.latency_ms ? `${Number(s.latency_ms).toFixed(0)} ms` : '' })
+                  // Round trip is the number to show: the driver buffer plus the block. The
+                  // old line printed the driver half only, which made a slower build look fast.
+                  jsx('span', {
+                    children: (s.round_trip_ms || s.latency_ms)
+                      ? `round trip ${Number(s.round_trip_ms || s.latency_ms).toFixed(1)} ms`
+                      : ''
+                  })
                 ]
               }),
               // What the agent was asked to sound like, and how far the library actually got. The

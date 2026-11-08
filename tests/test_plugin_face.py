@@ -243,3 +243,28 @@ class TestTheAimIsOnTheFace(unittest.TestCase):
     def test_the_face_says_nothing_when_nothing_was_aimed_at(self):
         source = face()
         self.assertIn("s.aim\n                ? jsxs('div'", source)
+
+
+class TheAmpCannotComeUpLoud(unittest.TestCase):
+    """GO LIVE takes the master from the knob, which starts on the floor.
+
+    A fixed arming level is louder than the player left the room set, and the complaint
+    that follows is always the same one: it arrived at full volume.
+    """
+
+    def test_going_live_sends_the_knobs_level_and_not_a_fixed_one(self):
+        source = face()
+        self.assertNotIn("master_db: -6", source)
+        self.assertIn("master_db: Number(typeof s.master_db === 'number' ? s.master_db : MASTER_LOW)", source)
+
+    def test_the_master_starts_on_the_floor(self):
+        source = face()
+        self.assertIn("const MASTER_LOW = -60", source)
+
+    def test_the_face_shows_the_round_trip_rather_than_the_driver_half(self):
+        source = face()
+        self.assertIn("round trip ${Number(s.round_trip_ms || s.latency_ms).toFixed(1)} ms", source)
+
+
+if __name__ == "__main__":
+    unittest.main()

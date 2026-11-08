@@ -1,6 +1,6 @@
 // A rig fixture shaped exactly like /state answers for the local engine, so the harness exercises
 // the same field names the real route uses. The numbers are copied from a real `/state` read
-// (PEAVEY 6506 clean capture into a Vintage 30 4x12 at 44100 / 512, 20.0 ms round trip, master
+// (PEAVEY 6506 clean capture into a Vintage 30 4x12 at 44100 / 256, 15.8 ms round trip, master
 // parked at -60 dB), so the face is drawn against a payload it will actually receive.
 //
 // `?off=1` answers the way the route answers before Setup has opened a device: running false,
@@ -52,7 +52,7 @@ export const state = () => {
       project: 'AmpHead 2', ui: 'hidden', running: false, armed: false, monitor: false,
       master_db: null, input_gain_db: null, output_gain_db: null, demo: false, problems: [], chain: [], knobs: [], tone: null,
       tone_name: '', capture: '', capture_path: '', cab: '', cab_path: '', aim: '', aim_confidence: '',
-      samplerate: 0, blocksize: 0, latency_ms: 0, mode: '',
+      samplerate: 0, blocksize: 0, latency_ms: 0, block_ms: 0, round_trip_ms: 0, mode: '',
       device: { driver: '', buffer: '', rate: '', out_ms: 0, closed: true }
     }
   }
@@ -60,7 +60,7 @@ export const state = () => {
   return {
     ok: true, engine: 'amphead2', demo: false,
     verdict: armed ? 'READY' : 'STANDBY',
-    reason: armed ? 'armed, monitoring, 20.0 ms round trip' : 'the track is not armed, flip LIVE to play',
+    reason: armed ? 'armed, monitoring, 15.8 ms round trip' : 'the amp is open and silent, flip LIVE to play',
     project: 'AmpHead 2', ui: 'hidden', running: true, armed, monitor: armed,
     master_db: rig.master_db,
     input_gain_db: rig.input_gain_db,
@@ -74,7 +74,8 @@ export const state = () => {
     cab: rig.cab, cab_path: rig.cab_path,
     // Let the harness show what an aim looks like without a live agent turn.
     aim: rig.aim || '', aim_confidence: rig.aim_confidence || '',
-    samplerate: 44100, blocksize: 512, latency_ms: 20.0, mode: 'wdm-ks',
+    samplerate: 44100, blocksize: 256, latency_ms: 9.98, block_ms: 5.8, round_trip_ms: 15.8,
+    mode: 'wdm-ks-exclusive',
     device: { driver: 'WDM-KS', buffer: 512, rate: 44100, out_ms: 10.0, closed: false }
   }
 }
@@ -151,7 +152,7 @@ export async function rest(path, options) {
   }
   if (bare === '/live') {
     rig.armed = body.on === undefined ? !rig.armed : !!body.on
-    if (body.master_db !== undefined && rig.armed) rig.master_db = Number(body.master_db)
+    if (body.master_db !== undefined) rig.master_db = Number(body.master_db)
     // Arming is the moment a player asks to hear the chain again, so the stages silence closed
     // come back, exactly as the live route does it.
     const back = rig.stages.filter((stage) => !stage.enabled).map((stage) => stage.name)

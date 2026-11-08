@@ -61,6 +61,13 @@ class Server:
             "samplerate": self.engine.samplerate,
             "blocksize": self.engine.blocksize,
             "latency_ms": self.engine.latency_ms,
+            # What a player actually feels: the driver buffer either way, plus the block
+            # the callback has to fill before anyone hears it. Reporting only the driver
+            # figure made a 512-frame build look as quick as a 256-frame one.
+            "block_ms": round(1000.0 * self.engine.blocksize / self.engine.samplerate, 2),
+            "round_trip_ms": (None if self.engine.latency_ms is None else
+                              round(self.engine.latency_ms +
+                                    1000.0 * self.engine.blocksize / self.engine.samplerate, 1)),
             "input_device": self.engine.input_device,
             "input_channel": self.engine.input_channel + 1,
             "input_channels": self.engine.input_channels,
@@ -250,9 +257,11 @@ class Server:
         }
 
     def arm(self, master_db: float | None = None) -> dict:
+        # No level means the master the amp already has. Lifting it to a fixed -6 dB here is
+        # how a caller that said only "arm" got a rig that came up louder than the knob.
         self.engine.update(
             armed=True,
-            master_db=ARM_MASTER_DB if master_db is None else float(master_db),
+            master_db=self.engine.chain.master_db if master_db is None else float(master_db),
         )
         chain = self.engine.chain
         return {"armed": chain.armed, "master_db": chain.master_db}

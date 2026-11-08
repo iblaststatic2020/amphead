@@ -366,11 +366,16 @@ def handle_live(args: dict[str, Any], **_kw) -> str:
             return f"NOT LIVE: {exc}"
         return _fmt([("live", False), ("armed", False), ("master_db", level.get("db"))])
 
-    if not args.get("confirm"):
-        return ("REFUSED: arming makes sound. Call again with confirm=true. The master is set to "
-                "the measured safe level, -6 dB, not to full.") 
-    db = float(args.get("master_db", port.ARM_DB))
-    db = max(STANDBY_DB, min(0.0, db))
+    # What the amp already has, not a fixed level: arming someone's rig louder than they left
+    # it is the one mistake this tool must not make. A parked master arms parked, and the
+    # player raises the knob.
+    now_master = RIG.state().get("master_db")
+    db = float(args["master_db"]) if args.get("master_db") is not None else float(
+        STANDBY_DB if now_master is None else now_master)
+    db = max(STANDBY_DB, min(12.0, db))
+    if not args.get("confirm") and db > STANDBY_DB + 0.5:
+        return (f"REFUSED: arming at {db:.0f} dB makes sound. Call again with confirm=true, or "
+                f"leave the master at the floor and raise it yourself.")
     try:
         RIG.set_master(db=db)
         armed = RIG.arm(track=1, monitor=True, allow_loud=True)
@@ -380,7 +385,8 @@ def handle_live(args: dict[str, Any], **_kw) -> str:
     return _fmt([("live", True), ("armed", bool(armed.get("armed"))),
                  ("monitor", bool(armed.get("monitor"))),
                  ("master_db", now.get("master_db")),
-                 ("round_trip_ms", round(float(now.get("latency_ms") or 0.0), 1)),
+                 ("round_trip_ms", now.get("round_trip_ms")
+                  or round(float(now.get("latency_ms") or 0.0), 1)),
                  ("capture", now.get("capture") or "none"),
                  ("cab", now.get("cab") or "none")])
 

@@ -180,6 +180,43 @@ def row(name, ins=0, outs=0, hostapi=0):
             "hostapi": hostapi, "default_samplerate": 44100.0}
 
 
+class TheBlockSizeIsAPromise(unittest.TestCase):
+    """A smaller block is felt latency, and it has to leave the callback time to finish."""
+
+    def test_the_default_block_is_a_quarter_of_the_old_one(self):
+        engine = Engine()
+        self.assertEqual(engine.blocksize, 256, "512 frames is 11.6 ms of felt delay on top")
+
+    def test_a_256_block_leaves_room_for_a_capture_and_a_long_cabinet(self):
+        import time
+
+        import numpy as _np
+
+        from amphead.cab import Cab
+
+        ir = _np.zeros(262144, dtype=_np.float32)
+        ir[0] = 1.0
+        cab = Cab(ir, 44100)
+        chain = Chain(armed=True, master_db=0.0, cab=cab)
+        x = (_np.random.randn(256) * 0.05).astype(_np.float32)
+        budget = 1000.0 * 256 / 44100
+        # The first block after a load pays for buffers and first-touch pages. What has to
+        # fit in the budget is the steady state, which is what a player hears.
+        for _ in range(5):
+            process_chain(x, chain)
+        seen = []
+        for _ in range(50):
+            t = time.perf_counter()
+            process_chain(x, chain)
+            seen.append((time.perf_counter() - t) * 1000)
+        seen.sort()
+        median = seen[len(seen) // 2]
+        # The median, not the worst: a whole-box hiccup is the OS, not the chain, and a
+        # test that fails on it teaches people to ignore the suite.
+        self.assertLess(median, budget,
+                        f"{median:.2f} ms of render in a {budget:.2f} ms block")
+
+
 class TestChoosingTheDevice(unittest.TestCase):
     """The pair is found by shape, not by this plugin knowing one vendor's names."""
 

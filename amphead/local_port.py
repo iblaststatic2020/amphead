@@ -519,6 +519,8 @@ class AmpHead2Rig:
             "input_gain_db": got.get("input_gain_db"),
             "output_gain_db": got.get("output_gain_db"),
             "latency_ms": latency,
+            "block_ms": got.get("block_ms"),
+            "round_trip_ms": got.get("round_trip_ms"),
             "mode": got.get("mode"),
         }
 

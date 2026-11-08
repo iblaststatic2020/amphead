@@ -98,7 +98,7 @@ class TestTheEngineOpensWhatTheSettingsSay(Rig):
 
     def test_a_fresh_install_gets_the_measured_defaults(self):
         engine = engine_main.engine_from_settings()
-        self.assertEqual((engine.samplerate, engine.blocksize), (44100, 512))
+        self.assertEqual((engine.samplerate, engine.blocksize), (44100, 256))
         self.assertIsNone(engine.input_device)
 
 

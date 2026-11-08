@@ -45,7 +45,9 @@ DEFAULTS: dict[str, Any] = {
         # input, which is where most interfaces put the instrument jack.
         "input_channel": 1,
         "samplerate": 44100,
-        "blocksize": 512,
+        # 256: the block is what is felt on top of the driver buffer, and 256 holds
+        # realtime with room to spare while 128 does not. See engine2.Engine.
+        "blocksize": 256,
         # Per direction. 5 ms is the tightest that held realtime on the measured rig.
         "latency_ms": 5.0,
     },

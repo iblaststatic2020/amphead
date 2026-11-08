@@ -39,7 +39,7 @@ class EngineWordsTest(unittest.TestCase):
         self.assertEqual(got["verdict"], verdict.STANDBY)
         self.assertIn("open", got["reason"])
         self.assertIn("GO LIVE", got["reason"])
-        self.assertIn("-6 dB", got["reason"])
+        self.assertIn("knob", got["reason"], "arming takes the knob, not a fixed level")
 
     def test_an_armed_engine_hearing_nothing_says_no_signal(self):
         got = self.judge(self.open_state(armed=True), {"l": 0.0, "r": 0.0, "clip": False},

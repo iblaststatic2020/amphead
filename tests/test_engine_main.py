@@ -32,6 +32,20 @@ class VerbTest(unittest.TestCase):
         self.assertEqual(result["samplerate"], 48000)
         self.assertEqual(result["tone"], {"bass": 0.0, "mid": 0.0, "treble": 0.0})
 
+    def test_status_reports_the_block_on_top_of_the_driver_buffer(self):
+        """The felt round trip is the buffer the driver gives plus the block it must fill.
+
+        Reporting the driver half alone is how a 512-frame build looked as quick as a
+        256-frame one on the face while sounding a block slower in the hands.
+        """
+        result = self.server.handle({"cmd": "status"})["result"]
+        block_ms = 1000.0 * 256 / 48000
+        self.assertAlmostEqual(result["block_ms"], round(block_ms, 2))
+        if result["latency_ms"] is not None:
+            self.assertAlmostEqual(result["round_trip_ms"], round(result["latency_ms"] + block_ms, 1))
+        else:
+            self.assertIsNone(result["round_trip_ms"], "no open stream, no number to show")
+
     def test_starting_opens_the_device_without_raising_the_master(self):
         """A started engine that says armed:false has to be silent, not merely quiet."""
         with mock.patch.object(type(self.server.engine), "start", return_value="test"):
@@ -61,7 +75,8 @@ class VerbTest(unittest.TestCase):
     def test_arm_uses_the_measured_default(self):
         result = self.server.handle({"cmd": "arm"})["result"]
         self.assertTrue(result["armed"])
-        self.assertEqual(result["master_db"], ARM_MASTER_DB)
+        self.assertEqual(result["master_db"], SAFE_MASTER_DB,
+                         "arming without a level must not lift the master off the floor")
 
     def test_arm_can_be_overridden(self):
         self.assertEqual(self.server.handle({"cmd": "arm", "master_db": -12})["result"]["master_db"], -12.0)

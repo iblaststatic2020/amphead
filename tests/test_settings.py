@@ -48,13 +48,13 @@ class TestLoad(TmpSettings):
     def test_a_missing_file_is_the_defaults_not_an_error(self):
         got = settings.load()
         self.assertEqual(got["capture_dirs"], [])
-        self.assertEqual(got["audio"]["blocksize"], 512)
+        self.assertEqual(got["audio"]["blocksize"], 256)
         self.assertEqual(got["audio"]["input_channel"], 1)
 
     def test_a_truncated_file_does_not_stop_the_rig(self):
         self.file.parent.mkdir(parents=True)
         self.file.write_text('{"audio": {"blocksize": 256', encoding="utf-8")
-        self.assertEqual(settings.load()["audio"]["blocksize"], 512)
+        self.assertEqual(settings.load()["audio"]["blocksize"], 256)
 
     def test_a_json_array_is_not_settings(self):
         self.file.parent.mkdir(parents=True)
@@ -77,7 +77,7 @@ class TestSave(TmpSettings):
         on_disk = json.loads(self.file.read_text(encoding="utf-8"))
         self.assertEqual(on_disk["capture_dirs"], [r"C:\caps"])
         self.assertEqual(on_disk["audio"]["latency_ms"], 8)
-        self.assertEqual(on_disk["audio"]["blocksize"], 512, "a nested patch must not wipe siblings")
+        self.assertEqual(on_disk["audio"]["blocksize"], 256, "a nested patch must not wipe siblings")
 
     def test_no_temp_file_is_left_beside_it(self):
         settings.save({"cab_dirs": ["/irs"]})
@@ -117,7 +117,7 @@ class TestAudio(TmpSettings):
     def test_nonsense_falls_back_instead_of_crashing_the_engine(self):
         settings.save({"audio": {"blocksize": "big", "input_device": "default"}})
         audio = settings.audio()
-        self.assertEqual(audio["blocksize"], 512)
+        self.assertEqual(audio["blocksize"], 256)
         self.assertIsNone(audio["input_device"], "a named device is not an index")
 
 

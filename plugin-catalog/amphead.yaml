@@ -4,7 +4,7 @@ sha: 77bd9a551a508cab2dec1d270276961ccb4590a7
 title: AmpHead
 description: >-
   Turns Hermes into a guitar amp. It starts its own low-latency audio engine (one duplex stream on
-  the interface, 512-frame blocks, about 10 ms round trip on a kernel-streaming driver), loads a NAM
+  the interface, 256-frame blocks, about 16 ms round trip on a kernel-streaming driver), loads a NAM
   capture and a cabinet IR, and gives you the knobs a head has: bass, mid, treble, input gain,
   output gain and master. It parks the master at -60 dB and stays in standby until you flip the Live
   switch, arms at a measured -6 dB, and answers READY / STANDBY / NO SIGNAL / NO CHAIN / CLIPPING /

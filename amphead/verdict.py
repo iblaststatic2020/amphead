@@ -85,8 +85,8 @@ def judge(state: dict, reading: dict, chain: list[dict] | None = None) -> dict[s
         where = (f"parked at {float(master):.0f} dB" if master is not None
                  and float(master) <= PARKED_DB else "on")
         return {"verdict": STANDBY,
-                "reason": f"the engine is open and silent, master {where}: GO LIVE arms it at the "
-                          f"safe {ARM_DB:.0f} dB",
+                "reason": f"the engine is open and silent, master {where}: GO LIVE opens the amp "
+                          f"with the master wherever the knob is, so it cannot arrive loud",
                 "problems": ["the engine is open but nothing is live"]}
 
     peak = _peak(reading)
