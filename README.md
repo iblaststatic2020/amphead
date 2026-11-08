@@ -129,6 +129,19 @@ application: there is no other application.
 - **Latency is measured, not promised.** The number comes from the driver's own report plus what the
   stream callback sees; 10 ms round trip is what this interface does, not a floor for every machine.
 
+## Where the maths comes from
+
+`amphead/nam.py` is our own numpy implementation of the graph a `.nam` file describes: one 1x1
+rechannel, dilated convs with tanh, a 1x1 mix per layer, a summed head and a head scale. No
+upstream code is vendored and torch is not a dependency of anything that ships; the parity test
+generates its golden file with the upstream `neural-amp-modeler` package and compares the
+streaming path sample by sample, because an implementation that agrees with the reference is
+worth more than one that looks like it. Only plain WaveNet captures load: LSTM, gated activations,
+FiLM conditioning and a separate output head are refused by name rather than guessed at.
+
+Neural Amp Modeler and the `.nam` format belong to their authors (MIT). Nothing here is affiliated
+with that project, and no capture or cabinet is redistributed with this repo.
+
 ## Sound and measurements
 
 `ENGINE_MEASUREMENTS.md` holds the numbers: block budget, convolution cost per block for a 16 384-tap
