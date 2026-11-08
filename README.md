@@ -271,5 +271,5 @@ Both interpreters get through the suite: the engine interpreter runs the DSP and
 plugin interpreter runs the dashboard tests, and each skips the handful of tests that need what the
 other one has.
 
-Install it into Hermes with `hermes plugins install iblaststatic2020/hermes-reaper-amp --enable`
+Install it into Hermes with `hermes plugins install iblaststatic2020/amphead --enable`
 while the repo is still private, or from the catalog once it is public.

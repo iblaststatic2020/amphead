@@ -1,5 +1,5 @@
 name: amphead
-repo: https://github.com/iblaststatic2020/hermes-reaper-amp
+repo: https://github.com/iblaststatic2020/amphead
 sha: a7b2f879bb8d7de0df82f93debb72ca79fcaa019
 title: AmpHead
 description: >-
@@ -18,7 +18,7 @@ maintainer: iblaststatic2020
 tier: community
 category: tools
 requires_hermes: ">=0.22.0"
-docs_url: https://github.com/iblaststatic2020/hermes-reaper-amp#readme
+docs_url: https://github.com/iblaststatic2020/amphead#readme
 version: "1.0.0"
 readme: true
 platforms:
