@@ -1,6 +1,6 @@
 name: amphead
 repo: https://github.com/iblaststatic2020/hermes-reaper-amp
-sha: 176e2227657fe6b19fb46fa7a2c8bfea8833e6e1
+sha: eeab69bb34861d9747a6730f48b9b05866bd7d48
 title: AmpHead
 description: >-
   Turns Hermes into a guitar amp. It starts its own low-latency audio engine (one duplex stream on
@@ -26,6 +26,7 @@ platforms:
   - linux
 known_issues:
   - Tested on Windows only. The macOS and Linux paths (device selection, settings location, engine discovery) have unit tests but have not been run by the author against a real install.
+  - TUNE closes and reopens the audio device several times while it measures block sizes (up to about 20 seconds, silent, chain armed at -60 dB), then leaves the amp as it found it.
   - Low latency needs an interface with a kernel-streaming or exclusive driver; on a shared WMME pair it works but feels late, and the verdict reports the round trip rather than hiding it.
   - Tone comes from captures and cabinets you own; no amp is modelled in code, and without a capture and a cabinet the path is clean with a tone stack.
   - The plugin installs nothing. It needs an interpreter that can import numpy and sounddevice: the bundled `scripts/engine_env.ps1` builds one with uv and pip (two pinned wheels from PyPI, the only network use anywhere), or point `AMPHEAD_ENGINE_PYTHON` at your own. `amphead_setup` names what is missing instead of failing silently.
