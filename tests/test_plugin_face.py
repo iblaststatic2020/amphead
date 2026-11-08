@@ -244,7 +244,8 @@ class TestTheGateIsOnTheFace(unittest.TestCase):
     def test_there_is_a_tune_button_beside_the_latency(self):
         source = face()
         self.assertIn("act('/tune', {})", source)
-        self.assertIn("children: 'tune'", source)
+        self.assertIn("children: tuningNow ? 'measuring' : 'tune'", source)
+        self.assertIn("maxHeight: 'clamp(120px, 32vh, 220px)'", source)
 
 
 class TestTheAimIsOnTheFace(unittest.TestCase):

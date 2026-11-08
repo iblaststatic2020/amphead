@@ -49,6 +49,7 @@ PARKED = "PARKED"
 NO_SIGNAL = "NO SIGNAL"
 CLIPPING = "CLIPPING"
 GLITCH = "GLITCH"
+TUNING = "TUNING"
 READY = "READY"
 
 #: What the player should do next, per verdict. One imperative, no hedging.
@@ -65,6 +66,7 @@ NEXT = {
     STANDBY: "press GO LIVE",
     CLIPPING: "lower IN",
     GLITCH: "run tune",
+    TUNING: "wait for the measurement to finish",
     READY: "play",
 }
 
@@ -188,6 +190,21 @@ def snapshot(state: dict, reading: dict | None = None,
         return said(ENGINE_OFF,
                     "the engine is not running: the switch on the face reads SET UP",
                     "off", "off")
+
+    # A tune stops the stream on purpose. Saying DEVICE CLOSED over it is technically true and
+    # practically a lie: it would send the player to press GO LIVE in the middle of the sweep.
+    tuning = state.get("tuning") or {}
+    if tuning.get("running"):
+        phase = str(tuning.get("phase") or "measuring").strip()
+        elapsed = float(tuning.get("seconds") or 0.0)
+        said_tuning = said(TUNING,
+                           f"the amp is measuring block sizes ({phase}, {elapsed:.0f}s). "
+                           f"It reopens on the size it picks; the knobs and the chain wait.",
+                           "open", "off")
+        said_tuning["health"] = OK
+        said_tuning["activity"] = "tuning"
+        said_tuning["notice"] = f"tuning: {phase}"
+        return said_tuning
 
     device = _device(state)
     if device["closed"]:

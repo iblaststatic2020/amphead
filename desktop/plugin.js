@@ -51,6 +51,7 @@ const VERDICT_COLOR = {
   'NO CHAIN': 'var(--ui-accent)',
   CLIPPING: '#e5533d',
   GLITCH: '#e5533d',
+  TUNING: 'var(--ui-accent)',
   'DEVICE CLOSED': '#e5533d',
   'DEVICE UNPLUGGED': '#e5533d',
   'ENGINE OFF': 'var(--ui-text-quaternary)',
@@ -72,6 +73,7 @@ const CHIP_WORD = {
   'NO SIGNAL': 'no signal',
   CLIPPING: 'clipping',
   GLITCH: 'glitching',
+  TUNING: 'tuning',
   'REOPENED DEVICE': 'device reopened',
   CONNECTING: 'connecting'
 }
@@ -377,7 +379,7 @@ const headline = (out) => {
 // one press that searches the usual places. The search is local file names, but it is still somebody
 // else's disk, so it waits to be asked. The same press writes the folder it finds, which is how a
 // library that lives somewhere unusual gets adopted without an environment variable.
-function FilePicker({ items, currentPath, busy, onPick, placeholder, kind, rest, roots, onAdopted }) {
+function FilePicker({ items, currentPath, busy, onPick, placeholder, kind, rest, roots, onAdopted, onClose }) {
   const [needle, setNeedle] = useState('')
   const [hunt, setHunt] = useState(null)
   const [why, setWhy] = useState('')
@@ -435,7 +437,22 @@ function FilePicker({ items, currentPath, busy, onPick, placeholder, kind, rest,
         value: needle,
         placeholder,
         'aria-label': placeholder,
+        autoFocus: true,
         onChange: (event) => setNeedle(event.target.value),
+        onKeyDown: (event) => {
+          // Finding a capture should be click, type, Enter. The list already puts the best
+          // match first, so Enter takes it and Escape gives the pane back without a reach.
+          if (event.key === 'Escape') {
+            event.preventDefault()
+            setNeedle('')
+            if (onClose) onClose()
+            return
+          }
+          if (event.key === 'Enter' && shown.length && !busy) {
+            event.preventDefault()
+            onPick(shown[0].path)
+          }
+        },
         className: 'w-full rounded-md px-2 py-1 text-[0.6875rem] outline-none',
         style: { ...WELL, color: 'var(--ui-text-primary)' }
       }),
@@ -452,8 +469,16 @@ function FilePicker({ items, currentPath, busy, onPick, placeholder, kind, rest,
         children: `${matches.length} matched${matches.length > shown.length ? `, showing ${shown.length}` : ''}`
       }),
       jsx('div', {
-        className: 'flex max-h-44 flex-col overflow-y-auto rounded-md',
-        style: { ...WELL },
+        className: 'flex flex-col overflow-y-auto rounded-md',
+        // The height is capped in style, not only by a utility class, so the list can never
+        // grow into the face and push the knobs away. 60 rows still scroll inside this box.
+        style: {
+          ...WELL,
+          maxHeight: 'clamp(120px, 32vh, 220px)',
+          overflowY: 'auto',
+          overscrollBehavior: 'contain',
+          scrollbarGutter: 'stable'
+        },
         children: hunting
           ? (rows.length
             ? rows.map((row) => jsxs('button', {
@@ -592,12 +617,13 @@ function Meter({ peak, clip }) {
 }
 
 // The one switch on the front: it says what the next press does, in the next press's own words.
-function PowerButton({ running, armed, busy, onSetup, onLive }) {
-  const state = !running ? 'setup' : armed ? 'live' : 'standby'
+function PowerButton({ running, armed, busy, tuning, onSetup, onLive }) {
+  const state = tuning ? 'tuning' : !running ? 'setup' : armed ? 'live' : 'standby'
   const look = {
     setup: { text: 'SET UP', sub: 'open the engine', fill: 'var(--ui-accent)', ink: 'var(--ui-bg-primary)' },
     standby: { text: 'GO LIVE', sub: 'opens at the knob', fill: 'var(--ui-bg-quaternary)', ink: 'var(--ui-text-primary)' },
-    live: { text: 'LIVE', sub: 'press to stand by', fill: '#e5533d', ink: '#fff' }
+    live: { text: 'LIVE', sub: 'press to stand by', fill: '#e5533d', ink: '#fff' },
+    tuning: { text: 'TUNING', sub: 'measuring blocks', fill: 'var(--ui-bg-quaternary)', ink: 'var(--ui-text-primary)' }
   }[state]
   // A lamp beside the words, the way a real front panel has one. It is the only part of the switch
   // that is allowed to glow, and it glows only when the amp is actually making sound.
@@ -1055,6 +1081,11 @@ function AmpFace({ rest }) {
   // route that failed, must leave the face offering SET UP: the safe press is the one that
   // opens a device and stays silent, never the one that arms an amp we cannot see.
   const running = s.running === true
+  const tuning = s.tuning || {}
+  const tuningNow = !!tuning.running
+  // A tune stops the device on purpose. The page stays alive, but the knobs and the chain are
+  // not measured yet, so every control waits instead of sending a verb the engine will refuse.
+  const locked = busy || tuningNow
   const tone = s.tone || {}
   const toneName = s.tone_name || [s.capture, s.cab].filter(Boolean).join(' + ') || ''
   // An aim is a claim about a file, never about a record. The colour states how strong it is, so
@@ -1165,7 +1196,8 @@ function AmpFace({ rest }) {
               jsx(PowerButton, {
                 running,
                 armed,
-                busy,
+                busy: locked,
+                tuning: tuningNow,
                 onSetup: () => act('/setup', {}),
                 // Open at the level the knob is showing, never at a fixed one: the knob
                 // starts on the floor, so the amp cannot come up loud on the first press.
@@ -1201,13 +1233,13 @@ function AmpFace({ rest }) {
                 }),
                 jsx('button', {
                   type: 'button',
-                  disabled: busy,
+                  disabled: locked,
                   onClick: () => act('/teardown', {}),
                   className: 'shrink-0 text-[0.5rem] uppercase leading-none tracking-[0.1em] underline-offset-2 hover:underline',
                   // a real ghost button: the app's button defaults would paint a white box here
                   style: {
                     color: SECOND.color,
-                    cursor: busy ? 'default' : 'pointer',
+                    cursor: locked ? 'default' : 'pointer',
                     background: 'transparent',
                     border: 0,
                     padding: 0,
@@ -1248,21 +1280,30 @@ function AmpFace({ rest }) {
                   // cabinet are loaded, so a rig that got heavier can find its own block size.
                   jsx('button', {
                     type: 'button',
-                    disabled: busy || !running,
+                    disabled: locked || !running,
                     onClick: () => act('/tune', {}),
                     className: 'shrink-0 text-[0.5rem] uppercase leading-none tracking-[0.1em] underline-offset-2 hover:underline',
                     style: {
                       color: SECOND.color,
-                      cursor: busy || !running ? 'default' : 'pointer',
+                      cursor: locked || !running ? 'default' : 'pointer',
                       background: 'transparent',
                       border: 0,
                       padding: 0,
                       font: 'inherit'
                     },
-                    children: 'tune'
+                    children: tuningNow ? 'measuring' : 'tune'
                   })
                 ]
               }),
+              // A running tune names its own phase and closed its own device, so the face must
+              // say so in place. Without this line the switch reading TUNING is the only clue.
+              tuningNow
+                ? jsx('div', {
+                  className: 'mt-1 text-[0.5rem] leading-tight',
+                  style: MUTED,
+                  children: `tuning · ${tuning.phase || 'starting'} · ${Number(tuning.seconds || 0).toFixed(0)}s · the amp reopens by itself`
+                })
+                : null,
               // What the agent was asked to sound like, and how far the library actually got. The
               // line is the tool's own words, so the face cannot overstate the match.
               s.aim
@@ -1330,7 +1371,7 @@ function AmpFace({ rest }) {
                     min: GATE_LOW,
                     max: GATE_HIGH,
                     neutral: GATE_LOW,
-                    busy,
+                    locked,
                     disabled: !running,
                     onCommit: (db) => act('/gate', { db })
                   }, 'gate'),
@@ -1341,7 +1382,7 @@ function AmpFace({ rest }) {
                     min: GAIN_LOW,
                     max: GAIN_HIGH,
                     neutral: 0,
-                    busy,
+                    locked,
                     disabled: !running,
                     onCommit: (db) => act('/input_gain', { db })
                   }, 'in'),
@@ -1352,7 +1393,7 @@ function AmpFace({ rest }) {
                     min: -TONE_RANGE,
                     max: TONE_RANGE,
                     neutral: 0,
-                    busy,
+                    locked,
                     disabled: !running,
                     onCommit: (db) => turnKnob(name, db)
                   }, name)),
@@ -1363,7 +1404,7 @@ function AmpFace({ rest }) {
                     min: GAIN_LOW,
                     max: GAIN_HIGH,
                     neutral: 0,
-                    busy,
+                    locked,
                     disabled: !running,
                     onCommit: (db) => act('/output_gain', { db })
                   }, 'out'),
@@ -1374,7 +1415,7 @@ function AmpFace({ rest }) {
                     min: MASTER_LOW,
                     max: MASTER_HIGH,
                     neutral: -6,
-                    busy,
+                    locked,
                     disabled: !running,
                     onCommit: (db) => act('/master', { db })
                   }, 'master')
@@ -1394,7 +1435,7 @@ function AmpFace({ rest }) {
           jsx(TakeStrip, {
             take,
             recording,
-            busy,
+            locked,
             running,
             onRecord: () => act('/record', { on: !recording }),
             onSay: setSaid
@@ -1412,12 +1453,13 @@ function AmpFace({ rest }) {
             children: jsx(FilePicker, {
               items: files.captures || [],
               currentPath: s.capture_path,
-              busy,
+              locked,
               kind: 'capture',
               rest,
               roots: files.capture_dirs || [],
               onAdopted: () => client.invalidateQueries({ queryKey: ['amphead2', 'library'] }),
               placeholder: 'narrow the amps: bugera, fender, lead',
+              onClose: () => setOpenPicker(''),
               onPick: async (path) => {
                 setOpenPicker('')
                 await act('/capture', { path })
@@ -1434,12 +1476,13 @@ function AmpFace({ rest }) {
             children: jsx(FilePicker, {
               items: files.cabs || [],
               currentPath: s.cab_path,
-              busy,
+              locked,
               kind: 'cab',
               rest,
               roots: files.cab_dirs || [],
               onAdopted: () => client.invalidateQueries({ queryKey: ['amphead2', 'library'] }),
               placeholder: 'narrow the cabinets: 212, gov, sm57',
+              onClose: () => setOpenPicker(''),
               onPick: async (path) => {
                 setOpenPicker('')
                 await act('/cab', { path })
@@ -1463,7 +1506,7 @@ function AmpFace({ rest }) {
                 ? cabinet.data.rigs.map((row) => jsx('button', {
                     type: 'button',
                     key: row.name,
-                    disabled: busy,
+                    disabled: locked,
                     title: `${row.summary}
 
 ${row.line}`,
@@ -1473,7 +1516,7 @@ ${row.line}`,
                       background: 'color-mix(in srgb, var(--ui-accent) 12%, transparent)',
                       border: '1px solid color-mix(in srgb, var(--ui-accent) 35%, transparent)',
                       color: 'var(--ui-accent)',
-                      cursor: busy ? 'default' : 'pointer'
+                      cursor: locked ? 'default' : 'pointer'
                     },
                     children: row.name
                   }, row.name))
@@ -1496,14 +1539,14 @@ ${row.line}`,
               }),
               jsx('button', {
                 type: 'button',
-                disabled: busy || !rigName.trim(),
+                disabled: locked || !rigName.trim(),
                 onClick: () => act('/rig', { action: 'save', name: rigName }),
                 className: 'rounded px-1.5 py-0.5 text-[0.5625rem] font-semibold uppercase tracking-[0.1em] outline-none',
                 style: {
                   background: rigName.trim() ? 'color-mix(in srgb, var(--ui-accent) 18%, transparent)' : 'transparent',
                   border: '1px solid color-mix(in srgb, var(--ui-accent) 35%, transparent)',
                   color: rigName.trim() ? 'var(--ui-accent)' : MUTED.color,
-                  cursor: busy || !rigName.trim() ? 'default' : 'pointer'
+                  cursor: locked || !rigName.trim() ? 'default' : 'pointer'
                 },
                 children: 'save'
               })
@@ -1517,14 +1560,14 @@ ${row.line}`,
         children: [
           jsx('button', {
             type: 'button',
-            disabled: busy,
+            disabled: locked,
             onClick: () => act('/panic', {}),
             className: 'rounded-md px-2 py-1 text-[0.5625rem] font-semibold uppercase tracking-[0.1em] outline-none',
             style: {
               background: 'color-mix(in srgb, #e5533d 16%, transparent)',
               border: '1px solid color-mix(in srgb, #e5533d 45%, transparent)',
               color: '#e5533d',
-              cursor: busy ? 'default' : 'pointer'
+              cursor: locked ? 'default' : 'pointer'
             },
             children: 'silence'
           }),

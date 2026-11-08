@@ -495,9 +495,32 @@ class AmpHead2Rig:
             return {"recording": False}
         return self._call(cmd="record_state")
 
+    def start_tune(self, **kw: Any) -> dict:
+        """Begin a measurement without waiting for it; the status poll carries the phase."""
+        return self._call(cmd="tune_start", **kw)
+
     def tune(self, **kw: Any) -> dict:
-        """Measure this chain and reopen the amp on the quickest block size that holds."""
-        return self._call(cmd="tune")
+        """Measure this chain and reopen the amp on the quickest block size that holds.
+
+        The engine runs the soak on its own thread, so this waits by polling rather than by
+        holding the request loop. A caller that wants the old blocking answer still gets it;
+        the pane uses ``start_tune`` and paints the phase instead of freezing.
+        """
+        self._call(cmd="tune_start", **kw)
+        deadline = time.monotonic() + 180.0
+        while True:
+            got = self._call(cmd="tune_status")
+            if not got.get("running"):
+                if got.get("error"):
+                    raise EngineRefused(f"{LABEL} refused: {got['error']}")
+                if got.get("cancelled"):
+                    raise EngineRefused(f"{LABEL} tuning was cancelled")
+                return got.get("result") or {}
+            if time.monotonic() >= deadline:
+                self._call(cmd="tune_cancel")
+                raise EngineSilent(f"{LABEL} measured for more than 180s; it was cancelled so "
+                                   f"the amp could reopen")
+            time.sleep(0.25)
 
     def set_output_gain(self, db: float = 0.0, **kw: Any) -> dict:
         """Level between the cabinet and the master, so balancing two captures never means
@@ -644,6 +667,8 @@ class AmpHead2Rig:
             "underflows": got.get("underflows"),
             "overflows": got.get("overflows"),
             "input_device": got.get("input_device"),
+            # A tune is visible while it runs. None/absent means the engine did not say.
+            "tuning": got.get("tuning") or {},
         }
 
     def host_alive(self) -> bool:

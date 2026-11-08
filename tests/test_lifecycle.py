@@ -99,6 +99,16 @@ class TestEveryModeHasAName(unittest.TestCase):
         self.assertEqual(got["next"], "play")
         self.assertEqual(got["health"], life.OK)
 
+    def test_a_running_tune_is_named_not_called_a_closed_device(self):
+        got = life.snapshot(state(tuning={"running": True, "phase": "soak 256", "seconds": 4.2},
+                                  device={"closed": True, "inputs": 2}), LOUD, CHAIN)
+        self.assertEqual(got["state"], life.TUNING)
+        self.assertEqual(got["next"], "wait for the measurement to finish")
+        self.assertEqual(got["activity"], "tuning")
+        self.assertEqual(got["health"], life.OK)
+        self.assertIn("soak 256", got["notice"])
+        self.assertIn("reopens", got["reason"])
+
 
 class TestOrthogonalAxes(unittest.TestCase):
     def test_a_take_is_an_activity_not_a_verdict(self):

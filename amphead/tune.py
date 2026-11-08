@@ -144,9 +144,11 @@ def soak(engine, blocksize: int, seconds: float = 2.0) -> dict:
     }
 
 
-def soak_all(engine, candidates=CANDIDATES, seconds: float = 2.0) -> list[dict]:
+def soak_all(engine, candidates=CANDIDATES, seconds: float = 2.0, progress=None) -> list[dict]:
     rows = []
-    for blocksize in candidates:
+    for index, blocksize in enumerate(candidates):
+        if progress:
+            progress(f"{blocksize} frames", index, len(candidates))
         rows.append(soak(engine, blocksize, seconds=seconds))
     return rows
 

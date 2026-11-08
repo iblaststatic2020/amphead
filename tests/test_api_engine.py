@@ -105,6 +105,10 @@ class FakeRig:
         return {"verdict": "256 frames, 5.8 ms a block, 3.1 ms of work, with room to spare",
                 "blocksize": 256, "changed": False, "round_trip_ms": 15.8}
 
+    def start_tune(self):
+        self.calls.append(("start_tune",))
+        return {"running": True, "phase": "starting", "seconds": 0.0, "already": False}
+
     def set_param(self, track=1, fx=1, param=None, value=None, mode="auto"):
         self.calls.append(("param", param, value))
         got = {("bass", "mid", "treble")[i]: name for i, name in
@@ -265,11 +269,12 @@ class TrimTest(ApiTest):
         self.assertFalse(out["ok"])
         self.assertIn("NO LEVEL", out["output"])
 
-    def test_tune_answers_in_the_probes_words(self):
+    def test_tune_starts_at_once_and_names_its_phase(self):
         out = plugin_api.tune({})
         self.assertTrue(out["ok"])
-        self.assertEqual(out["blocksize"], 256)
-        self.assertIn("256 frames", out["output"])
+        self.assertIn("TUNING", out["output"])
+        self.assertTrue(out["tuning"]["running"])
+        self.assertIn(("start_tune",), self.rig.calls)
 
     def test_a_master_write_is_clamped_between_the_floor_and_the_ceiling(self):
         self.assertEqual(plugin_api.master_level({"db": 99})["db"], 12.0)

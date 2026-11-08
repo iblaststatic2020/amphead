@@ -153,6 +153,7 @@ def state() -> dict[str, Any]:
                 "capture": "", "cab": "", "tone": {}, "tone_name": "",
                 "aim": lastchain.load().get("aim") or "",
                 "aim_confidence": lastchain.load().get("aim_confidence") or "",
+                "tuning": {},
                 "take": _saved_take()}
 
 
@@ -223,6 +224,7 @@ def state() -> dict[str, Any]:
         "late": live.get("late"),
         "underflows": live.get("underflows"),
         "overflows": live.get("overflows"),
+        "tuning": live.get("tuning") or {},
         "meter": {"peak": peak, "clip": clip},
         "demo": False,
     }
@@ -474,16 +476,18 @@ def record(body: dict) -> dict[str, Any]:
 
 @router.post("/tune")
 def tune(body: dict) -> dict[str, Any]:
-    """Measure this chain and reopen the amp on the quickest block that holds it."""
+    """Start a measurement and answer at once; the face paints the phase from /state."""
     try:
-        wrote = RIG.tune()
+        wrote = RIG.start_tune()
     except port.NoRig:
         return {"output": "NOT MEASURED: the engine is not running", "ok": False}
     except port.RigError as exc:
         return {"output": f"NOT MEASURED: {exc}", "ok": False}
-    return {"output": wrote.get("verdict") or "measured", "ok": True,
-            "blocksize": wrote.get("blocksize"), "changed": wrote.get("changed"),
-            "round_trip_ms": wrote.get("round_trip_ms")}
+    if wrote.get("already"):
+        return {"output": "TUNING: the amp is already measuring block sizes", "ok": True,
+                "tuning": wrote}
+    return {"output": "TUNING: measuring block sizes; the amp reopens when it is done",
+            "ok": True, "tuning": wrote}
 
 
 @router.post("/knob")

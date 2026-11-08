@@ -16,6 +16,8 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import threading
+import time
 import traceback
 from pathlib import Path
 
@@ -24,6 +26,10 @@ from . import record as recording
 from . import settings
 from . import tune
 from .engine2 import ARM_MASTER_DB, SAFE_MASTER_DB, Engine
+
+
+class TuneCancelled(Exception):
+    """A tune that was asked to stop between blocks, not a tune that failed."""
 
 
 def engine_from_settings(**over) -> Engine:
@@ -71,6 +77,16 @@ class Server:
         #: The last take this engine finished, so asking what was just recorded answers with
         #: that take rather than with whatever wav happens to be newest in the folder.
         self.last_take: dict | None = None
+        # A tune is a long, device-owning job. Running it on the request loop made every other
+        # verb wait behind it, so the pane looked dead for the whole measurement. It lives on a
+        # thread now and reports its phase; the loop keeps answering status while it works.
+        self._tune_lock = threading.Lock()
+        self._tune_stop = threading.Event()
+        self._tune_thread: threading.Thread | None = None
+        self._tuning = {
+            "running": False, "phase": "", "started_at": None, "finished_at": None,
+            "seconds": 0.0, "cancelled": False, "error": "", "result": None,
+        }
 
     # every verb returns plain json ----------------------------------------
     # recording --------------------------------------------------------------
@@ -188,6 +204,8 @@ class Server:
                 "blocks": meter.blocks,
             },
             "last_error": self.engine.last_error,
+            # A long measurement is a visible state, not a frozen page. Small shape only.
+            "tuning": self.tuning_summary(),
         }
 
     def devices(self) -> dict:
@@ -283,9 +301,17 @@ class Server:
         self.engine.input_channel = number - 1
         return {"input_channel": number, "input_channels": count}
 
+    def _forget_tune(self) -> None:
+        """A measured block size belongs to the chain it measured, not to the next one."""
+        with self._tune_lock:
+            if not self._tuning.get("running"):
+                self._tuning.update(result=None, phase="", started_at=None, finished_at=None,
+                                    seconds=0.0, cancelled=False, error="")
+
     def load_capture(self, path: str) -> dict:
         from .nam import WaveNet
 
+        self._forget_tune()
         model = WaveNet.load(path)
         # A capture is not just weights: it is weights for one sample rate. Playing an 8 kHz
         # trained model on a 48 kHz stream runs its filters at six times the frequency they
@@ -368,6 +394,7 @@ class Server:
         return {"stage": key, "enabled": bool(getattr(chain, field))}
 
     def clear_capture(self) -> dict:
+        self._forget_tune()
         self.engine.update(amp=None)
         self.capture_name = None
         self.rate_mismatch = None
@@ -376,6 +403,7 @@ class Server:
     def load_cab(self, path: str, gain_db: float | None = None) -> dict:
         from .cab import Cab
 
+        self._forget_tune()
         cab = Cab.from_wav(
             path,
             gain_db=0.0 if gain_db is None else float(gain_db),
@@ -392,6 +420,7 @@ class Server:
         }
 
     def clear_cab(self) -> dict:
+        self._forget_tune()
         self.engine.update(cab=None)
         self.cab_name = None
         return {"cab": None}
@@ -527,13 +556,33 @@ class Server:
         }
 
     def tune(self, blocksize: int | None = None, apply: bool = True,
-             live: bool = True, seconds: float = 6.0) -> dict:
+             live: bool = True, seconds: float = 6.0,
+             progress=None, cancel=None) -> dict:
         """Find the quickest block size this rig can actually feed, and reopen on it.
 
         The measurement is a soak on the real device, because a render stopwatch without a
         driver deadline flatters small blocks. Arming survives the trip: this changes how the
         rig is timed, not whether the player is holding a guitar.
+
+        ``progress`` is a callback the long soak uses to say where it is. ``cancel`` is checked
+        between blocks, so a player who changes their mind gets their amp back at the next
+        boundary instead of after the last candidate.
         """
+        def step(phase: str) -> None:
+            if cancel is not None and cancel():
+                raise TuneCancelled()
+            if progress:
+                progress(phase)
+
+        def say(phase: str, *_) -> None:
+            # soak_all reports between candidates; this is the only place a cancel can land
+            # during the sweep without tearing a device open in the middle of a block.
+            if cancel is not None and cancel():
+                raise TuneCancelled()
+            if progress:
+                progress(phase)
+
+        step("starting")
         was_running = self.engine.running
         armed = self.engine.chain.armed
         if was_running:
@@ -542,13 +591,14 @@ class Server:
         try:
             if live:
                 try:
-                    rows = tune.soak_all(self.engine, seconds=seconds)
+                    rows = tune.soak_all(self.engine, seconds=seconds, progress=say)
                     picked = int(blocksize) if blocksize else tune.choose_soak(rows)
                     # A six second pass is still a snapshot. Whatever it picked gets a longer
                     # run before the amp is left at that size, and if the longer run drops
                     # blocks the next size up is tried instead.
                     if not blocksize and picked:
                         for _ in range(2):
+                            step(f"checking {picked} frames")
                             confirm = tune.soak(self.engine, picked, seconds=max(10.0, seconds * 2))
                             if confirm["ok"]:
                                 break
@@ -557,16 +607,20 @@ class Server:
                                 break
                             picked = int(min(bigger, key=lambda r: r["blocksize"])["blocksize"])
                     words = tune.soak_verdict(rows, picked)
+                except TuneCancelled:
+                    raise
                 except Exception:
                     rows, picked, words = [], None, ""
             else:
                 words = ""
             if not rows:
+                step("measuring this chain")
                 rows = tune.measure(self.engine.chain, self.engine.samplerate)
                 picked = int(blocksize) if blocksize else tune.choose(rows)
                 words = tune.verdict(rows, picked)
             changed = picked is not None and picked != self.engine.blocksize
             if apply and picked:
+                step(f"saving {picked} frames")
                 self.engine.blocksize = int(picked)
                 # Write it down: a measured size that evaporates on the next start is a
                 # measurement the player has to repeat every session.
@@ -580,6 +634,8 @@ class Server:
                 self.engine.start()
                 if armed:
                     self.engine.update(armed=True)
+        if progress:
+            progress("done")
         return {
             "blocksize": self.engine.blocksize,
             "picked": picked,
@@ -594,6 +650,90 @@ class Server:
                               round(self.engine.latency_ms +
                                     1000.0 * self.engine.blocksize / self.engine.samplerate, 1)),
         }
+
+    # tuning, off the request loop -----------------------------------------
+    def is_tuning(self) -> bool:
+        with self._tune_lock:
+            return bool(self._tuning["running"])
+
+    def tuning_summary(self) -> dict:
+        """The small truthful shape the pane and the judge can carry every poll.
+
+        The rows stay behind ``tune_status``: a status payload with ten soak tables in it is
+        a status payload that costs more than the thing it describes.
+        """
+        with self._tune_lock:
+            state = dict(self._tuning)
+        result = state.pop("result", None) or {}
+        if state["running"] and state["started_at"] is not None:
+            state["seconds"] = round(time.monotonic() - float(state["started_at"]), 1)
+        state["verdict"] = result.get("verdict") or ""
+        state["blocksize"] = result.get("blocksize")
+        state["changed"] = result.get("changed")
+        state["round_trip_ms"] = result.get("round_trip_ms")
+        state["finished"] = state["finished_at"] is not None
+        return state
+
+    def tune_start(self, **kwargs) -> dict:
+        """Start the measurement and answer at once; the caller polls ``tune_status``."""
+        with self._tune_lock:
+            if self._tuning["running"]:
+                already = True
+            else:
+                already = False
+                self._tune_stop.clear()
+                self._tuning = {
+                    "running": True, "phase": "starting", "started_at": time.monotonic(),
+                    "finished_at": None, "seconds": 0.0, "cancelled": False,
+                    "error": "", "result": None,
+                }
+                self._tune_thread = threading.Thread(
+                    target=self._tune_worker, args=(dict(kwargs),),
+                    daemon=True, name="amphead-tune")
+        if not already:
+            self._tune_thread.start()
+        said = self.tuning_summary()
+        said["already"] = already
+        return said
+
+    def _tune_worker(self, kwargs: dict) -> None:
+        def progress(phase: str, *_) -> None:
+            if self._tune_stop.is_set():
+                raise TuneCancelled()
+            with self._tune_lock:
+                self._tuning["phase"] = phase
+
+        result = None
+        error = ""
+        cancelled = False
+        try:
+            result = self.tune(progress=progress, cancel=self._tune_stop.is_set, **kwargs)
+        except TuneCancelled:
+            cancelled = True
+        except Exception as exc:                     # a tune must not kill the engine
+            error = f"{type(exc).__name__}: {exc}"
+        finally:
+            with self._tune_lock:
+                self._tuning.update(
+                    running=False, cancelled=cancelled, error=error, result=result,
+                    finished_at=time.monotonic(),
+                    phase="cancelled" if cancelled else ("failed" if error else "done"))
+                self._tune_thread = None
+
+    def tune_status(self) -> dict:
+        with self._tune_lock:
+            state = dict(self._tuning)
+        if state["running"] and state["started_at"] is not None:
+            state["seconds"] = round(time.monotonic() - float(state["started_at"]), 1)
+        return state
+
+    def tune_cancel(self) -> dict:
+        """Ask the worker to stop at the next candidate boundary and keep the amp."""
+        self._tune_stop.set()
+        return self.tuning_summary()
+
+    def shutdown_tune(self) -> None:
+        self._tune_stop.set()
 
     # dispatch -------------------------------------------------------------
     VERBS = {
@@ -618,18 +758,30 @@ class Server:
         "meter": "meter",
         "render": "render",
         "tune": "tune",
+        "tune_start": "tune_start",
+        "tune_status": "tune_status",
+        "tune_cancel": "tune_cancel",
         "record_start": "record_start",
         "record_stop": "record_stop",
         "record_state": "take_state",
     }
 
+    #: Verbs that may run while a tune owns the device. Everything else waits, because a
+    #: capture load or a start in the middle of a soak would measure the wrong chain.
+    TUNE_SAFE = {"status", "meter", "library", "devices", "take_state",
+                 "tune_start", "tune_status", "tune_cancel"}
+
     def handle(self, request: dict) -> dict:
         verb = request.get("cmd") or request.get("verb")
         if verb in ("quit", "exit"):
+            self.shutdown_tune()
             return {"ok": True, "stop": True}
         name = self.VERBS.get(verb or "")
         if name is None:
             return {"ok": False, "error": f"unknown command {verb!r}"}
+        if self.is_tuning() and verb not in self.TUNE_SAFE:
+            return {"ok": False, "error": "the amp is measuring block sizes; the knobs and "
+                                          "the chain wait until the reading is done"}
         kwargs = {k: v for k, v in request.items() if k not in ("cmd", "verb", "id")}
         try:
             return {"ok": True, "result": getattr(self, name)(**kwargs)}
@@ -671,6 +823,7 @@ def serve(stdin=None, stdout=None, server: "Server | None" = None) -> int:
         stdout.flush()
         if reply.get("stop"):
             break
+    server.shutdown_tune()
     server.engine.stop()
     return 0
 

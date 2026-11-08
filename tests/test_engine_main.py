@@ -2,6 +2,7 @@
 
 import io
 import json
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -120,6 +121,28 @@ class VerbTest(unittest.TestCase):
         self.assertIn(got["picked"], (64, 128, 256, 512, 1024))
         self.assertTrue(got["rows"])
         self.assertIn("frames", got["verdict"])
+
+    def test_tune_starts_off_the_request_loop_and_reports_its_phase(self):
+        said = self.server.tune_start(live=False)
+        self.assertTrue(said["running"])
+        deadline = time.monotonic() + 30
+        while self.server.is_tuning() and time.monotonic() < deadline:
+            time.sleep(0.02)
+        self.assertFalse(self.server.is_tuning())
+        got = self.server.tuning_summary()
+        self.assertFalse(got["running"])
+        self.assertEqual(got["phase"], "done")
+        self.assertIn(got["blocksize"], (64, 128, 256, 512, 1024))
+        self.assertIn("frames", got["verdict"])
+        self.assertFalse(self.server.handle({"cmd": "status"})["result"]["tuning"]["running"])
+
+    def test_a_tune_locks_the_chain_but_not_status(self):
+        self.server._tuning["running"] = True
+        refused = self.server.handle({"cmd": "load_capture", "path": "C:/nowhere/lead.nam"})
+        self.assertFalse(refused["ok"])
+        self.assertIn("measuring block sizes", refused["error"])
+        self.assertTrue(self.server.handle({"cmd": "status"})["ok"])
+        self.server._tuning["running"] = False
 
     def test_gain_refuses_an_unknown_name(self):
         self.server.handle({"cmd": "gain", "master_db": -6})
