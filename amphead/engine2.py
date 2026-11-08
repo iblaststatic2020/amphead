@@ -31,6 +31,7 @@ from dataclasses import dataclass, field, replace
 
 from .gate import FLOOR_DB as GATE_FLOOR_DB, Gate
 from .limits import SILENT_DB
+from .park import AutoPark
 from .limits import master as clamp_master, gate as clamp_gate, trim as clamp_trim
 
 #: Where the master sits when the chain is disarmed. Quiet enough to be harmless,
@@ -233,8 +234,17 @@ class Engine:
         self._capture: list = []
         self._capturing = False
         self._last_error: str | None = None
+        # Nobody plays forever in one sitting. After a long quiet stretch the amp parks its own
+        # master, so an interface left live overnight is not still listening to the room.
+        self._park = AutoPark()
+        self._parked_by_idle = False
 
     # state -----------------------------------------------------------------
+    @property
+    def parked_by_idle(self) -> bool:
+        """True when the amp parked its own master because nobody has played for a while."""
+        return self._parked_by_idle
+
     @property
     def chain(self) -> Chain:
         return self._chain
@@ -247,6 +257,10 @@ class Engine:
         """Swap the whole chain atomically. Anything the callback sees is complete."""
         with self._lock:
             self._chain = replace(self._chain, **kwargs)
+            # A player reaching for the master or the switch is the end of the silence.
+            if "master_db" in kwargs or "armed" in kwargs:
+                self._park.reset()
+                self._parked_by_idle = False
             return self._chain
 
     def set_gain(self, name: str, db: float) -> Chain:
@@ -493,6 +507,13 @@ class Engine:
                        dtype=np.float32)
         self._meter.peak_in = float(np.max(np.abs(x))) if frames else 0.0
         self._meter.blocks += 1
+        # Count the quiet on the input, and park the master when it has gone on long enough.
+        # The chain stays armed: this is a level move, not a disarm, so raising the master is
+        # all it takes to hear the amp again.
+        if chain.armed and self._park.hear(self._meter.peak_in):
+            chain = self.update(master_db=SAFE_MASTER_DB)
+            # After the swap, because update() treats a master move as the end of the silence.
+            self._parked_by_idle = True
         self._meter.stamp = time.time()
 
         if not chain.armed:

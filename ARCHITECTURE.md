@@ -10,14 +10,15 @@ so it can be tested without an audio device, an engine, or a pane.
 | Layer | Files | Owns |
 | --- | --- | --- |
 | Faces | `desktop/plugin.js`, `dashboard/plugin_api.py`, `amphead/tools.py` | How a person or an agent drives the amp, and the words it answers in |
-| Answer shape | `amphead/answers.py` | Turning a handler's one-line answer into the host's JSON |
+| Answer shape | `amphead/answers.py`, `amphead/faults.py` | Turning a handler's one-line answer into the host's JSON, and turning a failed load into the next step |
 | Wire | `amphead/local_port.py`, `amphead/port.py` | The phone line to the engine, and the vocabulary both ends share |
 | Process | `amphead/engine_main.py` | The engine process: start, stop, commands, status |
-| Engine | `amphead/engine2.py` | The audio device, the blocks, the chain state, the counters |
+| Engine | `amphead/engine2.py`, `amphead/park.py` | The audio device, the blocks, the chain state, the counters, and the timer that parks a master nobody is playing |
 | Measurement | `amphead/tune.py`, `amphead/analyse.py` | What the rig does when asked to prove it (soak, latency, spectrum) |
 | Rig facts | `amphead/library.py`, `amphead/settings.py`, `amphead/lastchain.py`, `amphead/target.py`, `amphead/verdict.py` | Files on disk, the settings file, what was last played, which capture a word means, how to describe the rig's state |
 | DSP | `amphead/nam.py`, `amphead/cab.py`, `amphead/tone.py`, `amphead/gate.py` | Sample math only: captures, cabinets, tone stack, gate |
 | Numbers | `amphead/limits.py` | The ranges every layer has to agree on |
+| Rig storage | `amphead/rigs.py` | The shape of a saved sound, the file it lives in, the line it travels as |
 
 ## Rules that keep it honest
 
@@ -37,13 +38,16 @@ so it can be tested without an audio device, an engine, or a pane.
 
 ## Where the next things go
 
-* **Saved rigs** (a named capture + cabinet + tone + trims): `amphead/rigs.py`, a rig-fact
-  module with no device access, storing beside the settings file. Routes and tools call it;
-  the face lists it.
-* **Auto-park** (silence for N minutes parks the master): `engine2.py`, because it watches the
-  meter the engine already has. The threshold is a setting, not a constant.
-* **Better errors** (device held by another app, capture moved): `verdict.py`, so the pane, the
-  status tool and the setup tool all say the same sentence with the same fix.
+These are now built, kept here as the worked examples of the rule:
+
+* **Saved rigs**: `amphead/rigs.py` owns the shape and the file; `engine_main.rig()` lands one;
+  the tool and the routes call the same handlers; the face draws a chip per rig.
+* **Auto-park**: `amphead/park.py` is a pure timer over the input peak, and `engine2.py` acts on
+  it by parking the master and leaving the chain armed. The verdict says `PARKED`, which is a
+  different sentence from `STANDBY` because the fix is different.
+* **Better errors**: `amphead/faults.py` turns the exceptions the loaders actually raise into
+  one sentence with the next step, attached in the engine's dispatch so the tool, the pane and
+  the rig report all get it without knowing the module exists.
 
 ## Tests map the same way
 

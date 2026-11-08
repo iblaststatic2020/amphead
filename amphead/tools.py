@@ -118,7 +118,7 @@ PANIC_SCHEMA = _schema(
 READY_SCHEMA = _schema(
     "amphead_ready",
     "The amp as one answer: a verdict word a player can read (READY, ENGINE OFF, DEVICE CLOSED, "
-    "STANDBY, NO CHAIN, NO SIGNAL, CLIPPING) and the problems behind it. Listens to the meter for "
+    "STANDBY, PARKED, NO CHAIN, NO SIGNAL, CLIPPING) and the problems behind it. Listens to the meter for "
     "settle_ms before deciding, so a quiet moment is not mistaken for a dead input.",
     {"settle_ms": {"type": "integer",
                    "description": "How long to watch the meter (default 600).", "minimum": 0,

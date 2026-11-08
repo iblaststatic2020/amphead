@@ -211,3 +211,33 @@ class LoopTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestABadFileIsExplained(unittest.TestCase):
+    """The engine keeps raising the truth; the answer to the caller carries the next step."""
+
+    def setUp(self):
+        from amphead import engine2, engine_main
+
+        self.server = engine_main.Server(engine2.Engine(samplerate=44100, blocksize=64))
+
+    def test_a_missing_capture_says_where_to_point_the_amp(self):
+        said = self.server.handle({"cmd": "load_capture", "path": "C:/nowhere/lead.nam"})
+        self.assertFalse(said["ok"])
+        self.assertIn("amphead_settings action=find", said["error"])
+
+    def test_a_capture_that_is_not_json_says_so_and_does_not_pretend(self):
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            wrong = Path(tmp) / "note.nam"
+            wrong.write_text("this is a text note, not a capture", encoding="utf-8")
+            said = self.server.handle({"cmd": "load_capture", "path": str(wrong)})
+        self.assertFalse(said["ok"])
+        self.assertIn(".nam capture", said["error"])
+
+    def test_a_missing_cabinet_gets_the_same_kind_of_sentence(self):
+        said = self.server.handle({"cmd": "load_cab", "path": "C:/nowhere/cab.wav"})
+        self.assertFalse(said["ok"])
+        self.assertIn("cabinets", said["error"])

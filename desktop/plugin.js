@@ -39,6 +39,7 @@ const dbWords = (db) => `${db > 0 ? '+' : ''}${Number(db).toFixed(1)} dB`
 const VERDICT_COLOR = {
   READY: 'var(--ui-accent)',
   STANDBY: 'var(--ui-text-quaternary)',
+  PARKED: 'var(--ui-text-quaternary)',
   'NO SIGNAL': 'var(--ui-accent)',
   'NO INPUT': 'var(--ui-accent)',
   'NO CHAIN': 'var(--ui-accent)',
@@ -54,6 +55,7 @@ const VERDICT_COLOR = {
 const CHIP_WORD = {
   READY: 'quiet',
   STANDBY: 'standby',
+  PARKED: 'parked itself',
   'ENGINE OFF': 'engine off',
   'DEVICE CLOSED': 'device closed',
   'DEVICE UNPLUGGED': 'unplugged',

@@ -506,6 +506,7 @@ class AmpHead2Rig:
             "engine": self.name,
             "armed": bool(got.get("armed")),
             "master_db": got.get("master_db"),
+            "parked_by_idle": bool(got.get("parked_by_idle")),
             "device": {
                 "buffer": got.get("blocksize"),
                 "rate": got.get("samplerate"),

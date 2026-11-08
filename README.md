@@ -18,14 +18,20 @@ sit down, say "set up my crunch tone", and Hermes is the amp. Nothing else needs
   knob says.
 - Puts a noise gate in front of the capture, off by default (the bottom of the knob is `off`), with a
   hold and a slow close so a decaying chord fades instead of being chopped.
+- Parks itself. After 15 minutes with nothing above -50 dB on the input, the amp parks its own
+  master and says `PARKED`, rather than listening to an empty room all night. The chain stays
+  armed, so raising the master brings it straight back.
 - Measures its own timing. `TUNE` soaks every block size on the real device, picks the smallest one
   that ran clean, confirms it on a longer pass, and writes it to the settings file.
 - Answers in plain language and reports what it read back: `amphead_ready` says `READY`, `STANDBY`,
-  `NO SIGNAL`, `NO CHAIN`, `CLIPPING`, `DEVICE CLOSED` or `ENGINE OFF`, with the reason.
+  `NO SIGNAL`, `NO CHAIN`, `CLIPPING`, `DEVICE CLOSED`, `PARKED` or `ENGINE OFF`, with the reason.
 - Keeps sounds. A rig is the capture, the cabinet, the three tone knobs, both trims and the gate,
   saved under a name and recalled in one press from the pane. The same rig is also one line of text
   (`amphead:lead | capture=...`), so a sound can be pasted to someone who has the same captures.
   The master is deliberately not part of a rig: loading a sound must never turn the room up.
+- Explains a file it would not load. A capture for the wrong architecture, a moved folder, a wav
+  that is not PCM: the answer keeps the exception and adds the next step, in the same sentence
+  the pane and the agent both show.
 - Has a dead man's switch. `amphead_panic` parks the master, disarms and bypasses every stage, then
   proves the input is still arriving while nothing reaches the speakers.
 

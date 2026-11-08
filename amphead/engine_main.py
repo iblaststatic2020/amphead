@@ -18,6 +18,7 @@ import json
 import sys
 import traceback
 
+from . import faults
 from . import settings
 from . import tune
 from .engine2 import ARM_MASTER_DB, SAFE_MASTER_DB, Engine
@@ -42,6 +43,17 @@ def engine_from_settings(**over) -> Engine:
         output_device=audio.get("output_device"),
         input_channel=max(0, int(audio["input_channel"]) - 1),
     )
+
+
+def _kind_of(verb: str) -> str:
+    """Which kind of file a failing verb was holding, in the words the fixes module uses."""
+    if verb in ("load_capture", "clear_capture"):
+        return faults.CAPTURE
+    if verb in ("load_cab", "clear_cab"):
+        return faults.CAB
+    if verb == "tune":
+        return "tune"
+    return ""
 
 
 class Server:
@@ -78,6 +90,9 @@ class Server:
             "input_channels": self.engine.input_channels,
             "armed": chain.armed,
             "master_db": chain.master_db,
+            # Distinguishes "the player parked it" from "the amp parked itself": the verdict
+            # says which, because the fix is different (raise the master vs press GO LIVE).
+            "parked_by_idle": self.engine.parked_by_idle,
             "input_gain_db": chain.input_gain_db,
             "output_gain_db": chain.output_gain_db,
             "gate_db": chain.gate_db,
@@ -169,7 +184,8 @@ class Server:
                 else:
                     done["cab"] = self.load_cab(found).get("cab", found)
             except Exception as exc:  # a bad file must not take the device down with it
-                done[key] = f"failed: {type(exc).__name__}: {exc}"
+                fix = faults.explain(exc, key, found)
+                done[key] = f"failed: {type(exc).__name__}: {exc}" + (f". {fix}" if fix else "")
         return done
 
     def stop(self) -> dict:
@@ -293,12 +309,14 @@ class Server:
             try:
                 loaded["capture"] = self.load_capture(str(capture))["capture"]
             except Exception as exc:
-                kept.append(f"capture: {exc}")
+                fix = faults.explain(exc, faults.CAPTURE, str(capture))
+                kept.append(f"capture: {exc}" + (f". {fix}" if fix else ""))
         if cab:
             try:
                 loaded["cab"] = self.load_cab(str(cab))["cab"]
             except Exception as exc:
-                kept.append(f"cabinet: {exc}")
+                fix = faults.explain(exc, faults.CAB, str(cab))
+                kept.append(f"cabinet: {exc}" + (f". {fix}" if fix else ""))
         tone_kw = {name: knobs[name] for name in ("bass", "mid", "treble")
                    if knobs.get(name) is not None}
         if tone_kw:
@@ -475,7 +493,9 @@ class Server:
         try:
             return {"ok": True, "result": getattr(self, name)(**kwargs)}
         except Exception as exc:
-            return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+            said = f"{type(exc).__name__}: {exc}"
+            fix = faults.explain(exc, _kind_of(name), str(kwargs.get("path") or ""))
+            return {"ok": False, "error": f"{said}. {fix}" if fix else said}
 
 
 def serve(stdin=None, stdout=None) -> int:

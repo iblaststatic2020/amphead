@@ -25,6 +25,7 @@ NO_INPUT = "NO INPUT"
 NO_CHAIN = "NO CHAIN"
 MUTED = "MUTED"
 STANDBY = "STANDBY"
+PARKED = "PARKED"
 NO_SIGNAL = "NO SIGNAL"
 CLIPPING = "CLIPPING"
 READY = "READY"
@@ -88,6 +89,12 @@ def judge(state: dict, reading: dict, chain: list[dict] | None = None) -> dict[s
                 "reason": f"the engine is open and silent, master {where}: GO LIVE opens the amp "
                           f"with the master wherever the knob is, so it cannot arrive loud",
                 "problems": ["the engine is open but nothing is live"]}
+
+    if state.get("parked_by_idle"):
+        return {"verdict": PARKED,
+                "reason": "the amp parked its own master after a long silence. Raise the master "
+                          "(or press GO LIVE) and it is back where you left it.",
+                "problems": ["the master was parked because nobody played for a while"]}
 
     peak = _peak(reading)
     if clip_of(reading):
