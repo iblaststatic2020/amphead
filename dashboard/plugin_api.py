@@ -347,6 +347,30 @@ def meter() -> dict[str, Any]:
             "clip": bool(reading.get("clip")), "live": True}
 
 
+def _rejoin_stages(rig, track: int = 1) -> list[str]:
+    """Put back any stage SILENCE switched out, so arming never hands back a dead chain.
+
+    Panic is a dead-man's switch: it parks the master and takes all three stages out of the path
+    in the same breath. Bringing the master back up afterwards therefore used to produce a rig
+    that was armed, metering nothing, and called NO CHAIN. Arming is the moment a player asks to
+    hear the chain again, so the stages that silence closed are the stages it re-opens, and the
+    names come back in the answer so nothing about it is silent.
+    """
+    try:
+        chain = rig.fx_list(track=track)
+    except port.RigError:
+        return []
+    back: list[str] = []
+    for fx in chain:
+        if fx.get("enabled") is False:
+            try:
+                rig.fx_bypass(track=track, fx=int(fx["i"]), on=False)
+                back.append(str(fx.get("name") or f"stage {fx.get('i')}"))
+            except port.RigError:
+                continue
+    return back
+
+
 @router.post("/live")
 def live_switch(body: dict) -> dict[str, Any]:
     if demo.enabled():
@@ -360,9 +384,14 @@ def live_switch(body: dict) -> dict[str, Any]:
     # Input 0: the Live button never repoints the track's input. Whatever the player chose in
     # REAPER stays chosen, which is the only default that cannot break a DI or a stereo pair.
     with _speaking_to_tools() as tools:
+        back: list[str] = []
+        if on and getattr(tools.RIG, "name", "") == "amphead2":
+            back = _rejoin_stages(tools.RIG)
         out = tools.handle_live({"on": on, "confirm": True, "master_db": db,
                                  "input": body.get("input", "0")})
-    return {"output": out, "on": on, "ok": not out.startswith("NOT LIVE")}
+    if back:
+        out = f"{out} | re-engaged={', '.join(back)}"
+    return {"output": out, "on": on, "ok": not out.startswith("NOT LIVE"), "reengaged": back}
 
 
 @router.post("/setup")

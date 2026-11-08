@@ -12,7 +12,22 @@ import tempfile
 import unittest
 
 from amphead import bridge, rig
+from amphead import port, tools
 from amphead.fake_reaper import FakeReaper
+
+_PINNED = {}
+
+
+def setUpModule():
+    # This file is about the DAW rig's write-then-read-back contract. The product's default rig is
+    # the local engine, so the rig these cases poke is named here.
+    _PINNED["rig"] = tools.RIG
+    tools.RIG = port.choose("reaper")
+
+
+def tearDownModule():
+    tools.RIG = _PINNED.pop("rig")
+
 
 
 class RigCase(unittest.TestCase):

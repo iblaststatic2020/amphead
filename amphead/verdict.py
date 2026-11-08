@@ -33,6 +33,12 @@ NO_SIGNAL = "NO SIGNAL"
 CLIPPING = "CLIPPING"
 READY = "READY"
 
+# Words only a hosted DAW rig can raise: it has a process to lose, a bridge to drop, a tab to
+# close. The local engine has none of those, so its face does not carry colours for them. The
+# judge still speaks them when someone opts into `port.choose("reaper")`.
+DAW_ONLY = frozenset({REAPER_NOT_RUNNING, REAPER_BUSY, NO_REAPER_INSTALL, BRIDGE_GONE,
+                      TWO_REAPER, RIG_TAB_CLOSED})
+
 
 def _device(state: dict) -> dict:
     device = state.get("device") or {}

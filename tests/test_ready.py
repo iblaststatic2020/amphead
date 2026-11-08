@@ -9,6 +9,19 @@ from unittest import mock
 from amphead import port, tools, verdict
 from amphead.fake_reaper import FakeReaper
 
+_PINNED = {}
+
+
+def setUpModule():
+    # The DAW rig is what these verdicts are about; the product defaults to the local engine now.
+    _PINNED["rig"] = tools.RIG
+    tools.RIG = port.choose("reaper")
+
+
+def tearDownModule():
+    tools.RIG = _PINNED.pop("rig")
+
+
 
 def live(bridge_state="live", out_ms=11.6, closed=False):
     return {"bridge": bridge_state, "reason": "no answer",

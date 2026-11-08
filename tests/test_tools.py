@@ -16,6 +16,20 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from amphead import bridge, launch, port, tools  # noqa: E402
 
+_PINNED = {}
+
+
+def setUpModule():
+    # These cases are about the DAW rig: the product now defaults to the local engine, so the
+    # rig under test is named here rather than inherited from the environment.
+    _PINNED["rig"] = tools.RIG
+    tools.RIG = port.choose("reaper")
+
+
+def tearDownModule():
+    tools.RIG = _PINNED.pop("rig")
+
+
 
 class TestCheckFn(unittest.TestCase):
     def test_true_when_reaper_is_installed(self):

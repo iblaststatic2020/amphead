@@ -130,8 +130,13 @@ _cache: dict[str, Rig] = {}
 
 
 def choose(name: str | None = None) -> Rig:
-    """The rig called ``name``, or the one ``AMPHEAD_ENGINE`` names."""
-    key = (name or os.environ.get("AMPHEAD_ENGINE") or "reaper").strip().lower()
+    """The rig called ``name``, or the one ``AMPHEAD_ENGINE`` names.
+
+    The local engine is the default. It is the product: no host application to install, no
+    project to open, no bridge to keep in step. REAPER is still here for anyone who wants the
+    DAW rig, but they have to ask for it by name.
+    """
+    key = (name or os.environ.get("AMPHEAD_ENGINE") or "amphead2").strip().lower()
     if key not in _cache:
         _cache[key] = _build(key)
     return _cache[key]

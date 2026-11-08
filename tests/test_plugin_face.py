@@ -1,288 +1,176 @@
-"""The face and the verdicts have to agree.
+"""The face is the product now: one engine, real knobs, and words the backend actually says.
 
-A verdict word is only useful if the pane can colour it, and a face that quietly falls back to cream
-for a broken rig is worse than one that says nothing at all. This walks the words verdict.py can
-produce and checks each one has an entry in the pane's table, so adding a state cannot ship
-half-done.
+These tests read the shipped `desktop/plugin.js` as text. They are not a renderer; they pin the
+promises that would otherwise rot silently: that the face asks only for routes the dashboard
+serves, that every one of those asks names the engine it means, that a player who has no amp
+running is offered a SET UP they can see, that the tone is three knobs and two files, and that
+every colour comes from the app's theme tokens instead of a hardcoded chassis.
 """
 
 import re
+import sys
 import unittest
 from pathlib import Path
 
-from amphead import verdict as verdicts
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
 
-PLUGIN = Path(__file__).resolve().parent.parent / "desktop" / "plugin.js"
+from amphead import verdict as verdicts  # noqa: E402
 
-
-# The file carries two faces now: the one that shipped (vendored verbatim under this marker, so the
-# original plugin is still on screen) and the rebuild above it. The tests below are about the
-# rebuild, so they read only up to the marker and cannot be satisfied by the old copy.
-LEGACY_MARKER = "// ---- the original face"
+PLUGIN = ROOT / "desktop" / "plugin.js"
 
 
-def face_source() -> str:
-    source = PLUGIN.read_text(encoding="utf-8")
-    return source.split(LEGACY_MARKER)[0]
-
-
-def legacy_source() -> str:
-    source = PLUGIN.read_text(encoding="utf-8")
-    return source.split(LEGACY_MARKER, 1)[1]
+def face() -> str:
+    return PLUGIN.read_text(encoding="utf-8")
 
 
 def verdict_table(source: str) -> str:
-    """The VERDICT_COLOR object literal, from its name to the closing brace."""
     start = source.index("const VERDICT_COLOR = {")
     end = source.index("}", start)
     return source[start:end]
 
 
+def served_paths() -> set[str]:
+    """Read the routes out of the dashboard source.
+
+    Loading `dashboard.plugin_api` would drag the whole app in, and another test module in this
+    suite has already replaced its router object by the time this runs. The decorators are the
+    contract, so read the contract.
+    """
+    source = (ROOT / "dashboard" / "plugin_api.py").read_text(encoding="utf-8")
+    return set(re.findall(r"@router\.(?:get|post|put|delete)\(\s*['\"](/[^'\"]*)['\"]", source))
+
+
+def asked_paths(source: str) -> set[str]:
+    """Every path the face asks for, whether through `act(...)` or a `rest(...)` query."""
+    found = set(re.findall(r"act\(\s*['\"]([^'\"]+)['\"]", source))
+    found |= set(re.findall(r"rest\(\s*['\"]([^'\"?]+)", source))
+    return {path.split("?")[0] for path in found}
+
+
 class TestFaceMatchesVerdicts(unittest.TestCase):
-    def test_every_verdict_word_has_a_colour(self):
-        table = verdict_table(face_source())
+    def test_every_word_the_engine_can_say_has_a_colour(self):
+        """A verdict the face cannot paint is a verdict the player cannot read."""
+        table = verdict_table(face())
         words = [
             value
             for name, value in vars(verdicts).items()
             if name.isupper() and isinstance(value, str) and value == value.upper()
         ]
         self.assertGreater(len(words), 10, "verdict.py stopped exporting its words")
-        # Keys may be quoted or bare, since words like READY are valid identifiers and others are not.
-        missing = [word for word in words if not re.search(rf"^\s*['\"]?{re.escape(word)}['\"]?:", table, re.M)]
+        missing = [
+            word for word in words
+            if word not in verdicts.DAW_ONLY
+            and not re.search(rf"^\s*['\"]?{re.escape(word)}['\"]?:", table, re.M)
+        ]
         self.assertEqual([], missing, f"the face has no colour for: {missing}")
 
-    def test_a_stepped_knob_snaps_to_its_stops(self):
-        """A knob with a few places to be snaps to the nearest stop, a tap steps to the next, and
-        no drag can leave one at 0.47."""
-        source = face_source()
-        knob = source[source.index("function Knob("):source.index("function Switch(")]
-        self.assertNotIn("isBool", knob, "a two-position parameter is a switch, not a knob")
-        self.assertIn("Math.round(value * (steps - 1)) / (steps - 1)", knob, "the turn must snap")
-        self.assertIn("if (steps > 1 && !moved.current)", knob, "a tap has to step it")
-        self.assertIn("move(nextStop(), true)", knob, "the tap and the Enter key share one stop")
-
-    def test_a_two_position_parameter_is_a_switch(self):
-        """Healthier to read than to turn: a switch shows its state without being touched, so the
-        cap sits at one end, it moves under the finger before the write, and a refused write puts
-        it back instead of leaving a lie on the panel."""
-        source = face_source()
-        switch = source[source.index("function Switch("):source.index("function KnobGrid(")]
-        self.assertIn("role: 'switch'", switch)
-        self.assertIn("'aria-checked': on", switch)
-        self.assertIn("const next = before ? 0 : 1", switch)
-        self.assertIn("setOn(next === 1)", switch, "the lever moves before REAPER answers")
-        self.assertIn("setOn(before)", switch, "a refusal has to put the cap back")
-        self.assertIn("top: on ? 4 : 26", switch, "the cap has to sit at one end or the other")
-        # The grid picks the control by what the parameter is, not by how it was drawn before.
-        self.assertIn("k.bool === true", source)
-        self.assertIn("? jsx(Switch, { knob: k, busy, onTurn }", source)
-
-    def test_the_socket_is_a_switch_at_two_sockets_and_a_knob_beyond(self):
-        """His interface has two sockets, so the socket control is a two-position switch; a
-        three-input interface would get the stepping knob instead."""
-        source = face_source()
-        self.assertIn("socket.count === 2", source)
-        self.assertIn("? jsx(Switch, { knob: socketKnob, busy, onTurn: turnInput })", source)
-        self.assertIn(": jsx(Knob, { knob: socketKnob, busy, size: 'lg', onTurn: turnInput })", source)
-
-    def test_the_input_socket_says_it_is_not_a_track_number(self):
-        """The pane offers the socket, in the interface's own name, and says in place that a track
-        number and an input number are different numbers."""
-        source = face_source()
-        self.assertIn("const socketKnob = socket.count > 0", source)
-        self.assertIn("steps: socket.count", source, "the socket knob needs one stop per socket")
-        self.assertIn("const number = Math.max(1, Math.min(count, Math.round(value * (count - 1)) + 1))", source)
-        self.assertIn("not the track number", source, "the caption has to say what the knob is not")
-        self.assertIn("`track ${socket.track || 1} records from", source)
-
-    def test_the_face_stays_reachable(self):
-        """Four doors, one face: the route, the sidebar row, the command, the pane, the chip."""
-        source = face_source()
-        for marker in ("ROUTES_AREA", "SIDEBAR_NAV_AREA", "PALETTE_AREA", "area: 'panes'", "'statusBar.right'"):
-            self.assertIn(marker, source, f"the face lost its {marker}")
-
-    def test_the_chip_speaks_words_when_there_is_no_rig(self):
-        """-60 dB with REAPER closed reads as a quiet rig, not as no rig, so words carry it."""
-        source = face_source()
-        chip = source[source.index("id: 'amp2-chip'"):]
-        self.assertIn("const live = !!(meter.data && meter.data.live)", chip)
-        self.assertIn("CHIP_WORD[verdict]", chip)
-        # The dB number sits behind the live check however the ternary is nested, and the demo
-        # comes first because a canned rig's level is not a measurement of this machine.
-        self.assertIn("dB`", chip)
-        self.assertLess(chip.index("const live"), chip.index("dB`"),
-                        "the dB number must sit behind the live check, never print unconditionally")
-        self.assertLess(chip.index("state.data.demo"), chip.index("dB`"),
-                        "the demo has to claim the chip before a level does")
-        self.assertLess(chip.index("const text"), chip.index("dB`"))
-
-    def test_the_meter_panel_says_words_when_no_rig_is_answering(self):
-        """The chip got this right first; the panel beside it still printed -60.0 dB with no rig.
-
-        A number is a claim that something was measured. With the amp closed the meter reads zero,
-        and "-60.0 dB" reads as a quiet rig rather than no rig, which is the exact doubt the chip
-        was changed to remove. Both faces are held to it, because the surface they draw is the same
-        surface whether or not the copy above them is the one that ships.
-        """
-        for name, source in (("shipped", face_source()), ("original", legacy_source())):
-            panel = source[source.index("function Meter("):]
-            panel = panel[:panel.index("\n}\n")]
-            self.assertIn("function Meter({ peak, clip, live })", panel, name)
-            self.assertIn("const hot = !!clip && live", panel,
-                          f"{name}: the clip lamp must not light on a meter that measured nothing")
-            # The number sits behind the live check however the ternary is laid out, and the
-            # words are the fallback, never the other way round.
-            self.assertIn("db.toFixed(1)} dB", panel, name)
-            self.assertLess(panel.index("live ?"), panel.index("db.toFixed(1)} dB"), name)
-            # The words say what the missing number means. They do not repeat the verdict above:
-            # the pane already says STANDBY twice, and a third copy in the meter is clutter.
-            self.assertIn("'not measuring'", panel, name)
-            self.assertGreater(panel.index("'not measuring'"), panel.index("db.toFixed(1)} dB"), name)
-            self.assertEqual(source.count("jsx(Meter, { peak, clip, live }),"), 1,
-                             f"{name}: the meter panel is drawn once, and it must be told whether "
-                             f"a rig is answering")
-
-    def test_every_verdict_word_has_a_chip_word(self):
-        source = face_source()
-        start = source.index("const CHIP_WORD = {")
-        table = source[start:source.index("}", start)]
-        words = [
-            value
-            for name, value in vars(verdicts).items()
-            if name.isupper() and isinstance(value, str) and value == value.upper()
-        ]
-        missing = [w for w in words if not re.search(rf"^\s*['\"]?{re.escape(w)}['\"]?:", table, re.M)]
-        self.assertEqual([], missing, f"the chip has no word for: {missing}")
-
-    def test_the_amp_and_host_knob_sets_stay_apart(self):
-        """The amp's knobs and the host's knobs collide by name, so the split must stay explicit."""
-        source = face_source()
-        self.assertIn("const isAmpKnob = (name) => /^amplifier\\s/i.test(name || '')", source)
-        # The split now comes from the backend's `section`, read off the plugin's own parameter
-        # names, so the pane groups knobs the way the VST draws them.
-        self.assertIn("function groups(knobs, plugin)", source)
-        self.assertIn("pick('pedal')", source)
-
-    def test_the_pane_names_the_plugin_it_is_showing(self):
-        """A knob set is only checkable against a VST if the pane says which VST it is."""
-        source = face_source()
-        self.assertIn("const plugin = s.plugin || {}", source)
-        self.assertIn("`the model in ${named}`", source)
-
-class TestTheKnobKeepsUp(unittest.TestCase):
-    """A knob has to stay where it was put, and say where that is in the plugin's own units."""
-
-    def knob_source(self) -> str:
-        source = face_source()
-        start = source.index("function Knob({ knob, busy, onTurn, size }) {")
-        return source[start:source.index("function KnobGrid(", start)]
-
-    def test_the_reading_is_the_plugins_number_not_a_word(self):
-        block = self.knob_source()
-        self.assertNotIn("'turning'", block,
-                         "the pane must keep showing the plugin's reading while a finger is down")
-        self.assertIn("children: shown", block)
-
-    def test_the_poll_cannot_yank_the_knob_back(self):
-        """The sticky feel was the 1.5 s state poll overwriting the finger, mid-gesture."""
-        block = self.knob_source()
-        self.assertIn("if (dragging || Date.now() < settled.current) return", block)
-        self.assertIn("settled.current = Date.now() + 1500", block)
-
-    def test_a_turn_does_not_lock_the_face(self):
-        """A knob turn must not go through `act`, which sets busy and refetches everything."""
-        source = face_source()
-        self.assertIn("onTurn: turnKnob", source)
-        self.assertNotIn("act('/tweak'", source, "the knob still posts through the chat-shaped route")
-        self.assertIn("rest('/knob'", source)
-        start = source.index("async function turnKnob(")
-        end = source.index("async function act(", start)
-        self.assertNotIn("setBusy(true)", source[start:end])
-
-    def test_shift_is_a_finer_turn_and_steps_stay_relative(self):
-        block = self.knob_source()
-        self.assertIn("event.shiftKey ? TRAVEL * 5 : TRAVEL", block,
-                      "shift must travel five times further for the same movement")
-        self.assertIn("const dy = finger.current - event.clientY", block,
-                      "steps must come from the pixel delta, or shift mid-drag teleports the knob")
-
-    def test_one_write_at_a_time_with_the_newest_position_winning(self):
-        block = self.knob_source()
-        self.assertIn("if (order.busy) {", block)
-        self.assertIn("order.queued = { next, final }", block)
+    def test_the_daws_own_words_are_not_on_an_engine_face(self):
+        table = verdict_table(face())
+        for word in verdicts.DAW_ONLY:
+            self.assertNotIn(word, table, f"the face still paints {word}")
 
 
-class TestTheDemoIsReachable(unittest.TestCase):
-    """A visitor with no DAW must be able to see the plugin work, from inside the pane."""
+class TestTheFaceAsksTheBackend(unittest.TestCase):
+    def test_every_path_the_face_asks_for_is_a_route_that_exists(self):
+        served = served_paths()
+        missing = sorted(path for path in asked_paths(face()) if path not in served)
+        self.assertEqual([], missing, f"the face asks for routes the dashboard does not serve: {missing}")
 
-    def test_the_face_offers_the_demo_on_a_dead_rig(self):
-        source = face_source()
-        offered = re.search(r"const DEMO_OFFER = new Set\(\[(.*?)\]\)", source, re.S)
-        self.assertIsNotNone(offered, "the face has no list of verdicts that offer the demo")
-        words = offered.group(1)
-        for word in ("REAPER NOT RUNNING", "NO REAPER INSTALL", "BRIDGE GONE", "RIG TAB CLOSED"):
-            self.assertIn(word, words, f"{word} does not offer the demo")
-        self.assertIn("DemoRow", source)
-        self.assertIn("'see it work'", source)
-
-    def test_the_demo_says_out_loud_that_it_is_not_the_players_rig(self):
-        source = face_source()
-        self.assertIn("demo rig, not your hardware", source.lower())
-        self.assertIn("'leave demo'", source)
-
-    def test_the_demo_switch_is_a_route_the_face_calls(self):
-        self.assertIn("act('/demo', { on: !s.demo })", face_source())
-        api = (PLUGIN.parent.parent / "dashboard" / "plugin_api.py").read_text(encoding="utf-8")
-        self.assertIn('@router.post("/demo")', api)
-        self.assertIn("demo.set_enabled", api)
-
-    def test_the_chip_says_demo_rather_than_a_level_it_did_not_measure(self):
-        source = face_source()
-        self.assertIn("state.data.demo", source)
-        self.assertIn("? 'demo'", source)
-
-
-class TestTheOriginalFaceIsStillThere(unittest.TestCase):
-    """The rebuild is additive. The face that shipped stays in the file, on /amp, on the REAPER rig,
-    so a user who liked the old pane keeps it and the two are side by side instead of one replacing
-    the other."""
-
-    def test_both_faces_pay_the_same_meter_cadence(self):
-        """One policy, both panes: hidden stops it, STANDBY is 400 ms, live is 150 ms.
-
-        The reason is a cost, not a look: every meter poll is a file round trip into REAPER, so a
-        face that polls at 150 ms while nobody is looking is the plugin spending a host call for
-        nothing. The shipped face is vendored, but not in this: it reads the same helper.
-        """
-        for source in (face_source(), legacy_source()):
-            with self.subTest(source=source[:40]):
-                self.assertNotIn("refetchInterval: 150 }", source, "a bare 150 ms poll is back")
-                self.assertIn("meterEvery(", source, "the cadence helper is not used")
-                self.assertIn("useOnScreen(", source, "the pane does not know it is hidden")
-        combined = PLUGIN.read_text(encoding="utf-8")
-        self.assertIn("visibilitychange", combined)
-        self.assertIn("METER_IDLE_MS = 400", combined)
-        self.assertIn("METER_MS = 150", combined)
-
-    def test_the_shipped_face_is_vendored_whole(self):
-        legacy = legacy_source()
-        self.assertIn("function AmpFace(", legacy)
-        self.assertIn("function Knob(", legacy)
-        self.assertIn("const plugin = {", legacy)
-
-    def test_it_keeps_its_own_route_and_nav_row(self):
-        legacy = legacy_source()
-        self.assertIn("data: { path: '/amp' }", legacy)
-        self.assertIn("label: 'Amp', path: '/amp'", legacy)
-
-    def test_the_rebuild_moved_to_its_own_route(self):
-        source = face_source()
-        self.assertIn("data: { path: '/amp2' }", source)
-        self.assertIn("label: 'Amp 2', path: '/amp2'", source)
-        self.assertNotIn("data: { path: '/amp' }", source, "the rebuild must not take the old route")
-
-    def test_each_face_names_its_own_backend(self):
-        source = face_source()
-        self.assertIn("LegacyPlugin.register(engineContext(ctx, 'reaper'", source)
+    def test_every_request_names_the_engine_it_means(self):
+        """`?engine=` is read per request, so the face must never lean on the process default."""
+        source = face()
+        self.assertIn("engine=${engine}", source)
         self.assertIn("engineContext(ctx, 'amphead2')", source)
-        self.assertIn("engine=", source, "the engine has to ride on every route the face calls")
+
+    def test_the_engine_is_the_only_backend_on_screen(self):
+        source = face()
+        self.assertNotIn("REAPER", source.upper(), "the face still talks about the DAW")
+        self.assertEqual(1, len(re.findall(r"^\s*id: 'amphead',", source, re.M)), "one plugin, one id")
+
+    def test_a_failure_caused_by_yesterdays_gateway_says_so(self):
+        """The 404 that cost an evening: the face must name the cause instead of going quiet."""
+        self.assertIn("this face is newer than the gateway: restart Hermes once to load the new routes", face())
+
+
+class TestSetupIsVisible(unittest.TestCase):
+    def test_the_button_reads_set_up_before_the_engine_runs(self):
+        source = face()
+        power = source[source.index("function PowerButton("):source.index("function AmpFace(")]
+        self.assertIn("setup: { text: 'SET UP'", power)
+        self.assertIn("standby: { text: 'GO LIVE'", power)
+        self.assertIn("onSetup: () => act('/setup', {})", source)
+
+    def test_an_unanswered_state_leaves_the_face_offering_set_up(self):
+        """The press a player cannot find must be the press they get when nothing answers.
+
+        `s.running !== false` treated a missing state as a running engine, so a failed route drew
+        `GO LIVE` over an engine that was never opened: the one control on the face did nothing and
+        nothing on the face said why.
+        """
+        self.assertIn("const running = s.running === true", face())
+        self.assertNotIn("s.running !== false", face())
+
+    def test_the_face_says_how_to_start_when_the_engine_is_off(self):
+        self.assertIn("press SET UP to open the engine", face())
+
+
+class TestToneIsThreeKnobs(unittest.TestCase):
+    def setUp(self):
+        self.source = face()
+
+    def test_the_knobs_are_bass_mid_and_treble(self):
+        self.assertIn("const TONE_NAMES = ['bass', 'mid', 'treble']", self.source)
+
+    def test_a_turn_names_the_tone_stage_and_the_track(self):
+        turn = self.source[self.source.index("async function turnKnob("):]
+        turn = turn[:turn.index("\n  }")]
+        self.assertIn("param: index", turn)
+        self.assertIn("fx: 1", turn, "the engine's tone stack is the first stage")
+        self.assertIn("track: 1", turn)
+        self.assertIn("mode: 'norm'", turn)
+
+    def test_the_knob_degrades_into_a_slider_a_keyboard_can_drive(self):
+        knob = self.source[self.source.index("function ChickenKnob("):self.source.index("function Plate(")]
+        for bit in ("role: 'slider'", "tabIndex: 0", "onKeyDown", "'aria-valuenow'", "'aria-valuetext'"):
+            self.assertIn(bit, knob, f"the knob is missing {bit}")
+
+    def test_the_knob_follows_the_engine_but_not_under_a_finger(self):
+        knob = self.source[self.source.index("function ChickenKnob("):self.source.index("function Plate(")]
+        self.assertIn("if (dragging || Date.now() < settled.current) return", knob)
+
+    def test_the_master_has_the_engines_headroom_not_a_daws_zero(self):
+        self.assertIn("const MASTER_HIGH = 12", self.source)
+        self.assertIn("const MASTER_LOW = -60", self.source)
+
+    def test_the_tone_is_named_and_the_two_files_are_shown(self):
+        self.assertIn("s.tone_name", self.source)
+        for label in ("'amp · capture'", "'cabinet · impulse'"):
+            self.assertIn(label, self.source)
+
+    def test_choosing_a_file_posts_the_path(self):
+        self.assertIn("await act('/capture', { path })", self.source)
+        self.assertIn("await act('/cab', { path })", self.source)
+
+    def test_panic_is_on_the_face(self):
+        self.assertIn("act('/panic', {})", self.source)
+
+
+class TestTheChassisWearsTheTheme(unittest.TestCase):
+    """A real amp head, but one that belongs in whatever theme the app is wearing."""
+
+    def test_no_colour_is_hardcoded_except_the_warning_red_and_its_ink(self):
+        """Red is the one colour a theme cannot supply: a clip lamp and the switch that stops it.
+        Everything else is a token, so a light theme gets a pale amp and a dark one a dark amp."""
+        literals = set(re.findall(r"#[0-9a-fA-F]{3,8}\b", face()))
+        self.assertEqual({"#e5533d", "#fff"}, literals, f"hardcoded colours: {sorted(literals)}")
+
+    def test_the_panels_and_ink_come_from_app_tokens(self):
+        source = face()
+        self.assertGreaterEqual(source.count("var(--ui-"), 30, "the face stopped using theme tokens")
+        for token in ("var(--ui-bg-primary)", "var(--ui-bg-secondary)", "var(--ui-text-primary)",
+                      "var(--ui-stroke-primary)", "var(--ui-accent)"):
+            self.assertIn(token, source)
+
+    def test_the_face_does_not_paint_its_own_background(self):
+        self.assertNotRegex(face(), r"background(Color)?:\s*'(white|black|#[0-9a-fA-F]{6})'")

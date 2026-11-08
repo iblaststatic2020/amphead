@@ -62,6 +62,13 @@ class FakeHost:
 
 
 class PanicCase(unittest.TestCase):
+    def setUp(self):
+        # These cases are about the DAW rig's dead-man switch. The product now defaults to the
+        # local engine, so the rig under test is named here instead of inherited.
+        held = tools.RIG
+        tools.RIG = port.choose("reaper")
+        self.addCleanup(setattr, tools, "RIG", held)
+
     def run_panic(self, host, args=None):
         patches = [
             mock.patch.object(tools, "active_path", return_value="C:/rig/amphead.rpp"),

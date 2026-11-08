@@ -70,14 +70,22 @@ RIG_PATH = "C:/Users/Chris/Music/rig.rpp"
 _demo_off = None
 
 
+_pinned = {}
+
+
 def setUpModule():
     global _demo_off
     _demo_off = mock.patch.object(API.demo, "enabled", return_value=False)
     _demo_off.start()
+    # The product's default rig is the local engine. These cases are about the DAW rig's route
+    # answers, so the rig is named here; engine cases name theirs per request.
+    _pinned["rig"] = API.RIG
+    API.RIG = API.port.choose("reaper")
 
 
 def tearDownModule():
     _demo_off.stop()
+    API.RIG = _pinned.pop("rig")
 
 
 
@@ -678,6 +686,61 @@ class TestTheSecondFaceWritesToItsOwnRig(unittest.TestCase):
         with mock.patch.object(self.tools, "handle_setup", lambda args, **kw: "NOT STARTED: no audio device"):
             out = ROUTER.routes[("POST", "/setup")]({})
         self.assertFalse(out["ok"])
+
+
+class TestSilenceHasAWayBack(unittest.TestCase):
+    """SILENCE parks the master and takes all three stages out of the path.
+
+    Coming back up afterwards used to arm a rig whose chain was already switched off: the face
+    said armed, the meter said nothing, and the verdict said NO CHAIN. Arming now re-engages the
+    stages silence closed, and names them in the answer.
+    """
+
+    def test_arming_switches_the_closed_stages_back_in(self):
+        rig = mock.Mock()
+        rig.fx_list.return_value = [
+            {"i": 0, "name": "Capture", "enabled": False},
+            {"i": 1, "name": "Tone", "enabled": False},
+            {"i": 2, "name": "Cabinet", "enabled": False},
+        ]
+        back = API._rejoin_stages(rig)
+        self.assertEqual(["Capture", "Tone", "Cabinet"], back)
+        self.assertEqual([False, False, False],
+                         [call.kwargs["on"] for call in rig.fx_bypass.call_args_list],
+                         "on=False is bypass-off, which is the way back in")
+
+    def test_a_stage_that_is_already_in_is_left_alone(self):
+        rig = mock.Mock()
+        rig.fx_list.return_value = [
+            {"i": 0, "name": "Capture", "enabled": True},
+            {"i": 1, "name": "Tone", "enabled": False},
+        ]
+        self.assertEqual(["Tone"], API._rejoin_stages(rig))
+        self.assertEqual(1, rig.fx_bypass.call_count)
+
+    def test_a_rig_that_cannot_answer_is_not_a_crash(self):
+        rig = mock.Mock()
+        rig.fx_list.side_effect = API.port.RigError("gone")
+        self.assertEqual([], API._rejoin_stages(rig))
+
+    def test_the_live_route_rejoins_only_for_the_local_engine(self):
+        engine = mock.Mock(name="engine")
+        engine.name = "amphead2"
+        seen = {}
+
+        def fake_rejoin(rig, track=1):
+            seen["rig"] = rig
+            return ["Tone"]
+
+        with mock.patch.object(API.port, "choose", lambda name=None: engine), \
+             mock.patch.object(API, "_rejoin_stages", fake_rejoin), \
+             mock.patch("amphead.tools.handle_live", lambda args, **kw: "live=True | armed=True"), \
+             mock.patch("amphead.tools.active_path", return_value="AmpHead 2"):
+            API._ENGINE.set("amphead2")
+            out = LIVE({"on": True, "master_db": -6})
+        self.assertIs(seen["rig"], engine)
+        self.assertEqual(["Tone"], out["reengaged"])
+        self.assertIn("re-engaged=Tone", out["output"])
 
 
 class TestRoutesStayOffTheEventLoop(unittest.TestCase):
