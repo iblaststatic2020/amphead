@@ -245,13 +245,18 @@ def handle_setup(args: dict[str, Any], **_kw) -> str:
         return f"SETUP PARTLY DONE: engine open, but the master could not be parked ({exc})"
 
     now = RIG.state()
+    device = now.get("device") or {}
+    # SET UP opens the engine but does not take the interface: GO LIVE does. Reporting a 0.0 ms
+    # round trip here would be a number for a stream nobody opened.
+    opened = not device.get("closed")
     return _fmt([
-        ("state", "STANDBY"),
+        ("state", "STANDBY" if opened else "STANDBY (device not open yet)"),
         ("engine", "open"),
-        ("device", (now.get("device") or {}).get("name") or "engine chosen"),
-        ("rate", (now.get("device") or {}).get("rate")),
-        ("buffer", (now.get("device") or {}).get("buffer")),
-        ("round_trip_ms", round(float(now.get("latency_ms") or 0.0), 1)),
+        ("device", device.get("name") or ("not opened yet, GO LIVE takes it" if not opened
+                                          else "engine chosen")),
+        ("rate", device.get("rate") if opened else None),
+        ("buffer", device.get("buffer") if opened else None),
+        ("round_trip_ms", round(float(now.get("latency_ms") or 0.0), 1) if opened else None),
         ("master_db", parked),
         ("armed", bool(now.get("armed"))),
         ("capture", now.get("capture") or "none"),
