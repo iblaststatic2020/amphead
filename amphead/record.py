@@ -212,6 +212,10 @@ class Take:
         said = {"recording": recording,
                 "path": str(self.path),
                 "name": self.path.name,
+                # What the file is, not just that it exists: a take at the device rate in stereo
+                # is a different thing from a mono file at another rate.
+                "samplerate": self.samplerate,
+                "channels": self.channels,
                 "seconds": round(frames / float(self.samplerate), 2) if self.samplerate else 0.0,
                 "peak_db": None if peak <= 0.0 else round(_db(peak), 1),
                 "dropped": dropped}

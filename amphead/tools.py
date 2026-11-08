@@ -899,12 +899,14 @@ def handle_record(args: dict[str, Any], **_kw) -> str:
             seconds = float(said.get("seconds") or 0.0)
             if seconds <= 0.0:
                 return f"SAVED: an empty take went to {said.get('path')}"
-            return _fmt([("saved", f"{seconds:.0f}s"), ("path", said.get("path")),
+            return _fmt([("saved", f"{seconds:.1f}s"), ("path", said.get("path")),
                          ("peak", f"{said.get('peak_db')} dB"),
                          ("dropped", said.get("dropped"))])
         said = RIG.start_take(path=args.get("path") or None, name=args.get("name") or None)
+        rate = said.get("samplerate")
         return _fmt([("recording", "yes"), ("path", said.get("path")),
-                     ("rate", f"{said.get('samplerate')} Hz")])
+                     ("rate", f"{rate} Hz" if rate else "rate not reported by the engine"),
+                     ("channels", said.get("channels") or "not reported")])
     except (port.NoRig, port.RigError) as exc:
         return f"NOT RECORDED: {exc}"
     except ValueError as exc:

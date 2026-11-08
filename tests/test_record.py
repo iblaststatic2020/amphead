@@ -252,3 +252,19 @@ class TestTheNewestTakeOnDisk(unittest.TestCase):
         said = server.handle({"cmd": "record_state"})["result"]
         self.assertEqual(Path(said["path"]), path)
         self.assertFalse(said["recording"])
+
+
+class The_take_says_what_it_is(unittest.TestCase):
+    """The start answer is what a player reads before playing: it has to name the format."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.path = Path(self.tmp.name) / "take.wav"
+
+    def test_state_reports_the_rate_and_channels(self):
+        take = Take(self.path, 44100).open()
+        said = take.state()
+        take.stop()
+        self.assertEqual(said["samplerate"], 44100)
+        self.assertEqual(said["channels"], 2)
