@@ -3,15 +3,18 @@ repo: https://github.com/iblaststatic2020/amphead
 sha: a7b2f879bb8d7de0df82f93debb72ca79fcaa019
 title: AmpHead
 description: >-
-  Turns Hermes into a guitar amp. It starts its own low-latency audio engine (one duplex stream on
-  the interface, 256-frame blocks, about 16 ms round trip on a kernel-streaming driver), loads a NAM
-  capture and a cabinet IR, and gives you the knobs a head has: bass, mid, treble, input gain,
-  output gain and master. It parks the master at -60 dB and stays in standby until you flip the Live
-  switch, arms at a measured -6 dB, keeps a sound as a named rig (capture, cabinet, tone, trims and
-  gate, never the master) that recalls in one press or travels as one line of text, and answers READY / STANDBY / NO SIGNAL / NO CHAIN / CLIPPING /
-  DEVICE CLOSED with the reason in a sentence. A desktop pane is drawn as an amp head: the tone named
-  from the two files on the chain, a metre, the file pickers, and a dead man's switch that parks the
-  master, disarms and bypasses every stage while proving the input is still arriving.
+  Turns Hermes into a guitar amp head. It starts its own low-latency audio engine (one duplex
+  stream on the interface, 256-frame blocks, about 16 ms round trip on a kernel-streaming
+  driver), loads a captured tube amp (a .nam file made with Neural Amp Modeler) and a cabinet
+  impulse, and gives you the knobs a head has: bass, mid, treble, input gain, output gain and
+  master. It parks the master at -60 dB and stays in standby until you flip the Live switch,
+  arms at a measured -6 dB, keeps a sound as a named rig (capture, cabinet, tone, trims and
+  gate, never the master) that recalls in one press or travels as one line of text, and answers
+  READY / STANDBY / PARKED / NO SIGNAL / NO CHAIN / CLIPPING / DEVICE CLOSED with the reason in a
+  sentence, including the next step when a file it was handed will not load. A desktop pane is
+  drawn as an amp head: the tone named from the two files on the chain, a metre, the file
+  pickers, and a dead man's switch that parks the master, disarms and bypasses every stage while
+  proving the input is still arriving.
 
   AmpHead runs one Python process of its own, the engine, spawned with a `python` that can import numpy and sounddevice: `.engine` beside the plugin if it is there, else `AMPHEAD_ENGINE_PYTHON` or the `engine_python` setting. The plugin never installs anything; `scripts/engine_env.ps1` builds that interpreter once with uv and pip, downloading exactly two pinned wheels (numpy 2.4.6, sounddevice 0.5.6) from PyPI, and that script is the only network access in this project. The engine opens the audio interface (exclusive kernel streaming on Windows, CoreAudio on macOS, ALSA on Linux) and keeps it open while the amp is on. It reads `.nam` captures and `.wav` cabinets from the folders named in a settings file (`%APPDATA%\amphead\settings.json` and the macOS/Linux equivalents), and writes that file only when you or your agent call `amphead_settings action=set`. `action="find"` walks Documents, Downloads, Desktop, Music and the cloud folders inside them, four levels deep, reading file names only. It remembers the last capture and cabinet in `~/.amphead2.json`. Once running it makes no network calls, sends no telemetry, stores no credentials, and does not launch, steer or read any other application: there is no other application. `amphead_aim` reads the same file names, nothing else: no audio is opened unless you pass `action="measure"`, which reads the two wav files you name and writes nothing. It stores one line of its own answer in `~/.amphead2.json` so the face can show what was last asked for.
 maintainer: iblaststatic2020

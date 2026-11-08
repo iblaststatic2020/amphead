@@ -9,7 +9,7 @@ sit down, say "set up my crunch tone", and Hermes is the amp. Nothing else needs
 - Starts a low-latency audio engine of its own: one duplex stream on the interface, 256-frame blocks,
   44.1 kHz, about 16 ms round trip on the kernel-streaming driver this was measured against (10 ms of
   driver buffer plus the 5.8 ms block the callback fills).
-- Loads a NAM capture (a real amp, captured) and a cabinet IR (a real speaker, measured), with the IR
+- Loads a capture of a real amp (a `.nam` file made with Neural Amp Modeler) and a cabinet IR (a real speaker, measured), with the IR
   resampled to the engine's rate so a 44.1 kHz IR does not play 8.8% sharp at 48 kHz.
 - Gives you the knobs a head has: bass, mid, treble, plus input gain (how hard the capture is driven)
   and output gain (how the cabinet is balanced against the room), and a master on top.
@@ -60,7 +60,7 @@ cannot do different things, and `/state` runs the same `verdict.judge` as `amphe
 ## The knobs, in order
 
 ```
-guitar -> gate -> input gain -> capture (NAM) -> bass/mid/treble -> cabinet (IR) -> output gain -> master
+guitar -> gate -> input gain -> capture (.nam) -> bass/mid/treble -> cabinet (IR) -> output gain -> master
 ```
 
 The gate is first because it is the only stage that can hear the guitar before the capture makes the
@@ -250,7 +250,7 @@ amphead/port.py          the tiny vocabulary the tools, routes and tests share
 amphead/verdict.py       the one judge the tool, the pane and the tests all call
 amphead/library.py       find captures and cabinets, name the tone from the files
 amphead/settings.py      the settings file and its environment overrides
-amphead/nam.py           NAM WaveNet in numpy, parity-tested against PyTorch
+amphead/nam.py           WaveNet (.nam) in numpy, parity-tested against PyTorch
 amphead/cab.py           partitioned overlap-save FIR convolution, resampling
 amphead/tone.py          bass/mid/treble biquads
 amphead/tools.py         the plugin tools Hermes calls
