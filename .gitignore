@@ -28,3 +28,6 @@ out/
 request.*.json
 resp_*.json
 desktop/probe/
+
+# Local hardware probes: they need a real interface and a live engine
+scratch/

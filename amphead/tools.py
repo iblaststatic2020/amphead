@@ -897,11 +897,21 @@ def handle_record(args: dict[str, Any], **_kw) -> str:
         if action == "stop":
             said = RIG.stop_take()
             seconds = float(said.get("seconds") or 0.0)
+            dropped = int(said.get("dropped") or 0)
+            # A writer that died mid-take leaves a file that opens and plays: short, and with a
+            # jump where the disk fell behind. Saying SAVED over that is the one thing a player
+            # cannot check for themselves, so the error is the first field.
+            if said.get("error"):
+                return _fmt([("saved", "with a problem"), ("error", said.get("error")),
+                             ("path", said.get("path")), ("seconds", f"{seconds:.1f}s"),
+                             ("dropped", dropped)])
             if seconds <= 0.0:
-                return f"SAVED: an empty take went to {said.get('path')}"
-            return _fmt([("saved", f"{seconds:.1f}s"), ("path", said.get("path")),
-                         ("peak", f"{said.get('peak_db')} dB"),
-                         ("dropped", said.get("dropped"))])
+                return f"NOTHING RECORDED: the take at {said.get('path')} is empty"
+            line = [("saved", f"{seconds:.1f}s"), ("path", said.get("path")),
+                    ("peak", f"{said.get('peak_db')} dB"), ("dropped", dropped)]
+            if dropped:
+                line.append(("dropped means", f"{dropped} block(s) of audio are missing from the file"))
+            return _fmt(line)
         said = RIG.start_take(path=args.get("path") or None, name=args.get("name") or None)
         rate = said.get("samplerate")
         return _fmt([("recording", "yes"), ("path", said.get("path")),

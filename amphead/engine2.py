@@ -235,6 +235,10 @@ class Engine:
         self._capture: list = []
         self._capturing = False
         self._last_error: str | None = None
+        #: Errors thrown out of the audio callback. Never cleared by a later success: the
+        #: count is how a player sees that the amp has been glitching, which no single
+        #: message can convey.
+        self._cb_errors = 0
         # Nobody plays forever in one sitting. After a long quiet stretch the amp parks its own
         # master, so an interface left live overnight is not still listening to the room.
         self._park = AutoPark()
@@ -246,11 +250,20 @@ class Engine:
     # state -----------------------------------------------------------------
     # recording --------------------------------------------------------------
     def start_take(self, path, channels: int = 2) -> dict:
-        """Start writing the amp's output to a wav. Refuses rather than stacking takes."""
+        """Start writing the amp's output to a wav. Refuses rather than stacking takes.
+
+        The file is opened before the lock is taken, because opening it means a mkdir, a
+        wave.open and a thread start: tens of milliseconds on a slow or network folder, and
+        the audio callback waits behind this lock. Holding it across the open is a guaranteed
+        burst of dropouts at the moment the player presses record.
+        """
+        if self._take is not None:
+            raise ValueError(f"a take is already recording to {self._take.path}")
+        take = Take(path, self.samplerate, channels=channels).open()
         with self._lock:
             if self._take is not None:
-                raise ValueError(f"a take is already recording to {self._take.path}")
-            take = Take(path, self.samplerate, channels=channels).open()
+                take.stop()
+                raise ValueError("two takes raced for the same engine; the second was not started")
             self._take = take
             # Pressing record is the player reaching for the amp, so the silence is over.
             self._park.reset()
@@ -307,12 +320,18 @@ class Engine:
         running total and makes a fresh block size look busy when it is not."""
         self._meter.blocks = self._meter.underflows = self._meter.overflows = 0
         self._meter.late = 0
+        # Kept, unlike the per-stream counters: a failure that happened in the last stream is
+        # exactly what the player needs to see after a restart.
+
 
     @property
     def counters(self) -> dict:
         """Starved and dropped blocks since the stream opened. The only honest latency check."""
         return {"underflows": self._meter.underflows, "overflows": self._meter.overflows,
-                "late": self._meter.late, "blocks": self._meter.blocks}
+                "late": self._meter.late, "blocks": self._meter.blocks,
+                # Failures inside the callback, which are otherwise invisible: the stream is
+                # still open and the pane still says LIVE, but the output has been silence.
+                "callback_errors": self._cb_errors}
 
     def set_gate(self, db: float) -> Chain:
         """Move the gate threshold. The bottom of the range is off, not -80 dB."""
@@ -335,6 +354,7 @@ class Engine:
             latency="low",
             callback=self._on_in,
             extra_settings=settings,
+            finished_callback=self._device_closed,
         )
         out = sd.OutputStream(
             device=self.output_device,
@@ -345,6 +365,7 @@ class Engine:
             latency="low",
             callback=self._on_out,
             extra_settings=settings,
+            finished_callback=self._device_closed,
         )
         return inn, out
 
@@ -366,6 +387,7 @@ class Engine:
             latency="low" if latency is None else latency,
             callback=self._on_duplex,
             extra_settings=settings,
+            finished_callback=self._device_closed,
         )
 
     def start(self) -> str:
@@ -518,7 +540,7 @@ class Engine:
                 self._count(status)
             self._process_block(indata, frames)
         except Exception as exc:                      # never let the callback raise
-            self._last_error = f"{type(exc).__name__}: {exc}"
+            self._fail_callback(exc)
             self._blank_out(frames)
 
     def _on_out(self, outdata, frames, time_info, status) -> None:
@@ -552,20 +574,28 @@ class Engine:
         # The chain stays armed: this is a level move, not a disarm, so raising the master is
         # all it takes to hear the amp again.
         if chain.armed and self._park.hear(self._meter.peak_in):
-            chain = self.update(master_db=SAFE_MASTER_DB)
-            # After the swap, because update() treats a master move as the end of the silence.
+            # Parked from the audio thread, so no lock and no update(): the chain is a frozen
+            # dataclass, and building the replacement here then storing it once is atomic
+            # under the GIL. update() takes the lock the control thread holds while a take's
+            # file opens, which is an xrun at the worst possible moment.
+            self._chain = chain = replace(chain, master_db=SAFE_MASTER_DB)
             self._parked_by_idle = True
         self._meter.stamp = time.time()
 
-        if not chain.armed:
-            self._meter.peak_out = 0.0
-            self._meter.rms_out = 0.0
-            return np.zeros(frames, dtype=np.float32)
-
+        # The chain runs while parked or disarmed too. Skipping it freezes the cabinet's ring
+        # buffer, the model's layer histories and the biquad state, so the first block after
+        # GO LIVE convolves new input against minutes-old spectra: a burst of the wrong tail
+        # on the first note, which the player blames on the capture. The output is discarded
+        # instead, which is silence without the stale state behind it.
         started = time.perf_counter()
         y = process_chain(x, chain)
         if frames and (time.perf_counter() - started) > frames / float(self.samplerate):
             self._meter.late += 1
+        if not chain.armed:
+            # A take that is running keeps the time it was promised: every block still lands
+            # in the file, as silence. Dropping them makes a wav shorter than the performance,
+            # with a jump where the gap was, while the state still says recording.
+            y = np.zeros(frames, dtype=np.float32)
         self._meter.peak_out = float(np.max(np.abs(y))) if y.size else 0.0
         self._meter.rms_out = float(np.sqrt(np.mean(np.square(y)))) if y.size else 0.0
         if self._capturing:
@@ -582,7 +612,7 @@ class Engine:
                 self._count(status)
             y = self._render(indata, frames)
         except Exception as exc:                      # never let the callback raise
-            self._last_error = f"{type(exc).__name__}: {exc}"
+            self._fail_callback(exc)
             outdata[:] = 0.0
             return
         outdata[:, 0] = y
@@ -601,6 +631,32 @@ class Engine:
             if len(self._frames) == self._frames.maxlen:
                 self._meter.underflows += 1
             self._frames.append(y)
+
+    def _device_closed(self) -> None:
+        """PortAudio says the stream ended on its own: unplugged, sleeping, or taken over.
+
+        PortAudio runs this off the audio thread. Without it a vanished interface leaves the
+        stream object looking open, so `running` stays true and every readout says LIVE while
+        the device is gone. Setting the reason here makes the next status say what happened.
+        """
+        self._last_error = "the audio device closed the stream (unplugged, asleep, or taken over)"
+        self._parked_by_idle = False
+        self._chain = replace(self._chain, armed=False, master_db=SAFE_MASTER_DB)
+
+    def _fail_callback(self, exc: BaseException) -> None:
+        """Record a callback failure and make the silence visible.
+
+        Swallowing the exception and returning zeros leaves `armed` true, so every readout
+        says the amp is live while the player hears nothing, and the only clue is a string
+        buried in a status field. Dropping the master and the arm flag means the next status
+        reads NOT LIVE with a reason, which is what a player needs to stop looking at cables.
+        """
+        self._cb_errors += 1
+        self._last_error = f"{type(exc).__name__}: {exc}"
+        try:
+            self._chain = replace(self._chain, armed=False, master_db=SAFE_MASTER_DB)
+        except Exception:
+            pass
 
     def _blank_out(self, frames: int) -> None:
         import numpy as np

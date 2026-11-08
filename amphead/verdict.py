@@ -63,6 +63,13 @@ def judge(state: dict, reading: dict, chain: list[dict] | None = None) -> dict[s
     for all three teaches the player to ignore it.
     """
     problems: list[str] = []
+    # A callback that threw took the audio with it and disarmed the amp. Every other readout
+    # says the amp is fine, because the stream is still open, so this is the only line that
+    # can explain a session that went quiet on its own.
+    callback_errors = int(state.get("callback_errors") or 0)
+    if callback_errors:
+        problems.append(f"the audio callback failed {callback_errors} time(s) and the amp "
+                        f"disarmed itself")
 
     if not state.get("open"):
         return {"verdict": ENGINE_OFF,

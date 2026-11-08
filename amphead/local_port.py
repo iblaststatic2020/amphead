@@ -8,6 +8,7 @@ to it: one JSON object per line in, one per line out.
 
 from __future__ import annotations
 
+import itertools
 import json
 import os
 import queue
@@ -116,6 +117,13 @@ class EngineClient:
         self._lock = threading.Lock()
         self._stderr: queue.Queue = queue.Queue(maxsize=200)
         self._last_error: str | None = None
+        # Every request carries an id and the engine echoes it, so a reply that arrives after
+        # its own deadline is recognised as stale instead of being handed to the next caller.
+        # Without that, one slow verb puts the pipe one reply behind for the process's life.
+        self._ids = itertools.count(1)
+        self._lines: queue.Queue = queue.Queue()
+        self._reader: threading.Thread | None = None
+        self._reader_proc: subprocess.Popen | None = None
 
     # lifecycle -------------------------------------------------------------
     @property
@@ -165,6 +173,7 @@ class EngineClient:
         )
         # Drain stderr on a thread so a chatty engine can never fill a pipe and stall.
         threading.Thread(target=self._drain, daemon=True, name="amphead2-stderr").start()
+        self._open_reader()
 
     def _drain(self) -> None:
         proc = self._proc
@@ -192,7 +201,37 @@ class EngineClient:
         except subprocess.TimeoutExpired:
             proc.kill()
         self._proc = None
+        self._reader_proc = None
         return True
+
+    def _open_reader(self) -> None:
+        """One reader thread per engine process, for the life of that process.
+
+        A reader started per request and abandoned on timeout stays inside ``readline()``
+        and is first in line for the next line the engine writes. The next call then gets
+        nothing, and every call after it is one reply behind, while the engine still applies
+        each request: the agent is told "not executed" about things that happened. Reading in
+        one place means a late reply lands in a queue and is discarded by its id, not by
+        whichever caller happens to be waiting.
+        """
+        proc = self._proc
+        if proc is None or proc.stdout is None:
+            return
+        if self._reader is not None and self._reader.is_alive() and self._reader_proc is proc:
+            return
+        while not self._lines.empty():
+            self._lines.get_nowait()
+
+        def pump() -> None:
+            try:
+                for line in proc.stdout:
+                    self._lines.put_nowait(line)
+            except Exception:
+                pass
+
+        self._reader_proc = proc
+        self._reader = threading.Thread(target=pump, daemon=True, name="amphead2-stdout")
+        self._reader.start()
 
     # the wire --------------------------------------------------------------
     def call(self, timeout: float | None = None, **request: Any) -> dict:
@@ -202,6 +241,8 @@ class EngineClient:
                              f"`hermes plugins install amphead --yes-deps`.")
         proc = self._proc
         assert proc is not None and proc.stdin is not None and proc.stdout is not None
+        req_id = next(self._ids)
+        request = dict(request, id=req_id)
         payload = json.dumps(request) + "\n"
         limit = float(timeout or self.timeout)
         deadline = time.monotonic() + limit
@@ -213,7 +254,8 @@ class EngineClient:
                 self._proc = None
                 raise EngineGone(f"{LABEL} stopped answering ({exc}). Start it again with "
                                  f"amphead_setup.") from exc
-            line = self._read_line(proc, deadline)
+            self._open_reader()                       # a reader that died is replaced here
+            line = self._read_line(proc, deadline, req_id)
         if line is None:
             raise EngineSilent(f"{LABEL} accepted the request but did not answer within "
                                f"{limit:.1f}s.")
@@ -227,28 +269,35 @@ class EngineClient:
         self._last_error = str(reply.get("error") or "no reason given")
         raise EngineRefused(f"{LABEL} refused: {self._last_error}")
 
-    @staticmethod
-    def _read_line(proc: subprocess.Popen, deadline: float) -> str | None:
-        """Read one line without blocking past the deadline.
+    def _read_line(self, proc: subprocess.Popen, deadline: float, req_id: int) -> str | None:
+        """The reply to ``req_id``, without blocking past the deadline.
 
-        ``readline`` on a pipe cannot be interrupted, so the read happens on a helper
-        thread and the caller waits on a queue with a timeout. A stuck engine then
-        costs one leaked thread instead of a wedged plugin.
+        Replies are matched by id. A late reply to an earlier request is dropped here, which
+        is the difference between "this call is slow" and "this client is one reply behind
+        for the rest of the process". An engine that answers without an id (an older build)
+        is still accepted, so a mixed pair does not deadlock.
         """
-        assert proc.stdout is not None
-        out: queue.Queue = queue.Queue(maxsize=1)
-
-        def read() -> None:
+        while True:
+            left = deadline - time.monotonic()
+            if left <= 0:
+                return None
             try:
-                out.put_nowait(proc.stdout.readline())
-            except Exception:
-                out.put_nowait("")
-
-        threading.Thread(target=read, daemon=True).start()
-        try:
-            return out.get(timeout=max(0.05, deadline - time.monotonic())) or None
-        except queue.Empty:
-            return None
+                line = self._lines.get(timeout=max(0.05, left))
+            except queue.Empty:
+                if proc.poll() is not None:
+                    raise EngineGone(f"{LABEL} stopped answering. Start it again with "
+                                     f"amphead_setup.")
+                return None
+            if not line:
+                raise EngineGone(f"{LABEL} closed its end of the pipe. Start it again with "
+                                 f"amphead_setup.")
+            try:
+                said = json.loads(line)
+            except (json.JSONDecodeError, TypeError):
+                return line
+            got = said.get("id") if isinstance(said, dict) else None
+            if got is None or got == req_id:
+                return line
 
     @property
     def stderr_tail(self) -> list[str]:
@@ -527,7 +576,14 @@ class AmpHead2Rig:
 
     # the host it does not have ---------------------------------------------
 
+    @property
     def running(self) -> bool:
+        """Whether the engine process is alive. A property, matching the client's.
+
+        Declared as a plain method this is a bound method, which is always truthy, so every
+        `if not RIG.running` guard in the tools and the pane silently never fired and a dead
+        engine was reported as running.
+        """
         return self.client.running
 
     def state(self) -> dict:

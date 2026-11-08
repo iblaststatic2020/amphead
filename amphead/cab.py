@@ -143,9 +143,13 @@ class Cab:
         transform.
         """
         block = int(frames)
-        parts = min(self.MAX_PARTITIONS, -(-self.length // block))
-        padded = np.zeros(parts * block, dtype=np.float64)
-        padded[: self.length] = self.ir
+        parts = max(1, min(self.MAX_PARTITIONS, -(-self.length // block)))
+        room = parts * block
+        padded = np.zeros(room, dtype=np.float64)
+        # A cabinet longer than the partition cap cannot be stored in full, so it is cut
+        # here rather than at assignment time: `padded[: self.length] = self.ir` raises when
+        # the IR outruns the buffer, and inside an audio callback that is silence forever.
+        padded[: min(self.length, room)] = self.ir[:room]
         self._ir_parts = np.fft.rfft(padded.reshape(parts, block), 2 * block, axis=1)
         self._ring = np.zeros((parts, block + 1), dtype=np.complex128)
         self._block = block
@@ -156,6 +160,19 @@ class Cab:
         # one block wide. Leaving it short would frame the signal as [this block, silence],
         # which is the same convolution arriving one block late.
         self._tail = np.zeros(block, dtype=np.float32)
+
+    def prime(self, frames: int) -> None:
+        """Build the transform bank now instead of in the audio callback.
+
+        `_prepare` is ~11 ms for a five second cabinet at 256 frames, which is two blocks
+        of work landing in one slot: the load itself costs a dropout. Callers that know
+        the block size (the loader, a block size change) hand it over here, off the audio
+        thread.
+        """
+        block = int(frames)
+        if block > 0 and block != self._block:
+            self._prepare(block)
+            self._pos = 0
 
     def reset(self) -> None:
         if self._ring is not None:
@@ -177,7 +194,11 @@ class Cab:
             self._prepare(frames)
             keep = min(carry.size, frames)
             if keep:
-                self._tail[:keep] = carry[-keep:]
+                # The carried history is the most recent block, so it belongs at the END of
+                # the new frame: the frame is [history, this block], and writing at offset 0
+                # shifts the convolution by frames - keep samples, which is a full scale
+                # step on the first block after a block size change.
+                self._tail[-keep:] = carry[-keep:]
         elif frames < self._block:
             # A short last block is padded up to the block the filter is built for. Processing it
             # at a different size would throw away the history the partitions are holding, and the

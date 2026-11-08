@@ -36,6 +36,25 @@ def _pcm24(block) -> bytes:
     return raw.tobytes()
 
 
+def free_path(path) -> Path:
+    """A path nothing is occupying: the name, or "name (2).wav" beside it.
+
+    Takes are the one thing here that cannot be regenerated. Overwriting a wav named after a
+    minute of the day means a second take in the same minute destroys the first, and the
+    player only finds out after the performance is gone.
+    """
+    path = Path(path)
+    if not path.exists():
+        return path
+    stem, suffix = path.stem, path.suffix or ".wav"
+    n = 2
+    while True:
+        candidate = path.with_name(f"{stem} ({n}){suffix}")
+        if not candidate.exists():
+            return candidate
+        n += 1
+
+
 def latest(folder) -> dict:
     """The newest take already on disk, so a face opened later still has a file to play.
 
@@ -84,11 +103,14 @@ class Take:
     """One recording, from the first block to the last."""
 
     def __init__(self, path, samplerate: int, channels: int = 2,
-                 width: int = SAMPLE_WIDTH, queue_blocks: int = QUEUE_BLOCKS) -> None:
+                 queue_blocks: int = QUEUE_BLOCKS) -> None:
         self.path = Path(path)
         self.samplerate = int(samplerate)
         self.channels = int(channels)
-        self.width = int(width)
+        #: The file is always 24 bit. This used to be a constructor argument that `_pcm24`
+        #: ignored, so a caller asking for 16 bit got a header claiming 2 bytes per sample
+        #: over 3 bytes of data: a wav that plays as noise. One width, declared once.
+        self.width = SAMPLE_WIDTH
         self._queue: queue.Queue = queue.Queue(maxsize=queue_blocks)
         self._writer: threading.Thread | None = None
         self._wave: wave.Wave_write | None = None
@@ -188,22 +210,13 @@ class Take:
         return self._dropped
 
     def summary(self) -> dict:
-        with self._lock:
-            frames, peak, dropped = self._frames, self._peak, self._dropped
-        seconds = frames / float(self.samplerate) if self.samplerate else 0.0
-        said = {
-            "path": str(self.path),
-            "name": self.path.name,
-            "seconds": round(seconds, 2),
-            "frames": frames,
-            "samplerate": self.samplerate,
-            "peak_db": None if peak <= 0.0 else round(_db(peak), 1),
-            "dropped": dropped,
-            "recording": False,
-        }
-        if self._error:
-            said["error"] = self._error
-        return said
+        """What was written, in the same shape the live state reports.
+
+        Two dicts built by hand drifted: the summary left out the channels, so a finished take
+        could not say whether the file was mono or stereo, which is the question a player asks
+        when the take sounds wrong in headphones.
+        """
+        return self.state()
 
     def state(self) -> dict:
         with self._lock:
@@ -216,6 +229,7 @@ class Take:
                 # is a different thing from a mono file at another rate.
                 "samplerate": self.samplerate,
                 "channels": self.channels,
+                "frames": frames,
                 "seconds": round(frames / float(self.samplerate), 2) if self.samplerate else 0.0,
                 "peak_db": None if peak <= 0.0 else round(_db(peak), 1),
                 "dropped": dropped}

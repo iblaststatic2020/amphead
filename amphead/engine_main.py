@@ -64,6 +64,9 @@ class Server:
         self.capture_name: str | None = None
         self.cab_name: str | None = None
         self.tone = {"bass": 0.0, "mid": 0.0, "treble": 0.0}
+        #: The last take this engine finished, so asking what was just recorded answers with
+        #: that take rather than with whatever wav happens to be newest in the folder.
+        self.last_take: dict | None = None
 
     # every verb returns plain json ----------------------------------------
     # recording --------------------------------------------------------------
@@ -73,17 +76,28 @@ class Server:
 
     def record_start(self, path: str | None = None, name: str | None = None) -> dict:
         """Open a take on the amp's output. The name defaults to when the player pressed record."""
+        stamp = recording.default_name(self.engine.samplerate)
+        folder = self.recordings_dir()
         if path:
             target = Path(path)
             if target.is_dir():
-                target = target / f"{recording.default_name(self.engine.samplerate)}.wav"
+                target = target / f"{stamp}.wav"
+            elif not target.parent.is_dir():
+                # A take never makes a tree. If the folder the caller named is not there, the
+                # path is a typo or a guess, and the answer is the folder that does exist.
+                raise ValueError(f"the folder {target.parent} does not exist, so a take cannot "
+                                 f"go there; name a folder that exists, or leave path out to "
+                                 f"record to {folder}")
         else:
             # A take name arrives from an agent, so it is a name, not a path: keep the last
             # component and drop what a filename cannot hold. "..\..\x" must not walk out of
             # the recordings folder.
             clean = str(name or "").replace("\\", "/").split("/")[-1]
             clean = "".join(ch for ch in clean if ch.isprintable() and ch not in '<>:"|?*').strip(" .")
-            target = self.recordings_dir() / f"{clean or recording.default_name(self.engine.samplerate)}.wav"
+            target = folder / f"{clean or stamp}.wav"
+        # Never over a file that already exists: a second take in the same minute used to
+        # replace the first, and the first is the one thing here that cannot be made again.
+        target = recording.free_path(target)
         # A take is recorded after the master, so a master at the bottom writes silence. Refuse
         # with the fix rather than hand back a wav full of nothing.
         live = self.status()
@@ -91,19 +105,31 @@ class Server:
             raise ValueError("the amp is not live: press GO LIVE, then record")
         if float(live.get("master_db") or SAFE_MASTER_DB) <= -59.0:
             raise ValueError("the master is silent, so the take would be: raise the master first")
+        self.last_take = None
         said = self.engine.start_take(target)
         said["dir"] = str(target.parent)
         return said
 
     def record_stop(self) -> dict:
-        return self.engine.stop_take()
+        said = self.engine.stop_take()
+        if said.get("path"):
+            self.last_take = said
+        return said
 
     def take_state(self) -> dict:
-        """The live take, or the newest one on disk if the engine has not recorded since start."""
+        """The live take, else the one this engine finished, else the newest wav on disk.
+
+        The disk fallback is a guess, so it says so: a wav that was already in the folder
+        before this engine started is not evidence that anything was recorded now, and the
+        tools used to report it as a fresh take.
+        """
         live = self.engine.take_state()
         if live.get("path"):
             return live
-        return recording.latest(self.recordings_dir()) or live
+        if self.last_take is not None:
+            return dict(self.last_take, this_session=True)
+        found = recording.latest(self.recordings_dir())
+        return dict(found, this_session=False) if found else live
 
     def status(self) -> dict:
         meter = self.engine.meter
@@ -126,6 +152,9 @@ class Server:
             "underflows": self.engine.counters["underflows"],
             "overflows": self.engine.counters["overflows"],
             "late": self.engine.counters["late"],
+            # Failures inside the callback. The stream stays open and every other field says
+            # the amp is working, so without this a glitching amp looks like a quiet guitar.
+            "callback_errors": self.engine.counters["callback_errors"],
             "input_device": self.engine.input_device,
             "input_channel": self.engine.input_channel + 1,
             "input_channels": self.engine.input_channels,
@@ -251,6 +280,17 @@ class Server:
         from .nam import WaveNet
 
         model = WaveNet.load(path)
+        # A capture is not just weights: it is weights for one sample rate. Playing an 8 kHz
+        # trained model on a 48 kHz stream runs its filters at six times the frequency they
+        # were fit to, which reads as a thin, fizzy amp rather than as an error, and the player
+        # blames the capture. Refuse and name both rates.
+        rate = getattr(model, "sample_rate", None)
+        if rate and int(rate) != int(self.engine.samplerate):
+            raise ValueError(
+                f"this capture was trained at {int(rate)} Hz but the engine is running at "
+                f"{self.engine.samplerate} Hz, so it would play at the wrong pitch and the wrong "
+                f"speed. Load a {self.engine.samplerate} Hz capture, or open the engine at "
+                f"{int(rate)} Hz")
         self.engine.update(amp=model)
         self.capture_name = str(path)
         return {"capture": self.capture_name, "receptive_field": model.receptive_field}
@@ -534,7 +574,7 @@ class Server:
         name = self.VERBS.get(verb or "")
         if name is None:
             return {"ok": False, "error": f"unknown command {verb!r}"}
-        kwargs = {k: v for k, v in request.items() if k not in ("cmd", "verb")}
+        kwargs = {k: v for k, v in request.items() if k not in ("cmd", "verb", "id")}
         try:
             return {"ok": True, "result": getattr(self, name)(**kwargs)}
         except Exception as exc:
@@ -543,10 +583,16 @@ class Server:
             return {"ok": False, "error": f"{said}. {fix}" if fix else said}
 
 
-def serve(stdin=None, stdout=None) -> int:
+def serve(stdin=None, stdout=None, server: "Server | None" = None) -> int:
+    """The whole wire: read a request, answer it with its id echoed back.
+
+    One loop, and `main` runs this one. It used to have a near-copy of its own, which is
+    where the request id stopped being echoed: the client then dropped every reply as stale
+    and reported timeouts on a pipe that was working perfectly.
+    """
     stdin = stdin or sys.stdin
     stdout = stdout or sys.stdout
-    server = Server(engine_from_settings())
+    server = server or Server(engine_from_settings())
     for line in stdin:
         line = line.strip()
         if not line:
@@ -555,12 +601,16 @@ def serve(stdin=None, stdout=None) -> int:
             request = json.loads(line)
         except json.JSONDecodeError as exc:
             reply = {"ok": False, "error": f"bad json: {exc}"}
+            request = {}
         else:
             try:
                 reply = server.handle(request)
             except Exception as exc:                  # a verb must never kill the engine
                 reply = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
                 traceback.print_exc(file=sys.stderr)
+        # Echo the request id so the client can tell its own reply from one that arrived late.
+        if isinstance(request, dict) and "id" in request:
+            reply["id"] = request["id"]
         stdout.write(json.dumps(reply) + "\n")
         stdout.flush()
         if reply.get("stop"):
@@ -580,27 +630,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--input", type=int, default=None)
     parser.add_argument("--output", type=int, default=None)
     args = parser.parse_args(argv)
-    server = Server(engine_from_settings(samplerate=args.samplerate, blocksize=args.blocksize,
-                                         input_device=args.input, output_device=args.output))
-    for line in sys.stdin:
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            request = json.loads(line)
-        except json.JSONDecodeError as exc:
-            reply = {"ok": False, "error": f"bad json: {exc}"}
-        else:
-            try:
-                reply = server.handle(request)
-            except Exception as exc:
-                reply = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
-        sys.stdout.write(json.dumps(reply) + "\n")
-        sys.stdout.flush()
-        if reply.get("stop"):
-            break
-    server.engine.stop()
-    return 0
+    return serve(server=Server(engine_from_settings(
+        samplerate=args.samplerate, blocksize=args.blocksize,
+        input_device=args.input, output_device=args.output)))
 
 
 if __name__ == "__main__":

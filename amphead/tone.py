@@ -67,9 +67,19 @@ class Biquad:
         self.q = float(q)
         self.db = float(db)
         self.samplerate = int(samplerate)
-        self.b0, self.b1, self.b2, self.a1, self.a2 = _cookbook(kind, self.freq, self.q, self.db, self.samplerate)
+        self.set_coeffs(_cookbook(kind, self.freq, self.q, self.db, self.samplerate))
         self.z1 = 0.0
         self.z2 = 0.0
+
+    def set_coeffs(self, cooked) -> None:
+        """Publish one block's coefficients as a single value.
+
+        The callback unpacks five numbers. Written as five separate attributes, a knob
+        turned mid-block can be read as a mix of the old and new coefficients, and a shelf
+        at +-12 dB with mismatched numerator and denominator rings or bursts. One tuple
+        assignment is atomic under the GIL, so the callback always gets a matched set.
+        """
+        self.coeffs: tuple[float, float, float, float, float] = tuple(float(v) for v in cooked)
 
     @property
     def bypassed(self) -> bool:
@@ -82,7 +92,7 @@ class Biquad:
         x = np.asarray(x, dtype=np.float32).reshape(-1)
         if self.bypassed or x.size == 0:
             return x
-        b0, b1, b2, a1, a2 = self.b0, self.b1, self.b2, self.a1, self.a2
+        b0, b1, b2, a1, a2 = self.coeffs
         z1, z2 = self.z1, self.z2
         y = np.empty_like(x)
         # A python loop over 128 samples is ~20 us, an order of magnitude under the
@@ -120,9 +130,7 @@ class ToneStack:
             raise ValueError(f"unknown band {name!r}; expected one of {', '.join(BANDS)}")
         band = getattr(self, f"{name}_band")
         band.db = float(db)
-        band.b0, band.b1, band.b2, band.a1, band.a2 = _cookbook(
-            band.kind, band.freq, band.q, band.db, band.samplerate
-        )
+        band.set_coeffs(_cookbook(band.kind, band.freq, band.q, band.db, band.samplerate))
 
     def reset(self) -> None:
         for band in self.bands:

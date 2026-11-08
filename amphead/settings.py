@@ -86,14 +86,60 @@ def _merge(base: dict, over: dict) -> dict:
     return out
 
 
+#: Set when the file on disk could not be read, so the pane can say so instead of
+#: silently playing on defaults.
+_BROKEN = ""
+
+
+def problem() -> str:
+    """Why the settings file is not being used, or "" when it is fine."""
+    return _BROKEN
+
+
+def _keep_aside(target: Path, text: str) -> Path:
+    """Copy a file we cannot read to the side, so the next save cannot destroy it."""
+    aside = target.with_suffix(target.suffix + ".broken")
+    n = 2
+    while aside.exists():
+        aside = target.with_suffix(target.suffix + f".broken{n}")
+        n += 1
+    aside.write_text(text, encoding="utf-8")
+    return aside
+
+
 def load() -> dict:
-    """The settings file, filled in with defaults. A broken file never stops the rig."""
+    """The settings file, filled in with defaults. A broken file never stops the rig.
+
+    A file that will not parse is copied to `settings.json.broken` instead of being
+    dropped: every value in it was a choice the player made by hand, and the next
+    `save()` writes the whole merged object, so using the defaults in memory and then
+    saving would erase the lot on the first knob turn.
+    """
+    global _BROKEN
+    _BROKEN = ""
+    target = path()
     try:
-        raw = json.loads(path().read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        raw = {}
+        text = target.read_text(encoding="utf-8")
+    except OSError:
+        return _merge(DEFAULTS, {})
+    try:
+        raw = json.loads(text)
+    except ValueError as exc:
+        try:
+            aside = _keep_aside(target, text)
+        except OSError:
+            _BROKEN = f"{target.name} could not be read ({exc}) and could not be copied aside"
+        else:
+            _BROKEN = (f"{target.name} could not be read ({exc}). It was kept as "
+                       f"{aside.name} and the built-in settings are in use")
+        return _merge(DEFAULTS, {})
     if not isinstance(raw, dict):
-        raw = {}
+        _BROKEN = f"{target.name} is not a JSON object, so the built-in settings are in use"
+        try:
+            _keep_aside(target, text)
+        except OSError:
+            pass
+        return _merge(DEFAULTS, {})
     return _merge(DEFAULTS, raw)
 
 
@@ -156,6 +202,15 @@ def folders(key: str) -> list[Path]:
     return said
 
 
+def _raw() -> dict:
+    """Just the keys the file itself holds, with no defaults filled in."""
+    try:
+        raw = json.loads(path().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return raw if isinstance(raw, dict) else {}
+
+
 def describe() -> dict:
     """What the file says, what the environment says, and what is built in.
 
@@ -164,6 +219,7 @@ def describe() -> dict:
     environment variable, without reading code.
     """
     file_says = load()
+    written = _raw()
     rows = []
     for key in ("capture_dirs", "cab_dirs", "engine_python"):
         env = FOLDER_ENV.get(key)
@@ -172,8 +228,11 @@ def describe() -> dict:
             "key": key,
             "value": file_says.get(key) or [],
             "env": env_said or "",
-            "from": "environment" if env_said else ("settings" if file_says.get(key) else "built in"),
+            "from": "environment" if env_said else ("settings" if written.get(key) else "built in"),
         })
     rows.append({"key": "audio", "value": audio(), "env": "",
-                 "from": "settings" if (file_says.get("audio") or {}) else "built in"})
-    return {"path": str(path()), "exists": path().exists(), "settings": rows}
+                 "from": "settings" if written.get("audio") else "built in"})
+    said = {"path": str(path()), "exists": path().exists(), "settings": rows}
+    if _BROKEN:
+        said["problem"] = _BROKEN
+    return said

@@ -187,6 +187,73 @@ class CabTest(unittest.TestCase):
             self.assertEqual(cab.ir.size, 2)
             self.assertAlmostEqual(float(cab.ir[0]), 0.0, places=4)
 
+    def test_a_cabinet_past_the_partition_cap_is_cut_not_raised(self):
+        """A raw IR longer than MAX_PARTITIONS * block used to raise inside the callback.
+
+        `padded[: self.length] = self.ir` cannot broadcast when the IR outruns the buffer it
+        is being written into, and the truncation branch below it could never run because the
+        assignment came first. In an audio callback that exception is silence, every block,
+        forever: the rig reports armed and plays nothing.
+        """
+        block = 64
+        too_long = Cab.MAX_PARTITIONS * block + 5000
+        cab = Cab(np.ones(too_long, dtype=np.float32) / too_long, 44100, normalize=False)
+        out = cab.process(np.zeros(block, dtype=np.float32))
+        self.assertEqual(out.size, block)
+        self.assertEqual(cab.truncated_at, Cab.MAX_PARTITIONS * block)
+        self.assertEqual(cab._ring.shape[0], Cab.MAX_PARTITIONS)
+
+    def test_growing_the_block_keeps_the_seam_continuous(self):
+        """The carried history belongs at the end of the new frame, not the start.
+
+        Written at offset 0 it shifts the convolution by frames - keep samples, so the first
+        block after a `tune` block size change is a full scale step against a sine. Measured
+        here as a click, not as a shift: the stream is compared with a plain convolution.
+        """
+        rng = np.random.default_rng(31)
+        ir = (rng.standard_normal(40) * 0.05).astype(np.float32)
+        ir[0] = 0.5
+        x = (rng.standard_normal(640) * 0.2).astype(np.float32)
+        cab = Cab(ir, 48000, normalize=False)
+        out = []
+        pos = 0
+        for span in (64, 64, 64):
+            out.append(cab.process(x[pos:pos + span]))
+            pos += span
+        while pos < x.size:
+            out.append(cab.process(x[pos:pos + 128]))
+            pos += 128
+        got = np.concatenate(out)
+        want = np.convolve(x, ir)[: x.size]
+        self.assertLess(float(np.max(np.abs(got - want))), 1e-5,
+                        "the seam after the block grew is not the same convolution")
+
+    def test_prime_builds_the_transform_before_the_callback_sees_a_block(self):
+        """Loading a cabinet must not do 11 ms of work inside the audio callback.
+
+        `_prepare` on a five second IR at 256 frames measured 11.32 ms against a 5.80 ms
+        block, so the first block after a load is two blocks of work in one slot: a dropout
+        every time a cabinet is chosen.
+        """
+        ir = (np.random.default_rng(32).standard_normal(4000) * 0.05).astype(np.float32)
+        cab = Cab(ir, 44100, normalize=False)
+        calls = []
+        real = cab._prepare
+        cab._prepare = lambda frames: (calls.append(frames), real(frames))[1]
+        cab.prime(256)
+        self.assertEqual(calls, [256])
+        self.assertIsNotNone(cab._ir_parts)
+        cab.process(np.zeros(256, dtype=np.float32))
+        self.assertEqual(calls, [256], "the first block rebuilt the transform in the callback")
+
+    def test_prime_moves_with_the_block_size(self):
+        ir = (np.random.default_rng(33).standard_normal(2000) * 0.05).astype(np.float32)
+        cab = Cab(ir, 44100, normalize=False)
+        cab.prime(256)
+        cab.prime(512)
+        self.assertEqual(cab._block, 512)
+        self.assertEqual(cab._partitions, 4)
+
 
 if __name__ == "__main__":
     unittest.main()
