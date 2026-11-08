@@ -10,6 +10,7 @@ import os
 import pathlib
 import subprocess
 import sys
+import tempfile
 import unittest
 from unittest import mock
 
@@ -154,12 +155,23 @@ class InterpreterTest(unittest.TestCase):
             self.assertEqual(local_port.engine_python(), sys.executable)
 
     def test_a_venv_beside_the_plugin_is_the_fallback_when_the_host_is_thin(self):
-        """For a checkout whose Hermes never installed the dependencies, .engine still works."""
+        """For a checkout whose Hermes never installed the dependencies, .engine still works.
+
+        Built in a temp tree: depending on a real .engine beside this checkout would make
+        the test pass or fail on whether someone had run the old bootstrap script.
+        """
         os.environ.pop("AMPHEAD_ENGINE_PYTHON", None)
-        beside = str(pathlib.Path(local_port.__file__).resolve().parent.parent /
-                     ".engine" / "Scripts" / "python.exe")
-        with mock.patch.object(local_port, "_able", lambda p: str(p) == beside):
-            self.assertEqual(local_port.engine_python(), beside)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp) / "plugin"
+            fake = root / "amphead" / "local_port.py"
+            fake.parent.mkdir(parents=True)
+            fake.write_text("", encoding="utf-8")
+            beside = root / ".engine" / "Scripts" / "python.exe"
+            beside.parent.mkdir(parents=True)
+            beside.write_text("", encoding="utf-8")
+            with mock.patch.object(local_port, "__file__", str(fake)), \
+                    mock.patch.object(local_port, "_able", lambda p: str(p) == str(beside)):
+                self.assertEqual(local_port.engine_python(), str(beside))
 
     def test_a_thin_host_and_no_venv_names_the_host_every_time(self):
         """The refusal has to name a real interpreter, or the message is useless."""
