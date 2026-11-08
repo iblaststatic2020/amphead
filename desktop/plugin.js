@@ -1196,8 +1196,10 @@ function AmpPage({ rest, title = 'AmpHead', subtitle = 'the rig, without opening
 
 // The two faces share one plugin process but not one backend. `?engine=` on every route names the
 // rig that answers, so the original can stay on REAPER while the rebuild talks to the local one.
+// Every write on the face is a POST with a body; the options ride along, not just the
+// path, or the server reads a GET against a POST-only route and answers 404.
 function engineContext(ctx, engine, areas) {
-  const rest = (path) => ctx.rest(`${path}${path.includes('?') ? '&' : '?'}engine=${engine}`)
+  const rest = (path, opts) => ctx.rest(`${path}${path.includes('?') ? '&' : '?'}engine=${engine}`, opts)
   const keep = (entry) => !areas || areas.includes(entry.area)
   return {
     ...ctx,
