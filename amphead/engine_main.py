@@ -94,7 +94,11 @@ class Server:
         return self.engine.stop_take()
 
     def take_state(self) -> dict:
-        return self.engine.take_state()
+        """The live take, or the newest one on disk if the engine has not recorded since start."""
+        live = self.engine.take_state()
+        if live.get("path"):
+            return live
+        return recording.latest(self.recordings_dir()) or live
 
     def status(self) -> dict:
         meter = self.engine.meter

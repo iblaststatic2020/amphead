@@ -152,3 +152,64 @@ class TestTheAmpWritesWhatItPlays(unittest.TestCase):
         self.assertTrue(path.name.startswith("take "))
         self.server.handle({"cmd": "record_stop"})
         path.unlink(missing_ok=True)                  # do not leave a scratch take in APPDATA
+
+
+class TestTheNewestTakeOnDisk(unittest.TestCase):
+    """A take outlives the engine process, so the file on disk is what the face reports."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.folder = Path(self.tmp.name)
+
+    def _write(self, name, seconds=1.0, rate=44100):
+        path = self.folder / name
+        with wave.open(str(path), "wb") as wav:
+            wav.setnchannels(1)
+            wav.setsampwidth(2)
+            wav.setframerate(rate)
+            wav.writeframes(b"\x00\x00" * int(seconds * rate))
+        return path
+
+    def test_the_newest_wav_is_the_one_reported(self):
+        from amphead import record
+
+        older = self._write("take older.wav", seconds=1.0)
+        newer = self._write("take newer.wav", seconds=2.0)
+        import os
+        os.utime(older, (1_700_000_000, 1_700_000_000))
+        os.utime(newer, (1_700_000_100, 1_700_000_100))
+        said = record.latest(self.folder)
+        self.assertEqual(Path(said["path"]), newer)
+        self.assertEqual(said["name"], "take newer.wav")
+        self.assertAlmostEqual(said["seconds"], 2.0, places=2)
+        self.assertFalse(said["recording"])
+        self.assertTrue(said["saved"])
+
+    def test_an_empty_folder_answers_with_nothing(self):
+        from amphead import record
+
+        self.assertEqual(record.latest(self.folder), {})
+
+    def test_a_folder_that_is_not_there_answers_with_nothing(self):
+        from amphead import record
+
+        self.assertEqual(record.latest(self.folder / "missing"), {})
+
+    def test_record_state_falls_back_to_the_newest_take(self):
+        from amphead import engine2, engine_main
+
+        server = engine_main.Server(engine2.Engine(samplerate=44100, blocksize=128))
+        self.addCleanup(server.engine.stop)
+        folder = Path(server.recordings_dir())
+        folder.mkdir(parents=True, exist_ok=True)
+        path = folder / "take 2031-01-01 000000.wav"
+        with wave.open(str(path), "wb") as wav:
+            wav.setnchannels(1)
+            wav.setsampwidth(3)
+            wav.setframerate(44100)
+            wav.writeframes(b"\x00\x00\x00" * 44100)
+        self.addCleanup(path.unlink, missing_ok=True)
+        said = server.handle({"cmd": "record_state"})["result"]
+        self.assertEqual(Path(said["path"]), path)
+        self.assertFalse(said["recording"])

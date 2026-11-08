@@ -48,7 +48,9 @@ These are now built, kept here as the worked examples of the rule:
 * **Takes**: `amphead/record.py` takes blocks and writes a wav, and knows nothing about where
   the blocks came from; `engine2.py` hands it the same block it sends to the device, so what is
   recorded is what is heard. The callback queues and a thread writes, because a disk must never
-  be able to stall audio. Nothing here uploads: the file is the handoff.
+  be able to stall audio. Nothing here uploads: the file is the handoff. `record.latest()` reads the
+  newest wav back out of the folder, so `take_state` survives an engine restart and the face can
+  still offer the last riff for playback and copying.
 * **Better errors**: `amphead/faults.py` turns the exceptions the loaders actually raise into
   one sentence with the next step, attached in the engine's dispatch so the tool, the pane and
   the rig report all get it without knowing the module exists.

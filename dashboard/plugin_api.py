@@ -28,11 +28,20 @@ _ROOT = Path(__file__).resolve().parent.parent
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-from amphead import lastchain, library as amp_library, limits, port, rigs, verdict  # noqa: E402
+from amphead import lastchain, library as amp_library, limits, port, rigs, settings, verdict  # noqa: E402
+from amphead import record as recording  # noqa: E402
 
 RIG = port.active()
 
 FLOOR = verdict.FLOOR
+
+
+def _saved_take() -> dict[str, Any]:
+    """The newest take on disk, so a face opened after the engine stopped still has a file."""
+    try:
+        return recording.latest(settings.path().parent / "recordings")
+    except Exception:
+        return {}
 
 
 @contextmanager
@@ -140,7 +149,8 @@ def state() -> dict[str, Any]:
                 "device": {"closed": True}, "meter": {"peak": 0.0}, "presets": [],
                 "capture": "", "cab": "", "tone": {}, "tone_name": "",
                 "aim": lastchain.load().get("aim") or "",
-                "aim_confidence": lastchain.load().get("aim_confidence") or ""}
+                "aim_confidence": lastchain.load().get("aim_confidence") or "",
+                "take": _saved_take()}
 
     peak, clip = 0.0, False
     master = live.get("master_db")
@@ -190,6 +200,7 @@ def state() -> dict[str, Any]:
         "gate_db": live.get("gate_db"),
         "aim": lastchain.load().get("aim") or "",
         "aim_confidence": lastchain.load().get("aim_confidence") or "",
+        "take": live.get("take") or _saved_take(),
         "stages": live.get("stages") or {},
         "samplerate": live.get("samplerate"),
         "blocksize": live.get("blocksize"),

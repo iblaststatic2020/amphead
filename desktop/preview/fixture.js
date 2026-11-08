@@ -29,8 +29,10 @@ const rig = {
   output_gain_db: 0,
   // Noise gate threshold in front of the amp: the bottom of the range is off.
   gate_db: -80,
-  // A take that is running, so the preview shows the strip lit the way a full take looks.
-  take: { recording: true, seconds: 42, path: 'recordings/take 2026-11-08 091500.wav' },
+  // A take already saved, so the preview shows the row that plays it and offers the path.
+  take: { recording: false, seconds: 37, saved: true,
+          name: 'take 2026-11-08 091500.wav',
+          path: 'C:/Users/Chris/AppData/Local/hermes/recordings/take 2026-11-08 091500.wav' },
   tone: { bass: 0, mid: 0, treble: 0 },
   capture: 'PEAVEY - 6506 - CLEAN - B0 - HIGH - G4.0',
   capture_path: CAPTURES[1].path,

@@ -18,6 +18,12 @@ const MUTED = { color: 'var(--ui-text-quaternary)' }
 const SECOND = { color: 'var(--ui-text-secondary)' }
 const ACCENT = { color: 'var(--ui-accent)' }
 
+// Seconds as a player says them, so a take's length reads the same in the strip and in a sentence.
+const clock = (secs) => {
+  const whole = Math.max(0, Math.round(Number(secs) || 0))
+  return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, '0')}`
+}
+
 const TONE_NAMES = ['bass', 'mid', 'treble']
 const TONE_LABELS = { bass: 'BASS', mid: 'MID', treble: 'TREBLE' }
 const TONE_RANGE = 12 // ±12 dB, same as the tone stack the engine runs
@@ -735,6 +741,141 @@ function Grille({ lit, heat }) {
   })
 }
 
+// The take strip: one press records, and a take that already exists is a file the player can hear
+// again and hand to anything else. The audio goes through the app's own `hermes-media://` scheme
+// with Range support, so a 24-bit wav seeks like any player and never rides through the JSON API.
+// The path is offered as a plain copy because the next thing a player does with a riff is paste it
+// somewhere: into chat, into a DAW, into a script.
+const mediaUrl = (path) => `hermes-media://stream/${encodeURIComponent(path)}`
+
+function TakeStrip({ take, recording, busy, running, onRecord, onSay }) {
+  const audio = useRef(null)
+  const [playing, setPlaying] = useState(false)
+  const [copied, setCopied] = useState('')
+  const saved = !recording && !!take.path
+
+  useEffect(() => {
+    setPlaying(false)
+    if (audio.current) audio.current.pause()
+  }, [take.path])
+
+  function toggle() {
+    const el = audio.current
+    if (!el) return
+    if (!el.paused) {
+      el.pause()
+      return
+    }
+    const started = el.play()
+    if (started && started.catch) started.catch(() => onSay('cannot play the take here'))
+  }
+
+  async function copy(what) {
+    try {
+      await navigator.clipboard.writeText(what)
+    } catch (_) {
+      // A renderer without the async clipboard still has the old selection copy.
+      const box = document.createElement('textarea')
+      box.value = what
+      document.body.appendChild(box)
+      box.select()
+      try { document.execCommand('copy') } finally { box.remove() }
+    }
+    setCopied('path copied')
+    setTimeout(() => setCopied(''), 1800)
+  }
+
+  const line = recording
+    ? `recording ${clock(take.seconds)} · what you hear is what is written`
+    : saved
+      ? `${clock(take.seconds)} · last take saved`
+      : 'rec writes what you hear to a wav'
+
+  const tiny = 'flex shrink-0 items-center rounded px-1.5 py-1 text-[0.5rem] font-semibold uppercase tracking-[0.08em]'
+
+  return jsxs('div', {
+    className: 'rounded-md px-2 py-1.5',
+    style: { ...WELL },
+    children: [
+      jsxs('div', {
+        className: 'flex items-center gap-2',
+        children: [
+          jsxs('button', {
+            type: 'button',
+            disabled: busy || !running,
+            onClick: onRecord,
+            className: 'flex shrink-0 items-center gap-1.5 rounded px-2 py-1 text-[0.5625rem] font-bold uppercase tracking-[0.1em]',
+            style: {
+              color: recording ? '#fff' : 'var(--ui-text-secondary)',
+              background: recording ? '#e5533d' : 'var(--ui-bg-quaternary)',
+              border: '1px solid var(--ui-stroke-secondary)',
+              opacity: running ? 1 : 0.4,
+              cursor: running && !busy ? 'pointer' : 'default'
+            },
+            children: [
+              jsx('span', {
+                className: 'inline-block h-1.5 w-1.5 rounded-full',
+                style: { background: recording ? '#fff' : '#e5533d' }
+              }),
+              jsx('span', { children: recording ? 'stop' : 'rec' })
+            ]
+          }),
+          jsx('span', {
+            className: 'min-w-0 flex-1 truncate text-[0.5rem] leading-tight',
+            style: recording ? SECOND : MUTED,
+            children: line
+          })
+        ]
+      }),
+      saved && jsxs('div', {
+        className: 'mt-1.5 flex items-center gap-1.5',
+        children: [
+          jsx('audio', {
+            ref: audio,
+            src: mediaUrl(take.path),
+            preload: 'metadata',
+            onPlay: () => setPlaying(true),
+            onPause: () => setPlaying(false),
+            onEnded: () => setPlaying(false),
+            style: { display: 'none' }
+          }),
+          jsx('button', {
+            type: 'button',
+            onClick: toggle,
+            'aria-label': playing ? 'stop the take' : 'play the take',
+            className: 'flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[0.5rem]',
+            style: {
+              color: 'var(--ui-text-secondary)',
+              background: 'var(--ui-bg-quaternary)',
+              border: '1px solid var(--ui-stroke-secondary)',
+              cursor: 'pointer'
+            },
+            children: playing ? '❚❚' : '▶'
+          }),
+          jsx('span', {
+            className: 'min-w-0 flex-1 truncate font-mono text-[0.5rem] leading-tight',
+            title: take.path,
+            style: MUTED,
+            children: take.name || take.path
+          }),
+          jsx('button', {
+            type: 'button',
+            onClick: () => copy(take.path),
+            className: tiny,
+            style: {
+              color: copied ? 'var(--ui-accent)' : 'var(--ui-text-secondary)',
+              background: 'var(--ui-bg-quaternary)',
+              border: '1px solid var(--ui-stroke-secondary)',
+              cursor: 'pointer'
+            },
+            children: copied || 'copy path'
+          })
+        ]
+      })
+    ]
+  })
+}
+
 function AmpFace({ rest }) {
   const client = useQueryClient()
   const shown = useOnScreen()
@@ -795,15 +936,6 @@ function AmpFace({ rest }) {
   // and how long it is, in place. No tooltip: a player watching the light needs the sentence.
   const take = s.take || {}
   const recording = !!take.recording
-  const clock = (secs) => {
-    const whole = Math.max(0, Math.round(Number(secs) || 0))
-    return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, '0')}`
-  }
-  const takeLine = recording
-    ? `recording ${clock(take.seconds)} · what you hear is what is written`
-    : take.path
-      ? `last take ${clock(take.seconds)} saved`
-      : 'rec writes what you hear to a wav' 
 
   async function act(path, body) {
     setBusy(true)
@@ -1094,37 +1226,13 @@ function AmpFace({ rest }) {
           }),
 
           // ---- the take, right under the knobs ----
-          jsxs('div', {
-            className: 'flex items-center gap-2 rounded-md px-2 py-1.5',
-            style: { ...WELL },
-            children: [
-              jsxs('button', {
-                type: 'button',
-                key: 'rec',
-                disabled: busy || !running,
-                onClick: () => act('/record', { on: !recording }),
-                className: 'flex shrink-0 items-center gap-1.5 rounded px-2 py-1 text-[0.5625rem] font-bold uppercase tracking-[0.1em]',
-                style: {
-                  color: recording ? '#fff' : 'var(--ui-text-secondary)',
-                  background: recording ? '#e5533d' : 'var(--ui-bg-quaternary)',
-                  border: '1px solid var(--ui-stroke-secondary)',
-                  opacity: running ? 1 : 0.4,
-                  cursor: running && !busy ? 'pointer' : 'default'
-                },
-                children: [
-                  jsx('span', {
-                    className: 'inline-block h-1.5 w-1.5 rounded-full',
-                    style: { background: recording ? '#fff' : '#e5533d' }
-                  }),
-                  jsx('span', { children: recording ? 'stop' : 'rec' })
-                ]
-              }),
-              jsx('span', {
-                className: 'min-w-0 flex-1 truncate text-[0.5rem] leading-tight',
-                style: recording ? SECOND : MUTED,
-                children: takeLine
-              })
-            ]
+          jsx(TakeStrip, {
+            take,
+            recording,
+            busy,
+            running,
+            onRecord: () => act('/record', { on: !recording }),
+            onSay: setSaid
           }),
 
           jsx(Meter, { peak, clip: clipped.current || !!reading.clip }),

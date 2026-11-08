@@ -184,7 +184,11 @@ amphead_rig action=paste text="amphead:friend | capture=Thing;cab=Thing 4x12"
 Press `rec` on the face, play, press `stop`. The amp writes what you hear, after the master, to a
 24-bit wav in a `recordings` folder beside the settings file, named for the minute you played. The
 strip under the knobs says the time as it runs and where the last take went, so the file is never
-somewhere you have to go looking for.
+somewhere you have to go looking for. Once it is saved the strip offers two buttons: `▶` plays the
+take in place through the app's own media scheme (the wav streams from disk with Range support, so
+seeking works and nothing is uploaded), and `copy path` puts the full path on the clipboard, ready to
+paste into chat, a DAW or a script. The strip also finds the newest take on disk after the engine has
+been restarted, so a riff from yesterday is still one press from being heard.
 
 ```
 amphead_record action=start name="verse riff"   # open a take now

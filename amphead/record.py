@@ -36,6 +36,37 @@ def _pcm24(block) -> bytes:
     return raw.tobytes()
 
 
+def latest(folder) -> dict:
+    """The newest take already on disk, so a face opened later still has a file to play.
+
+    A take lives in the engine's memory only while the engine runs. The file is the durable
+    part, so the answer to "what did I just play" has to come from the folder, not the process.
+    """
+    folder = Path(folder)
+    try:
+        files = [p for p in folder.glob("*.wav") if p.is_file()]
+        if not files:
+            return {}
+        newest = max(files, key=lambda p: p.stat().st_mtime)
+    except OSError:
+        return {}
+    seconds = 0.0
+    try:
+        with wave.open(str(newest), "rb") as wav:
+            rate = wav.getframerate()
+            if rate:
+                seconds = wav.getnframes() / float(rate)
+    except (OSError, EOFError, wave.Error):
+        seconds = 0.0
+    return {"recording": False,
+            "path": str(newest),
+            "name": newest.name,
+            "seconds": round(seconds, 2),
+            "peak_db": None,
+            "dropped": 0,
+            "saved": True}
+
+
 def _db(peak: float) -> float:
     peak = float(peak or 0.0)
     if peak <= 0.0:

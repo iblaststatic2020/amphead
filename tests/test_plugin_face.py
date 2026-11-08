@@ -328,3 +328,28 @@ class TestTheTakeIsOnTheFace(unittest.TestCase):
     def test_the_strip_only_offers_rec_when_the_engine_is_open(self):
         source = face()
         self.assertIn("disabled: busy || !running", source)
+
+
+class TestTheTakeCanBeHeardAgain(unittest.TestCase):
+    """A saved take is played where it sits and its path is one press from the clipboard."""
+
+    def test_playback_uses_the_apps_own_media_scheme(self):
+        source = face()
+        self.assertIn("hermes-media://stream/", source)
+        self.assertIn("encodeURIComponent(path)", source)
+
+    def test_the_play_button_toggles_the_element(self):
+        source = face()
+        self.assertIn("if (!el.paused)", source)
+        self.assertIn("el.play()", source)
+
+    def test_the_path_is_offered_as_a_plain_copy(self):
+        source = face()
+        self.assertIn("navigator.clipboard.writeText", source)
+        self.assertIn("'copy path'", source)
+
+    def test_the_copy_says_it_landed_where_the_player_is_looking(self):
+        self.assertIn("path copied", face())
+
+    def test_the_saved_row_only_appears_for_a_take_that_exists(self):
+        self.assertIn("const saved = !recording && !!take.path", face())
