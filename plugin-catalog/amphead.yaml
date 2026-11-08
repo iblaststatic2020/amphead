@@ -1,6 +1,6 @@
 name: amphead
 repo: https://github.com/iblaststatic2020/amphead
-sha: 3bfe093e75343471c8ad808d7d8afca2a09c1abe
+sha: d58bc5334bc4bd209007c0df5ca043c36ebc30fb
 title: AmpHead
 description: >-
   Turns Hermes into a guitar amp head. It starts its own low-latency audio engine (one duplex
@@ -8,7 +8,7 @@ description: >-
   driver), loads a captured tube amp (a .nam file made with Neural Amp Modeler) and a cabinet
   impulse, and gives you the knobs a head has: bass, mid, treble, input gain, output gain and
   master. It parks the master at -60 dB and stays in standby until you flip the Live switch,
-  arms at a measured -6 dB, keeps a sound as a named rig (capture, cabinet, tone, trims and
+  arms at the level it already had instead of jumping to a preset one, keeps a sound as a named rig (capture, cabinet, tone, trims and
   gate, never the master) that recalls in one press or travels as one line of text, and answers
   READY / STANDBY / PARKED / NO SIGNAL / NO CHAIN / CLIPPING / DEVICE CLOSED with the reason in a
   sentence, including the next step when a file it was handed will not load. A desktop pane is
@@ -22,7 +22,7 @@ tier: community
 category: tools
 requires_hermes: ">=0.22.0"
 docs_url: https://github.com/iblaststatic2020/amphead#readme
-version: "1.1.0"
+version: "1.1.1"
 readme: true
 platforms:
   - windows
