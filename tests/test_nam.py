@@ -3,6 +3,7 @@
 The golden file in fixtures/ was produced by the upstream `neural-amp-modeler`
 PyTorch package from a small random graph we generated ourselves, so this checks
 the maths without shipping anyone's capture or taking torch as a test dependency.
+It is plain two-column text rather than a .npz so the numbers are readable in a diff.
 """
 
 import json
@@ -20,7 +21,7 @@ if np is None:  # pragma: no cover
 
 FIXTURES = Path(__file__).parent / "fixtures"
 NAM = FIXTURES / "tiny_wavenet.nam"
-REF = FIXTURES / "tiny_wavenet_ref.npz"
+REF = FIXTURES / "tiny_wavenet_ref.txt"
 
 
 def stream(model, x, block):
@@ -32,8 +33,10 @@ def stream(model, x, block):
 class NamTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        data = np.load(REF)
-        cls.x, cls.y = data["x"], data["y"]
+        # Plain text on purpose: a reviewer and the install scanner can read every number, and a
+        # .npz is an archive the scanner has to treat as opaque.
+        data = np.loadtxt(REF)
+        cls.x, cls.y = data[:, 0].astype(np.float32), data[:, 1].astype(np.float32)
 
     def tmp(self, doc, name):
         import tempfile

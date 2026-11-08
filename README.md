@@ -105,15 +105,19 @@ Read-only unless you say `set`.
 
 The catalog asks for an explicit disclosure, so this is the whole list, not the flattering part.
 
-AmpHead runs one Python process of its own, the engine, in `.engine` beside the plugin. That process
+AmpHead runs one Python process of its own, the engine, spawned with a `python` that can import
+numpy and sounddevice: `.engine` beside the plugin if it is there, else `AMPHEAD_ENGINE_PYTHON` or
+the `engine_python` setting. The plugin never installs anything; `scripts/engine_env.ps1` builds
+that interpreter once with uv and pip, downloading exactly two pinned wheels (numpy 2.4.6,
+sounddevice 0.5.6) from PyPI, and that script is the only network access in this project. The engine
 opens the audio interface (exclusive kernel streaming on Windows, CoreAudio on macOS, ALSA on Linux)
 and keeps it open while the amp is on. It reads `.nam` captures and `.wav` cabinets from the folders
 named in a settings file (`%APPDATA%\amphead\settings.json` and the macOS/Linux equivalents), and
-writes that file only when you or your agent call `amphead_settings action=set`. `action="find"` walks
-Documents, Downloads, Desktop, Music and the cloud folders inside them, four levels deep, reading file
-names only. It remembers the last capture and cabinet in `~/.amphead2.json`. It makes no network
-calls, sends no telemetry, stores no credentials, and does not launch, steer or read any other
-application: there is no other application.
+writes that file only when you or your agent call `amphead_settings action=set`. `action="find"`
+walks Documents, Downloads, Desktop, Music and the cloud folders inside them, four levels deep,
+reading file names only. It remembers the last capture and cabinet in `~/.amphead2.json`. Once
+running it makes no network calls, sends no telemetry, stores no credentials, and does not launch,
+steer or read any other application: there is no other application.
 
 ## Honest limits
 

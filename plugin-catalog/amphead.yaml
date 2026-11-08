@@ -12,15 +12,7 @@ description: >-
   from the two files on the chain, a metre, the file pickers, and a dead man's switch that parks the
   master, disarms and bypasses every stage while proving the input is still arriving.
 
-  AmpHead runs one Python process of its own, the engine, in `.engine` beside the plugin. That process opens the
-  audio interface (exclusive kernel streaming on Windows, CoreAudio on macOS, ALSA on Linux) and keeps
-  it open while the amp is on. It reads `.nam` captures and `.wav` cabinets from the folders named in
-  a settings file (`%APPDATA%\amphead\settings.json` and the macOS/Linux equivalents), and writes
-  that file only when you or your agent call `amphead_settings action=set`. `action="find"` walks
-  Documents, Downloads, Desktop, Music and the cloud folders inside them, four levels deep, reading
-  file names only. It remembers the last capture and cabinet in `~/.amphead2.json`. It makes no
-  network calls, sends no telemetry, stores no credentials, and does not launch, steer or read any
-  other application: there is no other application.
+  AmpHead runs one Python process of its own, the engine, spawned with a `python` that can import numpy and sounddevice: `.engine` beside the plugin if it is there, else `AMPHEAD_ENGINE_PYTHON` or the `engine_python` setting. The plugin never installs anything; `scripts/engine_env.ps1` builds that interpreter once with uv and pip, downloading exactly two pinned wheels (numpy 2.4.6, sounddevice 0.5.6) from PyPI, and that script is the only network access in this project. The engine opens the audio interface (exclusive kernel streaming on Windows, CoreAudio on macOS, ALSA on Linux) and keeps it open while the amp is on. It reads `.nam` captures and `.wav` cabinets from the folders named in a settings file (`%APPDATA%\amphead\settings.json` and the macOS/Linux equivalents), and writes that file only when you or your agent call `amphead_settings action=set`. `action="find"` walks Documents, Downloads, Desktop, Music and the cloud folders inside them, four levels deep, reading file names only. It remembers the last capture and cabinet in `~/.amphead2.json`. Once running it makes no network calls, sends no telemetry, stores no credentials, and does not launch, steer or read any other application: there is no other application.
 maintainer: iblaststatic2020
 tier: community
 category: tools
@@ -36,7 +28,7 @@ known_issues:
   - Tested on Windows only. The macOS and Linux paths (device selection, settings location, engine discovery) have unit tests but have not been run by the author against a real install.
   - Low latency needs an interface with a kernel-streaming or exclusive driver; on a shared WMME pair it works but feels late, and the verdict reports the round trip rather than hiding it.
   - Tone comes from captures and cabinets you own; no amp is modelled in code, and without a capture and a cabinet the path is clean with a tone stack.
-  - The engine's first start installs numpy and sounddevice into `.engine` beside the plugin; `amphead_setup` says what is missing rather than failing silently.
+  - The plugin installs nothing. It needs an interpreter that can import numpy and sounddevice: the bundled `scripts/engine_env.ps1` builds one with uv and pip (two pinned wheels from PyPI, the only network use anywhere), or point `AMPHEAD_ENGINE_PYTHON` at your own. `amphead_setup` names what is missing instead of failing silently.
 capabilities:
   provides_tools:
     - amphead_ping

@@ -1,7 +1,7 @@
 name: amphead
 version: 1.0.0
 description: "Turn Hermes into a guitar amp: it starts its own low-latency audio engine, loads a NAM capture and a cabinet IR, gives you bass/mid/treble, input and output trims, and stays in standby until you flip the Live switch."
-author: "@static2020"
+author: "@iblaststatic2020"
 provides_tools:
   - amphead_ping
   - amphead_status

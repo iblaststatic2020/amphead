@@ -1,3 +1,11 @@
+"""Dev bench only, not part of the plugin.
+
+Compares amphead/nam.py against the upstream PyTorch implementation, so it needs
+`pip install torch neural-amp-modeler` in whatever interpreter runs it. Nothing the
+plugin ships imports torch or the upstream package; see tests/test_nam.py for the
+parity test that runs without either.
+"""
+
 import json, sys, time, glob
 import numpy as np
 import torch
