@@ -86,15 +86,35 @@ wall-clock budget.
 
 ## Stream health
 
-60 seconds live, 512 frames, chain armed, zero overflows and zero starved blocks.
-The hand-off queue between the two streams is primed with six blocks of silence
-before the output side starts pulling. With a 262 144-tap cabinet in the chain the
-first ten seconds used to starve two blocks (the queue was still being built, not
-drifting); six blocks of head start took that to zero over four 5-second windows.
+One duplex stream, 512 frames, chain armed with the 262 144-tap cabinet: ten seconds
+per run, zero starved blocks and zero overflows at every latency setting tested.
 
-One starved block at the very start of a run can still happen: the output stream
-asks for its first block before the input stream has produced one. It is silence at
-t=0, not a glitch mid-play.
+The engine used to run two independent streams and hand blocks over a queue. That
+queue sits in the signal path, so its depth was added latency: the six blocks of
+cushion that cured the starved start were also 70 ms between the string and the
+speaker, on top of the device's own 20 ms. A player hears that, and blames their
+hands. A duplex stream reads and writes in one callback, so there is nowhere for a
+queue to live and the mode name says `+queue` when the fallback is in use.
+
+## Latency
+
+The driver calls 10 ms per direction "low", which is 20 ms round trip. It honours a
+smaller request and reports back the figure it took:
+
+| asked per direction | reported round trip | blocks in 10 s (expect ~860) | starved |
+|---|---|---|---|
+| 3 ms | 6.0 ms | 242 | 0 |
+| 4 ms | 8.0 ms | 564 | 0 |
+| **5 ms** | **10.0 ms** | **850** | **0** |
+| 8 ms | 16.0 ms | 855 | 0 |
+| 10 ms | 20.0 ms | 860 | 0 |
+
+3 and 4 ms open without complaint but only deliver a quarter and two thirds of the
+blocks they should, i.e. the device is running behind without flagging a thing, so
+they are not usable however quiet the xrun counter is. 5 ms per direction is the
+tightest that holds realtime on this box and it is the default; `AMPHEAD_LATENCY_MS`
+raises it for a machine that cannot. Asking for more than the device suggests is
+always safe; asking for less is what has to be measured.
 
 ## The two trim knobs
 

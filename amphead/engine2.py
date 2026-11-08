@@ -1,10 +1,12 @@
 """The no-DAW engine: our own device, our own buffer, our own chain.
 
-Two streams, not one duplex stream. PortAudio's WASAPI duplex path pins the input
-side at about 20 ms whatever the block size, because it resamples between two
-endpoints. Two independent exclusive streams reported 5.8 ms each on an AudioBox
-USB, 11.6 ms round trip, and ran three seconds with zero overflows, so that is
-the shape this file builds.
+One duplex stream, not two. Two streams have to hand blocks over a queue, and every
+block standing in that queue is a block of delay between the string and the speaker:
+at 512 frames a six block cushion is 70 ms, which is enough to make a player feel
+late and blame their hands. A duplex stream reads and writes in the same callback,
+so there is nowhere for a queue to live and the latency is the device's alone. The
+two-stream path stays as a fallback for a driver that refuses a duplex open, and it
+says so in its mode name, because it costs delay a player can hear.
 
 Rules that hold whatever the chain is:
 
@@ -20,6 +22,7 @@ Rules that hold whatever the chain is:
 from __future__ import annotations
 
 import math
+import os
 import sys
 import threading
 import time
@@ -37,13 +40,18 @@ SAFE_MASTER_DB = -60.0
 ARM_MASTER_DB = -6.0
 METERS_HZ = 30.0
 
-#: Blocks of silence pushed into the hand-off queue when the streams open, so the
-#: output side starts with slack instead of chasing the input side from empty.
-# Slack the two clock domains can eat before the output thread has nothing to play. Measured
-# against a 262144-tap cabinet: two or three blocks arrived early in the first ten seconds and
-# then nothing, i.e. the queue was being *built* on a device that had already started pulling,
-# not drifting. Six blocks of head start covers the open and the first transforms.
-PRIME_BLOCKS = 6
+#: Blocks of silence pushed into the hand-off queue on the two-stream fallback only.
+# The queue sits in the signal path, so this number *is* added latency: two blocks of
+# cushion is 23 ms at 512 frames, and six was 70 ms. It is only ever paid when the
+# driver refuses a duplex open, which the mode name reports out loud.
+PRIME_BLOCKS = 2
+
+#: Latency asked of each direction, in milliseconds. The driver's own "low" on this
+#: machine is 10 ms per side, which is 20 ms round trip and audible enough to make a
+#: player feel late. The same device honours a smaller request (it reports back the
+#: figure asked for), and every millisecond here is a millisecond between the string
+#: and the speaker. AMPHEAD_LATENCY_MS overrides it for a driver that cannot hold it.
+TARGET_LATENCY_MS = float(os.environ.get("AMPHEAD_LATENCY_MS") or 5.0)
 
 #: Frames per callback. 512 is the measured sweet spot here: the device reports the
 #: same 20 ms round trip at 128, 256 and 512 because kernel-streaming latency comes
@@ -168,6 +176,7 @@ class Engine:
         self._lock = threading.Lock()
         self._chain = Chain()
         self._meter = Meter()
+        self._duplex = None
         self._in_stream = None
         self._out_stream = None
         self._frames: deque = deque(maxlen=8)
@@ -203,7 +212,8 @@ class Engine:
         return self.update(**{name: float(db)})
 
     # lifecycle -------------------------------------------------------------
-    def _open(self, sd, exclusive: bool, wasapi: bool = True):
+    def _open_split(self, sd, exclusive: bool, wasapi: bool = True):
+        """Two independent streams: the fallback, and the one that costs a queue."""
         # WDM-KS and MME devices reject WASAPI-only stream info outright, so the
         # setting is only ever attached to an endpoint that speaks WASAPI.
         settings = sd.WasapiSettings(exclusive=True) if (exclusive and wasapi) else None
@@ -229,12 +239,34 @@ class Engine:
         )
         return inn, out
 
-    def start(self) -> str:
-        """Open both streams and report which mode took.
+    def _open_duplex(self, sd, exclusive: bool, wasapi: bool = True, latency=None):
+        """One stream, both directions.
 
-        Order is deliberate: kernel streaming when the driver offers it, then WASAPI
-        exclusive, then WASAPI shared. On the AudioBox the three are 20 ms, refused,
-        and 112 ms round trip, so "it opened" is not the same as "it plays".
+        The input device and the output device are two endpoints of one interface, so
+        the stream is opened with a device pair. Nothing is buffered between them: the
+        block the input hands over is the block the output is waiting for, which is why
+        this path has no prime and no queue depth to argue about.
+        """
+        settings = sd.WasapiSettings(exclusive=True) if (exclusive and wasapi) else None
+        return sd.Stream(
+            device=(self.input_device, self.output_device),
+            samplerate=self.samplerate,
+            blocksize=self.blocksize,
+            channels=(max(self.channels, self.input_channels, self.input_channel + 1), 2),
+            dtype="float32",
+            latency="low" if latency is None else latency,
+            callback=self._on_duplex,
+            extra_settings=settings,
+        )
+
+    def start(self) -> str:
+        """Open the device and report which mode took.
+
+        Order is deliberate: duplex first, because a single stream cannot hold the
+        signal; then the two-stream fallback, which can and therefore does. Then which
+        timing model: kernel streaming when the driver offers it, then WASAPI exclusive,
+        then WASAPI shared. On the AudioBox those are 20 ms, refused and 112 ms, so
+        "it opened" is not the same as "it plays".
         """
         import sounddevice as sd
 
@@ -258,27 +290,43 @@ class Engine:
         wasapi = "WASAPI" in hostapi(self.input_device) or "WASAPI" in hostapi(self.output_device)
         named = "wdm-ks" if "WDM-KS" in hostapi(self.output_device) else (
             "wasapi" if wasapi else "other")
-        attempts = [(True, wasapi, f"{named}-exclusive" if wasapi else named),
-                    (False, wasapi, f"{named}-low" if not wasapi else "wasapi-shared")]
+        timing = [(True, f"{named}-exclusive" if not wasapi else "wasapi-exclusive"),
+                  (False, "wasapi-shared" if wasapi else named)]
+        # Duplex before split at each timing model, and never the other way round: the
+        # fallback works, so it would win every time and quietly cost a queue. Inside
+        # duplex, the tight request comes first and the driver's own "low" is the
+        # safety net, so a driver that refuses 5 ms still gets a queue-free stream.
+        asked = TARGET_LATENCY_MS / 1000.0
+        attempts = []
+        for exclusive, label in timing:
+            attempts.append(("duplex", exclusive, label, asked))
+            attempts.append(("duplex", exclusive, label + "-low", None))
+            attempts.append(("split", exclusive, label + "-queue", None))
+
         last: Exception | None = None
-        for exclusive, wants_wasapi, label in attempts:
+        for kind, exclusive, label, latency in attempts:
             try:
-                self._in_stream, self._out_stream = self._open(
-                    sd, exclusive=exclusive, wasapi=wants_wasapi)
-            except Exception as exc:
-                last = exc
-                self._in_stream = self._out_stream = None
-                continue
-            try:
-                # Input first, then cushion, then output: the output callback is the
-                # one that cannot wait, so it must never be the first to need a block.
-                import numpy as np
-                self._in_stream.start()
-                with self._frames_lock:
-                    self._frames.clear()
-                    for _ in range(PRIME_BLOCKS):
-                        self._frames.append(np.zeros(self.blocksize, dtype=np.float32))
-                self._out_stream.start()
+                if kind == "duplex":
+                    stream = self._open_duplex(sd, exclusive=exclusive, wasapi=wasapi,
+                                               latency=latency)
+                    stream.start()
+                    self._duplex = stream
+                    self._in_stream = self._out_stream = None
+                else:
+                    import numpy as np
+
+                    inn, out = self._open_split(sd, exclusive=exclusive, wasapi=wasapi)
+                    # Input first, then cushion, then output: the output callback is the
+                    # one that cannot wait, so it must never be the first to need a block.
+                    inn.start()
+                    with self._frames_lock:
+                        self._frames.clear()
+                        for _ in range(PRIME_BLOCKS):
+                            self._frames.append(np.zeros(self.blocksize, dtype=np.float32))
+                    out.start()
+                    self._in_stream, self._out_stream = inn, out
+                    self._duplex = None
+                    label = f"{label}+queue"
             except Exception as exc:
                 last = exc
                 self.stop()
@@ -289,24 +337,30 @@ class Engine:
         raise RuntimeError(self._last_error)
 
     def stop(self) -> None:
-        for stream in (self._in_stream, self._out_stream):
+        for stream in (self._duplex, self._in_stream, self._out_stream):
             if stream is not None:
                 try:
                     stream.stop()
                     stream.close()
                 except Exception:
                     pass
-        self._in_stream = self._out_stream = None
+        self._duplex = self._in_stream = self._out_stream = None
         self.mode = None
 
     @property
     def running(self) -> bool:
-        return self._in_stream is not None and self._in_stream.active
+        stream = self._duplex if self._duplex is not None else self._in_stream
+        return stream is not None and stream.active
 
     @property
     def latency_ms(self) -> float | None:
+        """What the device charges, in and out. A queue on the fallback is extra."""
         if not self.running:
             return None
+        if self._duplex is not None:
+            said = self._duplex.latency
+            pair = said if isinstance(said, (tuple, list)) else (said, said)
+            return (float(pair[0]) + float(pair[1])) * 1000.0
         return (self._in_stream.latency + self._out_stream.latency) * 1000.0
 
     def panic(self) -> Chain:
@@ -361,7 +415,8 @@ class Engine:
         outdata[:, 0] = block
         outdata[:, 1] = block
 
-    def _process_block(self, indata, frames: int) -> None:
+    def _render(self, indata, frames: int):
+        """One block in, one block out. The same code on both device paths."""
         import numpy as np
 
         chain = self._chain
@@ -373,15 +428,33 @@ class Engine:
         self._meter.stamp = time.time()
 
         if not chain.armed:
-            self._blank_out(frames)
-            return
+            self._meter.peak_out = 0.0
+            self._meter.rms_out = 0.0
+            return np.zeros(frames, dtype=np.float32)
 
         y = process_chain(x, chain)
         self._meter.peak_out = float(np.max(np.abs(y))) if y.size else 0.0
         self._meter.rms_out = float(np.sqrt(np.mean(np.square(y)))) if y.size else 0.0
         if self._capturing:
             self._capture.append(y.copy())
-        self._write_out(y)
+        return y
+
+    def _on_duplex(self, indata, outdata, frames, time_info, status) -> None:
+        """Read, process, write: one callback, so no block can stand in a queue."""
+        try:
+            if status:
+                self._count(status)
+            y = self._render(indata, frames)
+        except Exception as exc:                      # never let the callback raise
+            self._last_error = f"{type(exc).__name__}: {exc}"
+            outdata[:] = 0.0
+            return
+        outdata[:, 0] = y
+        outdata[:, 1] = y
+
+    def _process_block(self, indata, frames: int) -> None:
+        """The two-stream path: render, then hand the block over the queue."""
+        self._write_out(self._render(indata, frames))
 
     def _write_out(self, y) -> None:
         # Input and output are separate streams, so the processed block is handed
