@@ -196,8 +196,9 @@ class EngineClient:
     # the wire --------------------------------------------------------------
     def call(self, timeout: float | None = None, **request: Any) -> dict:
         if not self.running:
-            raise EngineGone(f"{LABEL} is not running. Start it with amphead_setup, or play "
-                             f"by installing the engine: this plugin ships it.")
+            raise EngineGone(f"{LABEL} is not running. Start it with amphead_setup; if it refuses, "
+                             f"the plugin's numpy and sounddevice are missing: reinstall with "
+                             f"`hermes plugins install amphead --yes-deps`.")
         proc = self._proc
         assert proc is not None and proc.stdin is not None and proc.stdout is not None
         payload = json.dumps(request) + "\n"
