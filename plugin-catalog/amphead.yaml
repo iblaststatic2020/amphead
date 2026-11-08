@@ -1,6 +1,6 @@
 name: amphead
 repo: https://github.com/iblaststatic2020/amphead
-sha: 5763cf3588a3bc775380d4a7ff8ee9d36685b87e
+sha: c5ddc85e3d2574b9224506686abd45c44ef504c5
 title: AmpHead
 description: >-
   Turns Hermes into a guitar amp head. It starts its own low-latency audio engine (one duplex
@@ -22,7 +22,7 @@ tier: community
 category: tools
 requires_hermes: ">=0.22.0"
 docs_url: https://github.com/iblaststatic2020/amphead#readme
-version: "1.1.1"
+version: "1.1.2"
 readme: true
 platforms:
   - windows
