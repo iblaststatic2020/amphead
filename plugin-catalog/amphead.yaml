@@ -1,6 +1,6 @@
 name: amphead
 repo: https://github.com/iblaststatic2020/hermes-reaper-amp
-sha: 7b1c9201767f52d34770f8de44d9d6b8201c7865
+sha: a10384ffaf9bba6facb8ee19bc4564dc461e7779
 title: AmpHead
 description: >-
   Turns Hermes into a guitar amp. It starts its own low-latency audio engine (one duplex stream on
