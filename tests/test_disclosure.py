@@ -70,10 +70,21 @@ class TheDisclosure(unittest.TestCase):
         self.assertEqual(catalog, readme, "one paragraph, two copies, or they will drift")
 
     def test_the_second_process_is_disclosed(self):
-        """A background engine is the kind of thing a reviewer finds and turns into a request."""
+        """A background engine is the kind of thing a reviewer finds and turns into a request.
+
+        The reviewer also has to know where its two packages come from, since the plugin no
+        longer ships or fetches an interpreter of its own.
+        """
         both = f"{catalog_description()} {readme_section()}"
-        for fact in ("one Python process of its own", ".engine", "beside the plugin"):
+        for fact in ("one Python process of its own", "pyproject.toml", "PyPI",
+                     "hermes plugins install"):
             self.assertIn(fact, both)
+
+    def test_the_engine_dependencies_match_the_pins_hermes_already_uses(self):
+        """A plugin pin that fights Hermes's own audio extra makes the whole install unsolvable."""
+        project = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+        for pin in ("numpy==2.5.4", "sounddevice==0.5.6"):
+            self.assertIn(pin, project)
 
     def test_the_audio_device_is_disclosed_with_the_host_apis(self):
         both = f"{catalog_description()} {readme_section()}"

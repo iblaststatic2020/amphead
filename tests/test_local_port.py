@@ -9,6 +9,7 @@ opening an interface or making a sound.
 import os
 import pathlib
 import subprocess
+import sys
 import unittest
 from unittest import mock
 
@@ -142,11 +143,37 @@ class InterpreterTest(unittest.TestCase):
         finally:
             del os.environ["AMPHEAD_ENGINE_PYTHON"]
 
-    def test_a_venv_beside_the_plugin_is_found_without_being_configured(self):
-        """The pane runs in Hermes's Python, so the venv has to be discoverable, not typed."""
+    def test_the_plugin_runs_the_engine_in_the_python_hermes_gave_it(self):
+        """`hermes plugins install` puts numpy and sounddevice in this very process.
+
+        So the interpreter to trust first is the one already running: no second install,
+        no script, no path typed into a setting.
+        """
         os.environ.pop("AMPHEAD_ENGINE_PYTHON", None)
-        found = local_port.engine_python()
-        self.assertTrue(os.path.isfile(found))
+        with mock.patch.object(local_port, "_able", lambda p: str(p) == sys.executable):
+            self.assertEqual(local_port.engine_python(), sys.executable)
+
+    def test_a_venv_beside_the_plugin_is_the_fallback_when_the_host_is_thin(self):
+        """For a checkout whose Hermes never installed the dependencies, .engine still works."""
+        os.environ.pop("AMPHEAD_ENGINE_PYTHON", None)
+        beside = str(pathlib.Path(local_port.__file__).resolve().parent.parent /
+                     ".engine" / "Scripts" / "python.exe")
+        with mock.patch.object(local_port, "_able", lambda p: str(p) == beside):
+            self.assertEqual(local_port.engine_python(), beside)
+
+    def test_a_thin_host_and_no_venv_names_the_host_every_time(self):
+        """The refusal has to name a real interpreter, or the message is useless."""
+        os.environ.pop("AMPHEAD_ENGINE_PYTHON", None)
+        with mock.patch.object(local_port, "_able", lambda p: False):
+            self.assertEqual(local_port.engine_python(), sys.executable)
+
+    def test_the_probe_is_asked_once_per_interpreter(self):
+        local_port._ABLE.clear()
+        with mock.patch.object(local_port.subprocess, "run",
+                               return_value=subprocess.CompletedProcess([], 0, "", "")) as run:
+            local_port._able("C:/probe/python.exe")
+            local_port._able("C:/probe/python.exe")
+        self.assertEqual(run.call_count, 1)
 
     def test_the_capability_check_runs_in_the_engine_not_here(self):
         """A rig must not refuse because the pane's own Python is thin."""

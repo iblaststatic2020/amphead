@@ -1,0 +1,9 @@
+[project]
+name = "amphead"
+version = "1.1.0"
+description = "Guitar amp head for Hermes: a low-latency engine that plays Neural Amp Modeler captures."
+requires-python = ">=3.12"
+dependencies = [
+    "numpy==2.5.4",
+    "sounddevice==0.5.6",
+]

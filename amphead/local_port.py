@@ -52,14 +52,37 @@ class EngineSilent(port.RigTimeout):
     """The engine did not answer in time."""
 
 
+_ABLE: dict[str, bool] = {}
+
+
+def _able(python: str) -> bool:
+    """Whether this interpreter can host the engine, asked once and remembered.
+
+    A subprocess probe is the only honest answer: the pane's own interpreter may be thin,
+    and a configured path may point at a Python that was since removed.
+    """
+    key = str(python)
+    if key not in _ABLE:
+        try:
+            done = subprocess.run([key, "-c", "import numpy, sounddevice"],
+                                  capture_output=True, timeout=30)
+            _ABLE[key] = done.returncode == 0
+        except (OSError, subprocess.SubprocessError):
+            _ABLE[key] = False
+    return _ABLE[key]
+
+
 def engine_python(explicit: str | None = None) -> str:
     """The interpreter that can host the engine, in the order a person would look.
 
-    An explicit argument, then AMPHEAD_ENGINE_PYTHON, then the virtualenv this repo keeps
-    beside itself (.engine), then this process's own interpreter. The venv step is the one
-    that matters: Hermes runs the plugin in its own Python, which has no numpy and no
-    PortAudio, so "press Setup in the pane" would otherwise answer "install numpy" to a
-    player who already has an engine that runs.
+    An explicit argument, then AMPHEAD_ENGINE_PYTHON, then the `engine_python` setting,
+    then this process's own interpreter, then a virtualenv kept beside the plugin for
+    development (.engine). The process's own interpreter comes first because Hermes
+    installs the plugin's `pyproject.toml` dependencies into the environment it runs the
+    plugin in: after `hermes plugins install`, the engine needs no second install, no
+    script, and no path typed anywhere. Each candidate is asked whether it can import
+    numpy and sounddevice before it is trusted, so a stale setting cannot pick a Python
+    that has since lost them.
     """
     if explicit:
         return explicit
@@ -72,10 +95,14 @@ def engine_python(explicit: str | None = None) -> str:
     if chosen and Path(chosen).is_file():
         return chosen
     root = Path(__file__).resolve().parent.parent
+    candidates = [sys.executable]
     for relative in ("Scripts/python.exe", "bin/python3", "bin/python"):
         candidate = root / ".engine" / relative
         if candidate.is_file():
-            return str(candidate)
+            candidates.append(str(candidate))
+    for candidate in candidates:
+        if _able(candidate):
+            return candidate
     return sys.executable
 
 

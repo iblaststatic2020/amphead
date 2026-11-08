@@ -534,13 +534,12 @@ def _settings_path() -> str:
 
 
 def _install_reason() -> str:
-    """Why the engine cannot start, in the engine's own words."""
+    """Why the engine cannot start, and the one command that fixes it."""
     from . import local_port
-    try:
-        local_port.engine_python(None)
-    except local_port.EngineNotInstalled as exc:
-        return str(exc)
-    return "the configured interpreter cannot import numpy and sounddevice"
+    python = local_port.engine_python(None)
+    return (f"the interpreter Hermes runs this plugin in ({python}) cannot import numpy "
+            f"and sounddevice | fix: hermes plugins install amphead --enable --yes-deps "
+            f"(Hermes installs the two packages this plugin declares)")
 
 
 def handle_settings(args: dict[str, Any], **_kw) -> str:

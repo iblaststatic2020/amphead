@@ -16,13 +16,13 @@ description: >-
   pickers, and a dead man's switch that parks the master, disarms and bypasses every stage while
   proving the input is still arriving.
 
-  AmpHead runs one Python process of its own, the engine, spawned with a `python` that can import numpy and sounddevice: `.engine` beside the plugin if it is there, else `AMPHEAD_ENGINE_PYTHON` or the `engine_python` setting. The plugin never installs anything; `scripts/engine_env.ps1` builds that interpreter once with uv and pip, downloading exactly two pinned wheels (numpy 2.4.6, sounddevice 0.5.6) from PyPI, and that script is the only network access in this project. The engine opens the audio interface (exclusive kernel streaming on Windows, CoreAudio on macOS, ALSA on Linux) and keeps it open while the amp is on. It reads `.nam` captures and `.wav` cabinets from the folders named in a settings file (`%APPDATA%\amphead\settings.json` and the macOS/Linux equivalents), and writes that file only when you or your agent call `amphead_settings action=set`. `action="find"` walks Documents, Downloads, Desktop, Music and the cloud folders inside them, four levels deep, reading file names only, and runs only when a person presses the search in the pane or asks for it in chat. It remembers the last capture and cabinet in `~/.amphead2.json`, and writes `.wav` takes to a `recordings` folder beside its settings file when you press record. Once running it makes no network calls, sends no telemetry, stores no credentials, and does not launch, steer or read any other application: there is no other application. `amphead_aim` reads the same file names, nothing else: no audio is opened unless you pass `action="measure"`, which reads the two wav files you name and writes nothing. It stores one line of its own answer in `~/.amphead2.json` so the face can show what was last asked for.
+  AmpHead runs one Python process of its own, the engine, in the interpreter Hermes already runs the plugin in. Its two dependencies, numpy and sounddevice, are declared in `pyproject.toml`, so a normal `hermes plugins install` asks once and installs them: that is the only install step, and there is no second interpreter to build or path to type. Hermes downloads those two pinned wheels from PyPI, pinned as numpy 2.5.4 and sounddevice 0.5.6; `scripts/engine_env.ps1` exists only for a bare checkout that Hermes has never installed, and it is the only other network access in this project. The engine opens the audio interface (exclusive kernel streaming on Windows, CoreAudio on macOS, ALSA on Linux) and keeps it open while the amp is on. It reads `.nam` captures and `.wav` cabinets from the folders named in a settings file (`%APPDATA%\amphead\settings.json` and the macOS/Linux equivalents), and writes that file only when you or your agent call `amphead_settings action=set`. `action="find"` walks Documents, Downloads, Desktop, Music and the cloud folders inside them, four levels deep, reading file names only, and runs only when a person presses the search in the pane or asks for it in chat. It remembers the last capture and cabinet in `~/.amphead2.json`, and writes `.wav` takes to a `recordings` folder beside its settings file when you press record. Once running it makes no network calls, sends no telemetry, stores no credentials, and does not launch, steer or read any other application: there is no other application. `amphead_aim` reads the same file names, nothing else: no audio is opened unless you pass `action="measure"`, which reads the two wav files you name and writes nothing. It stores one line of its own answer in `~/.amphead2.json` so the face can show what was last asked for.
 maintainer: iblaststatic2020
 tier: community
 category: tools
 requires_hermes: ">=0.22.0"
 docs_url: https://github.com/iblaststatic2020/amphead#readme
-version: "1.0.0"
+version: "1.1.0"
 readme: true
 platforms:
   - windows
@@ -33,7 +33,7 @@ known_issues:
   - TUNE closes and reopens the audio device several times while it measures block sizes (up to about 20 seconds, silent, chain armed at -60 dB), then leaves the amp as it found it.
   - Low latency needs an interface with a kernel-streaming or exclusive driver; on a shared WMME pair it works but feels late, and the verdict reports the round trip rather than hiding it.
   - Tone comes from captures and cabinets you own; no amp is modelled in code, and without a capture and a cabinet the path is clean with a tone stack.
-  - The plugin installs nothing. It needs an interpreter that can import numpy and sounddevice: the bundled `scripts/engine_env.ps1` builds one with uv and pip (two pinned wheels from PyPI, the only network use anywhere), or point `AMPHEAD_ENGINE_PYTHON` at your own. `amphead_setup` names what is missing instead of failing silently.
+  - The engine is Python: numpy and sounddevice, declared in the plugin's `pyproject.toml` and installed by `hermes plugins install` after one consent prompt. Hermes must run on Python 3.12 or newer (numpy 2.5.4's floor). A bare checkout that Hermes never installed can use `scripts/engine_env.ps1` instead; `amphead_setup` names what is missing instead of failing silently.
 capabilities:
   provides_tools:
     - amphead_ping
@@ -47,6 +47,8 @@ capabilities:
     - amphead_set
     - amphead_settings
     - amphead_aim
+    - amphead_rig
+    - amphead_record
   provides_hooks: []
   provides_middleware: []
   requires_env: []

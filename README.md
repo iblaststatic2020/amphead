@@ -215,21 +215,22 @@ there.
 
 The catalog asks for an explicit disclosure, so this is the whole list, not the flattering part.
 
-AmpHead runs one Python process of its own, the engine, spawned with a `python` that can import
-numpy and sounddevice: `.engine` beside the plugin if it is there, else `AMPHEAD_ENGINE_PYTHON` or
-the `engine_python` setting. The plugin never installs anything; `scripts/engine_env.ps1` builds
-that interpreter once with uv and pip, downloading exactly two pinned wheels (numpy 2.4.6,
-sounddevice 0.5.6) from PyPI, and that script is the only network access in this project. The engine
-opens the audio interface (exclusive kernel streaming on Windows, CoreAudio on macOS, ALSA on Linux)
-and keeps it open while the amp is on. It reads `.nam` captures and `.wav` cabinets from the folders
-named in a settings file (`%APPDATA%\amphead\settings.json` and the macOS/Linux equivalents), and
-writes that file only when you or your agent call `amphead_settings action=set`. `action="find"`
-walks Documents, Downloads, Desktop, Music and the cloud folders inside them, four levels deep,
-reading file names only, and runs only when a person presses the search in the pane or asks for it
-in chat. It remembers the last capture and cabinet in `~/.amphead2.json`, and writes `.wav` takes to a
-`recordings` folder beside its settings file when you press record. Once
-running it makes no network calls, sends no telemetry, stores no credentials, and does not launch,
-steer or read any other application: there is no other application.
+AmpHead runs one Python process of its own, the engine, in the interpreter Hermes already runs the
+plugin in. Its two dependencies, numpy and sounddevice, are declared in `pyproject.toml`, so a
+normal `hermes plugins install` asks once and installs them: that is the only install step, and
+there is no second interpreter to build or path to type. Hermes downloads those two pinned wheels
+from PyPI, pinned as numpy 2.5.4 and sounddevice 0.5.6; `scripts/engine_env.ps1` exists only for a
+bare checkout that Hermes has never installed, and it is the only other network access in this
+project. The engine opens the audio interface (exclusive kernel streaming on Windows, CoreAudio on
+macOS, ALSA on Linux) and keeps it open while the amp is on. It reads `.nam` captures and `.wav`
+cabinets from the folders named in a settings file (`%APPDATA%\amphead\settings.json` and the
+macOS/Linux equivalents), and writes that file only when you or your agent call
+`amphead_settings action=set`. `action="find"` walks Documents, Downloads, Desktop, Music and the
+cloud folders inside them, four levels deep, reading file names only, and runs only when a person
+presses the search in the pane or asks for it in chat. It remembers the last capture and cabinet in
+`~/.amphead2.json`, and writes `.wav` takes to a `recordings` folder beside its settings file when
+you press record. Once running it makes no network calls, sends no telemetry, stores no credentials,
+and does not launch, steer or read any other application: there is no other application.
 
 `amphead_aim` reads the same file names, nothing else: no audio is opened unless you pass
 `action="measure"`, which reads the two wav files you name and writes nothing. It stores one line of
@@ -305,5 +306,6 @@ Both interpreters get through the suite: the engine interpreter runs the DSP and
 plugin interpreter runs the dashboard tests, and each skips the handful of tests that need what the
 other one has.
 
-Install it into Hermes with `hermes plugins install iblaststatic2020/amphead --enable`
-while the repo is still private, or from the catalog once it is public.
+Install it into Hermes with `hermes plugins install iblaststatic2020/amphead --enable` and accept the
+Python dependency prompt: numpy and sounddevice come with the plugin in one step, and the engine runs
+in the interpreter Hermes installed them into.
