@@ -1,6 +1,6 @@
 name: amphead
 repo: https://github.com/iblaststatic2020/amphead
-sha: c5ddc85e3d2574b9224506686abd45c44ef504c5
+sha: 902c995386697ddf026a0c783ccccfb152451198
 title: AmpHead
 description: >-
   Turns Hermes into a guitar amp head. It starts its own low-latency audio engine (one duplex
@@ -22,7 +22,7 @@ tier: community
 category: tools
 requires_hermes: ">=0.22.0"
 docs_url: https://github.com/iblaststatic2020/amphead#readme
-version: "1.1.2"
+version: "1.1.3"
 readme: true
 platforms:
   - windows
@@ -30,7 +30,8 @@ platforms:
   - linux
 known_issues:
   - Tested on Windows only. The macOS and Linux paths (device selection, settings location, engine discovery) have unit tests but have not been run by the author against a real install.
-  - TUNE closes and reopens the audio device several times while it measures block sizes (up to about 20 seconds, silent, chain armed at -60 dB), then leaves the amp as it found it.
+  - TUNE closes and reopens the audio device once per block size while it measures (six seconds each, about 45 seconds in all, silent, chain armed at -60 dB), then confirms the pick for ten more and leaves the amp as it found it.
+  - Most .nam captures are 48 kHz. The engine reopens the stream at the capture's rate when the driver allows it; where the driver only offers one rate (the AudioBox USB in Windows is 44.1 kHz only), the capture still loads and the readout names the tone it is not getting (about 8% dark) instead of refusing it.
   - Low latency needs an interface with a kernel-streaming or exclusive driver; on a shared WMME pair it works but feels late, and the verdict reports the round trip rather than hiding it.
   - Tone comes from captures and cabinets you own; no amp is modelled in code, and without a capture and a cabinet the path is clean with a tone stack.
   - The engine is Python: numpy and sounddevice, declared in the plugin's `pyproject.toml` and installed by `hermes plugins install` after one consent prompt. Hermes must run on Python 3.12 or newer (numpy 2.5.4's floor). `amphead_setup` names what is missing instead of failing silently.
