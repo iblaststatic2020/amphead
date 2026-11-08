@@ -1,6 +1,6 @@
 name: amphead
 repo: https://github.com/iblaststatic2020/amphead
-sha: f7136e75fc6d54e8e3bde0a3be0fb9c23a1e7104
+sha: 0ed02dd8a4407451c7311f4f8329f441c5d78446
 title: AmpHead
 description: >-
   Turns Hermes into a guitar amp head. It starts its own low-latency audio engine (one duplex
@@ -22,7 +22,7 @@ tier: community
 category: tools
 requires_hermes: ">=0.22.0"
 docs_url: https://github.com/iblaststatic2020/amphead#readme
-version: "1.1.4"
+version: "1.1.5"
 readme: true
 platforms:
   - windows
@@ -30,7 +30,7 @@ platforms:
   - linux
 known_issues:
   - Tested on Windows only. The macOS and Linux paths (device selection, settings location, engine discovery) have unit tests but have not been run by the author against a real install.
-  - TUNE closes and reopens the audio device once per block size while it measures (six seconds each, about 45 seconds in all, silent, chain armed at -60 dB), then confirms the pick for ten more and leaves the amp as it found it.
+  - TUNE closes and reopens the audio device once per block size while it measures (six seconds each, about 45 seconds in all, silent, chain armed at -60 dB), then confirms the pick for ten more and leaves the amp as it found it. It runs on its own thread: the pane stays live, says the current phase, and only the knobs and file pickers wait.
   - Most .nam captures are 48 kHz. The engine reopens the stream at the capture's rate when the driver allows it; where the driver only offers one rate (the AudioBox USB in Windows is 44.1 kHz only), the capture still loads and the readout names the tone it is not getting (about 8% dark) instead of refusing it.
   - Low latency needs an interface with a kernel-streaming or exclusive driver; on a shared WMME pair it works but feels late, and the verdict reports the round trip rather than hiding it.
   - Tone comes from captures and cabinets you own; no amp is modelled in code, and without a capture and a cabinet the path is clean with a tone stack.
