@@ -1,13 +1,14 @@
 name: amphead
 repo: https://github.com/iblaststatic2020/hermes-reaper-amp
-sha: eeab69bb34861d9747a6730f48b9b05866bd7d48
+sha: b882022b034ce7d1d070f7d34c9b4f971710c163
 title: AmpHead
 description: >-
   Turns Hermes into a guitar amp. It starts its own low-latency audio engine (one duplex stream on
   the interface, 256-frame blocks, about 16 ms round trip on a kernel-streaming driver), loads a NAM
   capture and a cabinet IR, and gives you the knobs a head has: bass, mid, treble, input gain,
   output gain and master. It parks the master at -60 dB and stays in standby until you flip the Live
-  switch, arms at a measured -6 dB, and answers READY / STANDBY / NO SIGNAL / NO CHAIN / CLIPPING /
+  switch, arms at a measured -6 dB, keeps a sound as a named rig (capture, cabinet, tone, trims and
+  gate, never the master) that recalls in one press or travels as one line of text, and answers READY / STANDBY / NO SIGNAL / NO CHAIN / CLIPPING /
   DEVICE CLOSED with the reason in a sentence. A desktop pane is drawn as an amp head: the tone named
   from the two files on the chain, a metre, the file pickers, and a dead man's switch that parks the
   master, disarms and bypasses every stage while proving the input is still arriving.
