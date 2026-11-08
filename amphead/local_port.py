@@ -18,7 +18,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from . import port
+from . import limits, port
 
 LABEL = "AmpHead 2"
 
@@ -340,7 +340,7 @@ class AmpHead2Rig:
                 "name": name,
                 "fmt": f"{raw:+.1f} dB" if abs(raw) > 1e-9 else "flat",
                 "raw": raw,
-                "norm": max(-12.0, min(12.0, raw)) / 24.0 + 0.5,
+                "norm": limits.tone(raw) / abs(2 * limits.TONE[1]) + 0.5,
             })
         return rows
 

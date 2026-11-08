@@ -30,10 +30,12 @@ from collections import deque
 from dataclasses import dataclass, field, replace
 
 from .gate import FLOOR_DB as GATE_FLOOR_DB, Gate
+from .limits import SILENT_DB
+from .limits import master as clamp_master, gate as clamp_gate, trim as clamp_trim
 
 #: Where the master sits when the chain is disarmed. Quiet enough to be harmless,
 #: not muted, so a wrong arm is audible as "too quiet" rather than silent-but-live.
-SAFE_MASTER_DB = -60.0
+SAFE_MASTER_DB = SILENT_DB
 
 #: Where the master lands when you arm. Measured on a -18 dBFS DI through a lead
 #: capture and a 2x12 cabinet: the chain comes out about 16 dB up, so 0 dB clips on
@@ -255,7 +257,7 @@ class Engine:
             # Trim either side of the amp, in dB. 24 dB up is already enough to push a clean DI
             # into the capture as hard as an overdrive pedal would; past that the knob stops
             # being a level and becomes a distortion control that clips the master anyway.
-            db = max(-24.0, min(24.0, float(db)))
+            db = clamp_trim(db)
         return self.update(**{name: float(db)})
 
     def reset_counters(self) -> None:
@@ -272,7 +274,7 @@ class Engine:
 
     def set_gate(self, db: float) -> Chain:
         """Move the gate threshold. The bottom of the range is off, not -80 dB."""
-        db = max(GATE_FLOOR_DB, min(-20.0, float(db)))
+        db = clamp_gate(db)
         self._gate.set_threshold(db)
         return self.update(gate_db=db)
 

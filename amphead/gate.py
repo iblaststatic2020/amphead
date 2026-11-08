@@ -15,8 +15,11 @@ Two details matter more than the DSP:
 
 from __future__ import annotations
 
-FLOOR_DB = -80.0
-CEIL_DB = -20.0
+from .limits import GATE
+
+#: The same range the engine and the pane use, so the knob cannot ask for a threshold the
+#: gate would refuse.
+FLOOR_DB, CEIL_DB = GATE
 # Opening has to be immediate or the pick attack is eaten; closing is slack so a ringing
 # chord or a held note does not chatter.
 HOLD_MS = 40.0

@@ -19,6 +19,10 @@ from pathlib import Path
 from typing import Any
 
 from . import port, verdict
+from .answers import call_shape, json_answer, ok as _ok
+from .answers import db_level as _db_level, fmt as _fmt
+from .answers import FAILURE_WORDS  # re-exported: the tests read the list from here
+from .limits import gate as _gate_db, master as _master_db, trim as _trim_db
 
 TOOLSET = "amphead"
 
@@ -32,17 +36,6 @@ STANDBY_DB = port.SAFE_MASTER_DB
 def _host() -> str:
     """What to call the amp in a sentence a player reads."""
     return str(getattr(RIG, "label", "the engine"))
-
-
-def _fmt(fields: list[tuple[str, Any]]) -> str:
-    return " | ".join(f"{k}={v}" for k, v in fields)
-
-
-def _db_level(amplitude: float) -> str:
-    """A player reads dB, not a raw amplitude like 0.014."""
-    if amplitude <= 0:
-        return "-inf"
-    return f"{20 * math.log10(amplitude):.1f}"
 
 
 def _schema(name: str, description: str, properties: dict[str, Any] | None = None,
@@ -372,7 +365,7 @@ def handle_live(args: dict[str, Any], **_kw) -> str:
     now_master = RIG.state().get("master_db")
     db = float(args["master_db"]) if args.get("master_db") is not None else float(
         STANDBY_DB if now_master is None else now_master)
-    db = max(STANDBY_DB, min(12.0, db))
+    db = _master_db(db)
     if not args.get("confirm") and db > STANDBY_DB + 0.5:
         return (f"REFUSED: arming at {db:.0f} dB makes sound. Call again with confirm=true, or "
                 f"leave the master at the floor and raise it yourself.")
@@ -504,17 +497,17 @@ def handle_set(args: dict[str, Any], **_kw) -> str:
 
     try:
         if param in ("master", "level", "volume"):
-            wrote = RIG.set_master(db=max(STANDBY_DB, min(12.0, value)))
+            wrote = RIG.set_master(db=_master_db(value))
             return _fmt([("set", wrote.get("db")), ("param", "master"), ("unit", "dB")])
         if param in ("gate", "noise gate", "noisegate"):
-            wrote = RIG.set_gate(db=max(-80.0, min(-20.0, value)))
+            wrote = RIG.set_gate(db=_gate_db(value))
             return _fmt([("set", wrote.get("db")), ("param", "gate"), ("unit", "dB"),
                          ("off_below", -79.5)])
         if param in ("in", "input_gain", "input gain"):
-            wrote = RIG.set_input_gain(db=max(-24.0, min(24.0, value)))
+            wrote = RIG.set_input_gain(db=_trim_db(value))
             return _fmt([("set", wrote.get("db")), ("param", "in"), ("unit", "dB")])
         if param in ("out", "output_gain", "output gain"):
-            wrote = RIG.set_output_gain(db=max(-24.0, min(24.0, value)))
+            wrote = RIG.set_output_gain(db=_trim_db(value))
             return _fmt([("set", wrote.get("db")), ("param", "out"), ("unit", "dB")])
         if param in ("input", "channel"):
             wrote = RIG.set_input(track=1, spec=int(value))
@@ -804,46 +797,9 @@ TOOLS = (
 )
 
 # ---- the shape the host sees -------------------------------------------------------------
-# The plugin guide asks a handler to return a JSON string; the panes, the tests and the sentences a
-# player reads are all built on the handler returning a line of prose. Both are true at once: the
-# handlers keep answering the way they always did, and the function the host registers wraps that
-# answer in JSON. Nothing a person reads changes, and the agent gets named fields instead of a
-# pipe-delimited line it would have to parse.
-FAILURE_WORDS = ("REFUSED", "NOT", "CANNOT", "ERROR", "NO ")
-
-
-def _ok(summary: str) -> bool:
-    """Whether a sentence reports success, judged on its opening clause."""
-    clause = summary.strip().split(":")[0].upper()
-    if clause.startswith(FAILURE_WORDS):
-        return False
-    return " NOT " not in f" {clause} "
-
-
-def json_answer(name: str, summary: str) -> str:
-    """One JSON string: the tool, the sentence, whether it failed, and the numbers it carried."""
-    payload: dict[str, Any] = {"tool": name, "ok": _ok(summary), "summary": summary}
-    fields: dict[str, str] = {}
-    for part in summary.split("|"):
-        key, sep, value = part.partition("=")
-        key = key.strip()
-        if sep and key and len(key) <= 40 and "\n" not in key:
-            fields[key] = value.strip()
-    if fields:
-        payload["fields"] = fields
-    return json.dumps(payload, ensure_ascii=False)
-
-
-def call_shape(name: str, handler):
-    """The handler the host registers: the same work, answered as one JSON string."""
-
-    def call(args: dict[str, Any]) -> str:
-        return json_answer(name, handler(args))
-
-    call.__name__ = f"{name}_json"
-    call.__doc__ = handler.__doc__
-    return call
-
+# Shaped in `answers.py`: a handler decides what happened and says it in one line, and the
+# wrapper the host registers turns that line into JSON with named fields. The raw handlers stay
+# as they are for the panes and the tests.
 
 def json_tools() -> list[tuple[str, dict, Any, str]]:
     """TOOLS, with each handler wrapped. The raw handlers stay as they are for the panes."""

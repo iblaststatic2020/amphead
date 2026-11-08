@@ -27,7 +27,7 @@ _ROOT = Path(__file__).resolve().parent.parent
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-from amphead import lastchain, library as amp_library, port, verdict  # noqa: E402
+from amphead import lastchain, library as amp_library, limits, port, verdict  # noqa: E402
 
 RIG = port.active()
 
@@ -104,6 +104,19 @@ def _knobs(live: dict) -> list[dict]:
     return [{"name": name.upper(), "key": name, "value": float(tone.get(name) or 0.0),
              "min": 0.0, "max": 10.0}
             for name in ("bass", "mid", "treble")]
+
+
+def _asked_db(body: dict) -> float | None:
+    """The dB a knob asked for, or None if it did not ask for a number at all.
+
+    Three routes need the same two guards (a number, and a finite one). One copy of them,
+    because a route that forgot the second guard would post an inf into the engine.
+    """
+    try:
+        asked = float(body.get("db"))
+    except (TypeError, ValueError):
+        return None
+    return asked if math.isfinite(asked) else None
 
 
 def _presets() -> list[dict]:
@@ -290,13 +303,10 @@ def panic(body: dict) -> dict[str, Any]:
 @router.post("/master")
 def master_level(body: dict) -> dict[str, Any]:
     """The player's own volume ramp, one write at a time."""
-    try:
-        asked = float(body.get("db"))
-    except (TypeError, ValueError):
+    asked = _asked_db(body)
+    if asked is None:
         return {"output": "NO LEVEL: say how many dB", "ok": False}
-    if not math.isfinite(asked):
-        return {"output": "NO LEVEL: say how many dB", "ok": False}
-    db = max(port.SAFE_MASTER_DB, min(12.0, asked))
+    db = limits.master(asked)
     try:
         RIG.set_master(db=db)
         level = RIG.master().get("db")
@@ -310,13 +320,10 @@ def master_level(body: dict) -> dict[str, Any]:
 
 def _trim(kind: str, body: dict) -> dict[str, Any]:
     """Move one of the two gain knobs either side of the amp, and say where it landed."""
-    try:
-        asked = float(body.get("db"))
-    except (TypeError, ValueError):
+    asked = _asked_db(body)
+    if asked is None:
         return {"output": "NO LEVEL: say how many dB", "ok": False}
-    if not math.isfinite(asked):
-        return {"output": "NO LEVEL: say how many dB", "ok": False}
-    db = max(-24.0, min(24.0, asked))
+    db = limits.trim(asked)
     setter = getattr(RIG, "set_input_gain" if kind == "input" else "set_output_gain", None)
     if setter is None:
         return {"output": f"NOT SET: the engine has no {kind} gain", "ok": False}
@@ -343,13 +350,10 @@ def output_gain(body: dict) -> dict[str, Any]:
 @router.post("/gate")
 def gate(body: dict) -> dict[str, Any]:
     """Threshold for the gate in front of the amp. The bottom of the range is off."""
-    try:
-        asked = float(body.get("db"))
-    except (TypeError, ValueError):
+    asked = _asked_db(body)
+    if asked is None:
         return {"output": "NO LEVEL: say how many dB", "ok": False}
-    if not math.isfinite(asked):
-        return {"output": "NO LEVEL: say how many dB", "ok": False}
-    db = max(-80.0, min(-20.0, asked))
+    db = limits.gate(asked)
     try:
         wrote = RIG.set_gate(db=db)
     except port.NoRig:
@@ -357,7 +361,7 @@ def gate(body: dict) -> dict[str, Any]:
     except port.RigError as exc:
         return {"output": f"NOT SET: {exc}", "ok": False}
     landed = wrote.get("db")
-    word = "off" if landed is None or float(landed) <= -79.5 else f"{float(landed):.0f} dB"
+    word = "off" if limits.gate_off(landed) else f"{float(landed):.0f} dB"
     return {"output": f"gate {word}", "ok": True, "db": landed}
 
 

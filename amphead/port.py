@@ -9,8 +9,11 @@ from __future__ import annotations
 
 from typing import Any
 
-#: Where a rig boots and parks: silent, but not off, so the device stays open.
-SAFE_MASTER_DB = -60.0
+from .limits import SILENT_DB, master as clamp_master  # noqa: F401  (re-exported for callers)
+
+#: Where a rig boots and parks: silent, but not off, so the device stays open. One number,
+#: defined with the ranges, because this is the floor of MASTER rather than a constant of its own.
+SAFE_MASTER_DB = SILENT_DB
 
 #: The level arming uses. Measured on a -18 dBFS DI: peaks at about -2.9 dBFS, no clipping.
 ARM_DB = -6.0
