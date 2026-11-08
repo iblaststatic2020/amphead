@@ -85,6 +85,16 @@ class FakeRig:
         self.gate_db = db
         return {"db": db}
 
+    def apply_rig(self, rig):
+        self.calls.append(("rig", dict(rig)))
+        known = {row["name"].lower() for row in self.library()["captures"]}
+        self.capture = rig.get("capture") or self.capture
+        self.cab = rig.get("cab") or self.cab
+        kept = []
+        if rig.get("capture") and rig["capture"].lower() not in known:
+            kept.append(f"capture {rig['capture']!r} is not in the library")
+        return {"loaded": {}, "kept": kept, "pending": False}
+
     def tune(self):
         self.calls.append(("tune",))
         return {"verdict": "256 frames, 5.8 ms a block, 3.1 ms of work, with room to spare",
@@ -288,3 +298,56 @@ class InputTest(ApiTest):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class RigTest(ApiTest):
+    """Saved sounds through the pane: the same file the tool writes, read back as buttons."""
+
+    def setUp(self):
+        super().setUp()
+        import os, tempfile
+        from pathlib import Path as _Path
+
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self._env = os.environ.get("AMPHEAD_SETTINGS")
+        os.environ["AMPHEAD_SETTINGS"] = str(_Path(self.tmp.name) / "settings.json")
+        self.addCleanup(self._restore)
+
+    def _restore(self):
+        import os
+
+        if self._env is None:
+            os.environ.pop("AMPHEAD_SETTINGS", None)
+        else:
+            os.environ["AMPHEAD_SETTINGS"] = self._env
+
+    def test_saving_the_sound_that_is_loaded_makes_a_button(self):
+        out = plugin_api.rig_action({"action": "save", "name": "lead"})
+        self.assertTrue(out["ok"], out)
+        self.assertTrue(out["output"].startswith("SAVED"), out["output"])
+        listed = plugin_api.rigs_list()
+        self.assertEqual([row["name"] for row in listed["rigs"]], ["lead"])
+
+    def test_a_saved_rig_can_be_loaded_by_name(self):
+        plugin_api.rig_action({"action": "save", "name": "lead"})
+        out = plugin_api.rig_action({"action": "load", "name": "lead"})
+        self.assertTrue(out["ok"], out)
+        self.assertTrue(out["output"].startswith("LOADED"), out["output"])
+        self.assertIn("rig", [call[0] for call in self.rig.calls])
+
+    def test_a_pasted_line_loads_and_names_what_it_could_not_find(self):
+        line = "amphead:friend | capture=Not Mine;cab=AURORA 212 GOV;bass=4;gate=-60"
+        out = plugin_api.rig_action({"action": "load", "text": line})
+        self.assertTrue(out["ok"], out)
+        self.assertIn("kept the old capture", out["output"])
+
+    def test_forgetting_one_that_is_not_there_says_so(self):
+        out = plugin_api.rig_action({"action": "forget", "name": "ghost"})
+        self.assertFalse(out["ok"])
+        self.assertTrue(out["output"].startswith("NOT FOUND"), out["output"])
+
+    def test_pasting_something_that_is_not_a_rig_is_refused(self):
+        out = plugin_api.rig_action({"action": "load", "text": "hello"})
+        self.assertFalse(out["ok"])
+        self.assertIn("amphead:", out["output"])

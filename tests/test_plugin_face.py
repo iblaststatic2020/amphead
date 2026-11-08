@@ -291,3 +291,20 @@ class TheAmpCannotComeUpLoud(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestTheRigsAreOnTheFace(unittest.TestCase):
+    def test_a_saved_sound_is_one_press_away(self):
+        """The whole point of a rig is the recall, so a chip posts the load, not a menu path."""
+        source = face()
+        self.assertIn("rest('/rigs')", source)
+        self.assertIn("act('/rig', { action: 'load', name: row.name })", source)
+        self.assertIn("act('/rig', { action: 'save', name: rigName })", source)
+
+    def test_the_save_button_keeps_the_name_the_player_typed(self):
+        source = face()
+        self.assertIn("value: rigName", source)
+        self.assertIn("onChange: (event) => setRigName(event.target.value)", source)
+
+    def test_an_empty_shelf_says_what_to_do_rather_than_nothing(self):
+        self.assertIn("none yet: dial a sound in and name it", face())

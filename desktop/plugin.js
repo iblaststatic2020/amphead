@@ -752,8 +752,14 @@ function AmpFace({ rest }) {
     queryFn: () => rest('/library'),
     staleTime: 20000
   })
+  const cabinet = useQuery({
+    queryKey: ['amphead2', 'rigs'],
+    queryFn: () => rest('/rigs'),
+    staleTime: 5000
+  })
   const [busy, setBusy] = useState(false)
   const [said, setSaid] = useState('')
+  const [rigName, setRigName] = useState('')
   const [openPicker, setOpenPicker] = useState('')
   const clipped = useRef(false)
 
@@ -1109,6 +1115,69 @@ function AmpFace({ rest }) {
                 await act('/cab', { path })
               }
             })
+          }),
+
+          // ---- the sounds that are worth keeping ----
+          // A rig is eight fields and a name, so it gets a row of chips rather than a menu:
+          // the press that matters is "put my sound back", and it should be one press.
+          jsxs('div', {
+            className: 'flex flex-wrap items-center gap-1.5 rounded-md px-2 py-1.5',
+            style: { ...WELL },
+            children: [
+              jsx('span', {
+                className: 'text-[0.5rem] uppercase tracking-[0.1em]',
+                style: MUTED,
+                children: 'rigs'
+              }),
+              (cabinet.data && cabinet.data.rigs && cabinet.data.rigs.length)
+                ? cabinet.data.rigs.map((row) => jsx('button', {
+                    type: 'button',
+                    key: row.name,
+                    disabled: busy,
+                    title: `${row.summary}
+
+${row.line}`,
+                    onClick: () => act('/rig', { action: 'load', name: row.name }),
+                    className: 'rounded px-1.5 py-0.5 text-[0.5625rem] font-semibold outline-none',
+                    style: {
+                      background: 'color-mix(in srgb, var(--ui-accent) 12%, transparent)',
+                      border: '1px solid color-mix(in srgb, var(--ui-accent) 35%, transparent)',
+                      color: 'var(--ui-accent)',
+                      cursor: busy ? 'default' : 'pointer'
+                    },
+                    children: row.name
+                  }, row.name))
+                : jsx('span', {
+                    className: 'text-[0.5rem]',
+                    style: MUTED,
+                    children: running ? 'none yet: dial a sound in and name it' : 'none yet'
+                  }),
+              jsx('input', {
+                type: 'text',
+                value: rigName,
+                placeholder: 'save as',
+                'aria-label': 'name this sound',
+                onChange: (event) => setRigName(event.target.value),
+                onKeyDown: (event) => {
+                  if (event.key === 'Enter' && rigName.trim()) act('/rig', { action: 'save', name: rigName })
+                },
+                className: 'ml-auto w-24 rounded px-1.5 py-0.5 text-[0.5625rem] outline-none',
+                style: { ...WELL, color: 'var(--ui-text-primary)' }
+              }),
+              jsx('button', {
+                type: 'button',
+                disabled: busy || !rigName.trim(),
+                onClick: () => act('/rig', { action: 'save', name: rigName }),
+                className: 'rounded px-1.5 py-0.5 text-[0.5625rem] font-semibold uppercase tracking-[0.1em] outline-none',
+                style: {
+                  background: rigName.trim() ? 'color-mix(in srgb, var(--ui-accent) 18%, transparent)' : 'transparent',
+                  border: '1px solid color-mix(in srgb, var(--ui-accent) 35%, transparent)',
+                  color: rigName.trim() ? 'var(--ui-accent)' : MUTED.color,
+                  cursor: busy || !rigName.trim() ? 'default' : 'pointer'
+                },
+                children: 'save'
+              })
+            ]
           })
         ]
       }),

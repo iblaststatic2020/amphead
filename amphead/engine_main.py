@@ -279,6 +279,38 @@ class Server:
         chain = self.engine.chain
         return {"gate_db": chain.gate_db, "open": chain.gate is not None and not chain.gate.off}
 
+    def rig(self, capture: str | None = None, cab: str | None = None, **knobs) -> dict:
+        """Land a whole sound in one command: capture, cabinet, tone, trims, gate.
+
+        One command rather than five because half a rig is worse than none: the new capture
+        with the old cabinet is a sound nobody asked for, and the player who hears it has no
+        way to tell which half arrived. A stage that fails is reported and the rest still
+        lands, so a moved capture file costs the capture and not the tone.
+        """
+        loaded: dict = {}
+        kept: list[str] = []
+        if capture:
+            try:
+                loaded["capture"] = self.load_capture(str(capture))["capture"]
+            except Exception as exc:
+                kept.append(f"capture: {exc}")
+        if cab:
+            try:
+                loaded["cab"] = self.load_cab(str(cab))["cab"]
+            except Exception as exc:
+                kept.append(f"cabinet: {exc}")
+        tone_kw = {name: knobs[name] for name in ("bass", "mid", "treble")
+                   if knobs.get(name) is not None}
+        if tone_kw:
+            loaded["tone"] = self.tone_set(**tone_kw)
+        gains = {name: knobs[name] for name in ("input_gain_db", "output_gain_db")
+                 if knobs.get(name) is not None}
+        if gains:
+            loaded.update(self.gain(**gains))
+        if knobs.get("gate_db") is not None:
+            loaded["gate_db"] = self.gate(db=float(knobs["gate_db"]))["gate_db"]
+        return {"loaded": loaded, "kept": kept}
+
     def arm(self, master_db: float | None = None) -> dict:
         # No level means the master the amp already has. Lifting it to a fixed -6 dB here is
         # how a caller that said only "arm" got a rig that came up louder than the knob.
@@ -423,6 +455,7 @@ class Server:
         "tone": "tone_set",
         "gain": "gain",
         "gate": "gate",
+        "rig": "rig",
         "arm": "arm",
         "disarm": "disarm",
         "panic": "panic",

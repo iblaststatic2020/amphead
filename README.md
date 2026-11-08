@@ -22,6 +22,10 @@ sit down, say "set up my crunch tone", and Hermes is the amp. Nothing else needs
   that ran clean, confirms it on a longer pass, and writes it to the settings file.
 - Answers in plain language and reports what it read back: `amphead_ready` says `READY`, `STANDBY`,
   `NO SIGNAL`, `NO CHAIN`, `CLIPPING`, `DEVICE CLOSED` or `ENGINE OFF`, with the reason.
+- Keeps sounds. A rig is the capture, the cabinet, the three tone knobs, both trims and the gate,
+  saved under a name and recalled in one press from the pane. The same rig is also one line of text
+  (`amphead:lead | capture=...`), so a sound can be pasted to someone who has the same captures.
+  The master is deliberately not part of a rig: loading a sound must never turn the room up.
 - Has a dead man's switch. `amphead_panic` parks the master, disarms and bypasses every stage, then
   proves the input is still arriving while nothing reaches the speakers.
 
@@ -38,10 +42,11 @@ capture and cabinet named on it, the knobs in a row, a meter, and the files. It 
 | the plate | tone named from the two files on the chain, with rate, block size, round trip and `TUNE` under it |
 | files | capture and cabinet pickers, listing what is actually in the folders |
 | the knobs | `GATE`, `IN`, `BASS`, `MID`, `TREBLE`, `OUT`, `MASTER`, each labelled in place |
+| rigs | a chip per saved sound (press to load), a name field and `SAVE` |
 
 Routes: `GET /state`, `GET /meter`, `GET /library`, `GET /input`, `POST /setup`, `/live`, `/teardown`,
 `/master`, `/gate`, `/tune`, `/input_gain`, `/output_gain`, `/knob`, `/tweak`, `/input`, `/capture`,
-`/cab`, `/preset`, `/panic`. The pane polls `/state` at 1.5 s and `/meter` at 150 ms.
+`/cab`, `/preset`, `/panic`, `/rigs`, `/rig`. The pane polls `/state` at 1.5 s and `/meter` at 150 ms.
 
 Every write route calls the same handler chat calls, so a knob drag and the sentence "more low end"
 cannot do different things, and `/state` runs the same `verdict.judge` as `amphead_ready`.
@@ -153,6 +158,20 @@ the curve that would close the gap. Measurement runs in the engine interpreter, 
 one with numpy; the plugin process stays dependency-free. Two guidelines worth knowing: compare
 program material with program material (two raw impulse responses are not a useful comparison), and
 treat the distance as a direction to move, not a verdict.
+
+## Saved sounds
+
+A rig is eight fields: capture, cabinet, bass, mid, treble, input gain, output gain, gate. Names are
+stored, not paths, so a rig keeps working when the folders move; loading resolves each name against
+this machine's library and reports, stage by stage, anything it could not find rather than refusing
+the whole sound.
+
+```
+amphead_rig action=save name=lead        # keep the sound on the chain right now
+amphead_rig action=list                  # what is saved, plus the line for each
+amphead_rig action=load name=lead        # put it back, knob by knob
+amphead_rig action=paste text="amphead:friend | capture=Thing;cab=Thing 4x12"
+```
 
 ## What this touches
 

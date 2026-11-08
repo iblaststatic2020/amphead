@@ -100,6 +100,28 @@ export const library = () => ({
   cab: rig.cab_path
 })
 
+// Saved sounds, kept in memory: the harness can save one and load it back without a file.
+export const SAVED = [{ name: 'lead', capture: 'Bugera 6262 Lead', cab: 'AURORA 212 GOV',
+                        bass: 3, mid: -1, treble: 2, input_gain_db: -6, output_gain_db: -3,
+                        gate_db: -58 }]
+
+const rigLine = (row) =>
+  `amphead:${row.name} | capture=${row.capture};cab=${row.cab};bass=${row.bass};` +
+  `mid=${row.mid};treble=${row.treble};in=${row.input_gain_db};out=${row.output_gain_db};` +
+  `gate=${row.gate_db}`
+
+export const rigs = () => ({
+  ok: true,
+  rigs: SAVED.map((row) => ({
+    name: row.name,
+    summary: `${row.capture} into ${row.cab}, bass ${row.bass >= 0 ? '+' : ''}${row.bass}`,
+    line: rigLine(row)
+  })),
+  current: { capture: rig.capture, cab: rig.cab, bass: 0, mid: 0, treble: 0,
+             input_gain_db: rig.input_gain_db || 0, output_gain_db: rig.output_gain_db || 0,
+             gate_db: rig.gate_db || -80 }
+})
+
 // Every call the face makes. The harness reads this: a click that never reaches a route, or one
 // that reaches the wrong one, is visible without the app.
 export const calls = []
@@ -114,6 +136,25 @@ export async function rest(path, options) {
   if (bare === '/state') return state()
   if (bare === '/meter') return meter()
   if (bare === '/library') return library()
+  if (bare === '/rigs') return rigs()
+  if (bare === '/rig') {
+    if (body.action === 'save') {
+      const name = String(body.name || '').trim()
+      if (!name) return { ok: false, output: 'NOT SAVED: a rig needs a name' }
+      const had = SAVED.some((row) => row.name.toLowerCase() === name.toLowerCase())
+      SAVED.push({ name, capture: rig.capture, cab: rig.cab, bass: rig.tone.bass,
+                   mid: rig.tone.mid, treble: rig.tone.treble,
+                   input_gain_db: rig.input_gain_db || 0,
+                   output_gain_db: rig.output_gain_db || 0, gate_db: rig.gate_db || -80 })
+      return { ok: true, output: `${had ? 'REPLACED' : 'SAVED'}: ${name}` }
+    }
+    const found = SAVED.find((row) => row.name.toLowerCase() === String(body.name || '').toLowerCase())
+    if (!found) return { ok: false, output: `NOT FOUND: no rig called ${body.name || 'anything'}` }
+    rig.capture = found.capture
+    rig.cab = found.cab
+    rig.tone = { bass: found.bass, mid: found.mid, treble: found.treble }
+    return { ok: true, output: `LOADED: ${found.name}` }
+  }
   if (bare === '/setup') {
     rig.running = true
     return { ok: true, output: 'engine up: silent until live (master -60 dB)' }

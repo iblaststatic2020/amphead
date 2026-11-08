@@ -27,7 +27,7 @@ _ROOT = Path(__file__).resolve().parent.parent
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-from amphead import lastchain, library as amp_library, limits, port, verdict  # noqa: E402
+from amphead import lastchain, library as amp_library, limits, port, rigs, verdict  # noqa: E402
 
 RIG = port.active()
 
@@ -434,6 +434,83 @@ def input_switch(body: dict) -> dict[str, Any]:
         return {"output": f"NOT SET: {exc}", "ok": False}
     mine = _input(live)
     return {"output": f"listening on {mine['name']} (input {mine['value']})", "ok": True, **mine}
+
+
+@router.get("/rigs")
+def rigs_list() -> dict[str, Any]:
+    """Every saved sound, with the one line it can be shared as."""
+    cabinet = rigs.Rigs()
+    rows = []
+    for name in cabinet.names():
+        rig = cabinet.get(name)
+        if not rig:
+            continue
+        rows.append({"name": rig["name"], "summary": rigs.summarise(rig),
+                     "line": rigs.encode(rig)})
+    return {"rigs": rows, "current": _current_rig()}
+
+
+@router.post("/rig")
+def rig_action(body: dict) -> dict[str, Any]:
+    """Save the sound that is loaded, load one by name, paste one, or forget one."""
+    body = body or {}
+    action = str(body.get("action") or "load").strip().lower()
+    cabinet = rigs.Rigs()
+
+    if action in ("list", "names"):
+        return rigs_list()
+
+    if action == "forget":
+        name = str(body.get("name") or "").strip()
+        if not cabinet.forget(name):
+            return {"output": f"NOT FOUND: no rig called {name or 'anything'}", "ok": False}
+        return {"output": f"FORGOT: {name}", "ok": True, "rigs": rigs_list()["rigs"]}
+
+    if action == "save":
+        name = str(body.get("name") or "").strip()
+        try:
+            current = _current_rig()
+            if not current.get("capture") and not current.get("cab"):
+                return {"output": "NOT SAVED: nothing is loaded to save", "ok": False}
+            got = cabinet.save(name, current)
+        except (ValueError, OSError) as exc:
+            return {"output": f"NOT SAVED: {exc}", "ok": False}
+        verb = "REPLACED" if got.pop("replaced", False) else "SAVED"
+        return {"output": f"{verb}: {got['name']} | {rigs.summarise(got)}", "ok": True,
+                "rig": got, "line": rigs.encode(got), "rigs": rigs_list()["rigs"]}
+
+    # load, from a name or from a pasted line
+    said = str(body.get("text") or "").strip()
+    name = str(body.get("name") or "").strip()
+    try:
+        wanted = rigs.tidy(rigs.decode(said)) if said else cabinet.get(name)
+    except ValueError as exc:
+        return {"output": f"NOT LOADED: {exc}", "ok": False}
+    if not wanted:
+        return {"output": f"NOT FOUND: no rig called {name or 'anything'}", "ok": False}
+
+    try:
+        got = RIG.apply_rig(wanted)
+        live = RIG.state()
+    except (port.NoRig, port.RigError, OSError, ValueError) as exc:
+        return {"output": f"NOT LOADED: {exc}", "ok": False}
+
+    # Say what arrived and what did not. `apply_rig` reports a capture or cabinet whose name
+    # is not in this machine's library, so the sentence never claims more than landed.
+    kept = list(got.get("kept") or [])
+    tail = "" if not kept else " | kept the old " + "; ".join(kept)
+    label = wanted.get("name") or name or "rig"
+    return {"output": f"LOADED: {label} | {rigs.summarise(wanted)}{tail}",
+            "ok": True, "rig": wanted, "state": live, "pending": bool(got.get("pending")),
+            "kept": kept}
+
+
+def _current_rig() -> dict:
+    """The sound in the amp right now, as a rig. Empty if the engine cannot answer."""
+    try:
+        return rigs.from_status(RIG.state())
+    except (port.NoRig, port.RigError):
+        return {}
 
 
 @router.post("/preset")

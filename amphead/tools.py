@@ -596,6 +596,20 @@ def handle_settings(args: dict[str, Any], **_kw) -> str:
     return "\n".join(lines)
 
 
+RIG_SCHEMA = _schema(
+    "amphead_rig",
+    "Saved sounds. action=list shows the named rigs on this machine; action=save keeps the "
+    "sound loaded right now under a name (capture, cabinet, tone, both trims, gate); "
+    "action=load puts a saved one back; action=forget deletes one; action=paste loads a rig "
+    "line someone sent you (it starts with amphead:).",
+    {"action": {"type": "string", "enum": ["list", "save", "load", "forget", "paste"],
+                "description": "list (default), save, load, forget or paste."},
+     "name": {"type": "string", "description": "Rig name (save, load, forget)."},
+     "text": {"type": "string",
+              "description": "A rig line to load (paste), as written by list or save."}},
+    required=["action"],
+)
+
 AIM_SCHEMA = _schema(
     "amphead_aim",
     "Aim the amp at a sound. Research the rig first (amp family, cabinet, speaker, mic), then pass "
@@ -675,6 +689,67 @@ def _confidence(caps: list[dict], cabs: list[dict], want: dict) -> str:
     if any(found):
         return target.CONFIDENCE_FAMILY
     return target.CONFIDENCE_NEAREST
+
+
+def handle_rig(args: dict[str, Any], **_kw) -> str:
+    """The saved sounds: list them, keep the one playing, put one back, or take one pasted."""
+    from . import rigs
+
+    action = str(args.get("action") or "list").strip().lower()
+    cabinet = rigs.Rigs()
+    name = str(args.get("name") or "").strip()
+
+    def listing() -> str:
+        rows = [cabinet.get(each) for each in cabinet.names()]
+        rows = [row for row in rows if row]
+        if not rows:
+            return "NO RIGS: nothing saved yet; save the sound that is loaded"
+        names = ", ".join(str(row["name"]) for row in rows)
+        return _fmt([("saved", len(rows)), ("names", names)])
+
+    if action in ("list", "names", ""):
+        return listing()
+
+    if action == "save":
+        try:
+            live = RIG.state()
+        except (port.NoRig, port.RigError) as exc:
+            return f"NOT SAVED: {exc}"
+        current = rigs.from_status(live)
+        if not current.get("capture") and not current.get("cab"):
+            return "NOT SAVED: nothing is loaded to save"
+        try:
+            got = cabinet.save(name, current)
+        except (ValueError, OSError) as exc:
+            return f"NOT SAVED: {exc}"
+        word = "REPLACED" if got.pop("replaced", False) else "SAVED"
+        return _fmt([(word.lower(), got["name"]), ("sound", rigs.summarise(got)),
+                     ("line", rigs.encode(got))])
+
+    if action == "forget":
+        if not cabinet.forget(name):
+            return f"NOT FOUND: no rig called {name or 'anything'}"
+        return _fmt([("forgot", name), ("left", len(cabinet.names()))])
+
+    said = str(args.get("text") or "").strip()
+    try:
+        wanted = rigs.tidy(rigs.decode(said)) if said else cabinet.get(name)
+    except ValueError as exc:
+        return f"NOT LOADED: {exc}"
+    if not wanted:
+        return f"NOT FOUND: no rig called {name or 'anything'}"
+    try:
+        got = RIG.apply_rig(wanted)
+    except (port.NoRig, port.RigError, OSError, ValueError) as exc:
+        return f"NOT LOADED: {exc}"
+    kept = list(got.get("kept") or [])
+    fields = [("loaded", wanted.get("name") or name or "rig"),
+              ("sound", rigs.summarise(wanted))]
+    if kept:
+        fields.append(("kept", "; ".join(kept)))
+    if got.get("pending"):
+        fields.append(("note", "the engine is parked; Setup plays it"))
+    return _fmt(fields)
 
 
 def handle_aim(args: dict[str, Any], **_kw) -> str:
@@ -794,6 +869,7 @@ TOOLS = (
     ("amphead_set", SET_SCHEMA, handle_set, "🎚️"),
     ("amphead_settings", SETTINGS_SCHEMA, handle_settings, "⚙️"),
     ("amphead_aim", AIM_SCHEMA, handle_aim, "🎯"),
+    ("amphead_rig", RIG_SCHEMA, handle_rig, "💾"),
 )
 
 # ---- the shape the host sees -------------------------------------------------------------

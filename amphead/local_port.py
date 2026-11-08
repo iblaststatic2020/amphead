@@ -592,6 +592,59 @@ class AmpHead2Rig:
         return {"cab": _name(got.get("cab")), "path": got.get("cab"),
                 "file_rate": got.get("file_rate"), "resampled": got.get("resampled")}
 
+    def load_rig(self, capture: str | None = None, cab: str | None = None,
+                 **knobs: Any) -> dict:
+        """Put a whole saved sound into the engine, in one call.
+
+        With the engine parked there is nothing to load into, but the choice is still real:
+        the capture and cabinet are remembered and Setup plays them, the same as a picker.
+        """
+        from . import lastchain
+
+        if not self.client.running:
+            if capture:
+                lastchain.save(capture=str(capture))
+            if cab:
+                lastchain.save(cab=str(cab))
+            return {"pending": True, "capture": _name(capture), "cab": _name(cab),
+                    **{k: v for k, v in knobs.items() if v is not None}}
+        request: dict[str, Any] = {k: v for k, v in knobs.items() if v is not None}
+        if capture:
+            request["capture"] = str(capture)
+            lastchain.save(capture=str(capture))
+        if cab:
+            request["cab"] = str(cab)
+            lastchain.save(cab=str(cab))
+        return self._call(cmd="rig", **request)
+
+    def apply_rig(self, rig: dict) -> dict:
+        """Resolve a rig's names against this machine, then load the whole sound.
+
+        A rig travels as names, so loading one has to ask the library where that name lives
+        here. A name that does not resolve is not a failure: the rest of the rig still loads
+        and the answer says which part was kept, because a moved capture file should cost the
+        capture and nothing else.
+        """
+        from . import rigs
+
+        known = {"captures": [], "cabs": []}
+        if self.client.running:
+            try:
+                known = self.library()
+            except Exception:
+                known = {"captures": [], "cabs": []}
+        capture = rigs.resolve("capture", rig.get("capture", ""), known.get("captures", []))
+        cab = rigs.resolve("cab", rig.get("cab", ""), known.get("cabs", []))
+        fields = {key: rig[key] for key in
+                  ("bass", "mid", "treble", "input_gain_db", "output_gain_db", "gate_db")
+                  if key in rig}
+        got = self.load_rig(capture=capture, cab=cab, **fields)
+        missing = [f"{kind} {rig[kind]!r} is not in the library"
+                   for kind in ("capture", "cab")
+                   if rig.get(kind) and not (capture if kind == "capture" else cab)]
+        got["kept"] = list(got.get("kept") or []) + missing
+        return got
+
 
     def debug_call(self, cmd: str, **kw: Any) -> dict:
         return self._call(cmd=cmd, **kw)
