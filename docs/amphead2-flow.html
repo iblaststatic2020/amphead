@@ -1,0 +1,273 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>AmpHead 2 — how it works</title>
+<style>
+  :root{
+    --bg:#0b0a09; --ink:#e8e2da; --dim:#9a928a; --faint:#655e57;
+    --stroke:#2a2521; --card:#12100e;
+    --audio:#f0a45c; --ctl:#6fd6c3; --file:#a98bf0; --gate:#ef7a86;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font-family:ui-monospace,'JetBrains Mono',SFMono-Regular,Consolas,monospace;
+    -webkit-font-smoothing:antialiased}
+  .wrap{width:1320px;max-width:100%;margin:0;padding:24px}
+  header{display:flex;align-items:center;gap:12px;margin-bottom:6px}
+  .dot{width:9px;height:9px;border-radius:50%;background:var(--audio);
+    box-shadow:0 0 0 0 rgba(240,164,92,.6);animation:blip 2.4s infinite}
+  @keyframes blip{0%{box-shadow:0 0 0 0 rgba(240,164,92,.55)}70%{box-shadow:0 0 0 11px rgba(240,164,92,0)}100%{box-shadow:0 0 0 0 rgba(240,164,92,0)}}
+  h1{font-size:17px;margin:0;letter-spacing:.02em}
+  .sub{color:var(--dim);font-size:12px;margin:2px 0 20px 21px}
+  .board{border:1px solid var(--stroke);border-radius:10px;background:var(--card);padding:6px}
+  svg{display:block;width:100%;height:auto}
+
+  /* ---- the two travelling pulses ---- */
+  .pulse{fill:var(--audio);filter:drop-shadow(0 0 5px rgba(240,164,92,.9))}
+  .pulse.ctl{fill:var(--ctl);filter:drop-shadow(0 0 5px rgba(111,214,195,.9))}
+
+  /* ---- stage boxes breathe in the order the signal moves ---- */
+  .st{animation:breathe 4.8s infinite}
+  .st.s2{animation-delay:.8s}
+  .st.s3{animation-delay:1.6s}
+  .st.s4{animation-delay:2.4s}
+  @keyframes breathe{
+    0%,72%,100%{opacity:.55}
+    8%,26%{opacity:1}
+  }
+
+  /* ---- captions light up in step ---- */
+  .step{display:flex;gap:14px;padding:11px 14px;border:1px solid var(--stroke);border-radius:8px;
+    background:#100e0c;animation:lit 14.4s infinite}
+  .step:nth-child(2){animation-delay:2.4s}
+  .step:nth-child(3){animation-delay:4.8s}
+  .step:nth-child(4){animation-delay:7.2s}
+  .step:nth-child(5){animation-delay:9.6s}
+  .step:nth-child(6){animation-delay:12s}
+  @keyframes lit{
+    0%,14%,100%{border-color:var(--stroke);background:#100e0c}
+    2%,12%{border-color:var(--audio);background:rgba(240,164,92,.07)}
+  }
+  .n{color:var(--audio);font-size:12px;min-width:20px}
+  .t{font-size:12.5px;line-height:1.5;color:var(--ink)}
+  .t b{color:#fff;font-weight:600}
+  .t span{color:var(--dim)}
+  .steps{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:18px}
+  .note{margin-top:18px;color:var(--faint);font-size:11.5px;line-height:1.6}
+  @media (max-width:900px){.steps{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header><div class="dot"></div><h1>AmpHead 2 — how it all works</h1></header>
+  <div class="sub">one pane, one local engine, no host application · the amber line is audio, the teal line is control</div>
+
+  <div class="board">
+  <svg viewBox="0 0 1420 760" role="img" aria-label="AmpHead 2 signal and control flow">
+    <defs>
+      <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+        <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#1c1815" stroke-width=".5"/>
+      </pattern>
+      <marker id="aAudio" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+        <path d="M0,0 L10,5 L0,10 z" fill="#f0a45c"/>
+      </marker>
+      <marker id="aCtl" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+        <path d="M0,0 L10,5 L0,10 z" fill="#6fd6c3"/>
+      </marker>
+      <marker id="aFile" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+        <path d="M0,0 L10,5 L0,10 z" fill="#a98bf0"/>
+      </marker>
+      <filter id="soft" x="-30%" y="-30%" width="160%" height="160%">
+        <feGaussianBlur stdDeviation="7" result="b"/>
+        <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+      </filter>
+    </defs>
+
+    <rect width="1420" height="760" fill="url(#grid)"/>
+
+    <!-- ============ LANE LABELS ============ -->
+    <text x="34" y="52" fill="#6fd6c3" font-size="11" letter-spacing="2.4">CONTROL · what you click</text>
+    <text x="34" y="404" fill="#f0a45c" font-size="11" letter-spacing="2.4">AUDIO · what you hear</text>
+
+    <!-- ============ CONTROL LANE (top) ============ -->
+    <!-- arrows first, boxes over them -->
+    <line x1="300" y1="130" x2="366" y2="130" stroke="#6fd6c3" stroke-width="1.6" marker-end="url(#aCtl)"/>
+    <line x1="642" y1="130" x2="708" y2="130" stroke="#6fd6c3" stroke-width="1.6" marker-end="url(#aCtl)"/>
+    <line x1="966" y1="130" x2="1032" y2="130" stroke="#6fd6c3" stroke-width="1.6" marker-end="url(#aCtl)"/>
+
+    <!-- pane -->
+    <rect x="70" y="78" width="230" height="104" rx="7" fill="#0d1211" stroke="#2e5750" stroke-width="1.4"/>
+    <rect x="70" y="78" width="230" height="104" rx="7" fill="rgba(6,78,59,.20)"/>
+    <text x="86" y="102" fill="#e8e2da" font-size="12.5" font-weight="700">AmpHead pane</text>
+    <text x="86" y="122" fill="#9a928a" font-size="9.5">desktop/plugin.js · 300 px, docked right</text>
+    <text x="86" y="140" fill="#9a928a" font-size="9.5">power · 3 tone knobs · master ramp</text>
+    <text x="86" y="158" fill="#9a928a" font-size="9.5">meter · capture + cab pickers</text>
+    <text x="86" y="174" fill="#655e57" font-size="8.5">also opens as a page at /amp2 and a status-bar chip</text>
+
+    <!-- gateway -->
+    <rect x="366" y="78" width="276" height="104" rx="7" fill="#0d1211" stroke="#2e5750" stroke-width="1.4"/>
+    <rect x="366" y="78" width="276" height="104" rx="7" fill="rgba(6,78,59,.20)"/>
+    <text x="382" y="102" fill="#e8e2da" font-size="12.5" font-weight="700">Gateway routes</text>
+    <text x="382" y="122" fill="#9a928a" font-size="9.5">dashboard/plugin_api.py</text>
+    <text x="382" y="140" fill="#9a928a" font-size="9.5">/setup · /live · /panic · /master</text>
+    <text x="382" y="156" fill="#9a928a" font-size="9.5">/knob · /library · /capture · /cab</text>
+    <text x="382" y="174" fill="#655e57" font-size="8.5">every call carries ?engine=amphead2</text>
+
+    <!-- seam -->
+    <rect x="708" y="78" width="258" height="104" rx="7" fill="#0d1211" stroke="#2e5750" stroke-width="1.4"/>
+    <rect x="708" y="78" width="258" height="104" rx="7" fill="rgba(6,78,59,.20)"/>
+    <text x="724" y="102" fill="#e8e2da" font-size="12.5" font-weight="700">The seam</text>
+    <text x="724" y="122" fill="#9a928a" font-size="9.5">amphead/local_port.py</text>
+    <text x="724" y="140" fill="#9a928a" font-size="9.5">one verb per thing the face can do</text>
+    <text x="724" y="156" fill="#9a928a" font-size="9.5">finds the engine's own interpreter</text>
+    <text x="724" y="174" fill="#655e57" font-size="8.5">works while the engine is down: menus, last chain</text>
+
+    <!-- engine process -->
+    <rect x="1032" y="70" width="352" height="120" rx="7" fill="#0d1211" stroke="#2e5750" stroke-width="1.6"/>
+    <rect x="1032" y="70" width="352" height="120" rx="7" fill="rgba(6,78,59,.26)"/>
+    <text x="1048" y="94" fill="#e8e2da" font-size="12.5" font-weight="700">Engine process</text>
+    <text x="1048" y="114" fill="#9a928a" font-size="9.5">amphead/engine_main.py — its own process</text>
+    <text x="1048" y="132" fill="#9a928a" font-size="9.5">JSON lines over stdin/stdout, one verb at a time</text>
+    <text x="1048" y="150" fill="#9a928a" font-size="9.5">owns the device, the chain, the master</text>
+    <text x="1048" y="168" fill="#9a928a" font-size="9.5">#1 rule: starting it never makes a sound</text>
+    <text x="1366" y="168" fill="#655e57" font-size="8.5" text-anchor="end">separate, so a click can never stall audio</text>
+
+    <!-- control dot -->
+    <circle r="4.5" class="pulse ctl">
+      <animateMotion dur="3.2s" repeatCount="indefinite" keyPoints="0;1" keyTimes="0;1" calcMode="linear"
+        path="M 300 130 L 366 130 M 300 130 L 366 130"/>
+    </circle>
+
+    <!-- vertical control drops: engine_main -> chain, seam -> files -->
+    <path d="M 1208 190 L 1208 250 L 900 250 L 900 300" fill="none" stroke="#6fd6c3" stroke-width="1.3"
+          stroke-dasharray="5 5" marker-end="url(#aCtl)" opacity=".8"/>
+    <text x="1014" y="244" fill="#6fd6c3" font-size="9" opacity=".85">load capture · set tone · arm · master</text>
+
+    <!-- ============ AUDIO LANE (bottom) ============ -->
+    <line x1="250" y1="486" x2="300" y2="486" stroke="#f0a45c" stroke-width="1.8" marker-end="url(#aAudio)"/>
+    <path d="M 512 486 L 548 486 L 548 428 L 586 428" fill="none" stroke="#f0a45c" stroke-width="1.8" marker-end="url(#aAudio)"/>
+
+    <!-- guitar -->
+    <rect x="70" y="436" width="180" height="100" rx="7" fill="#161210" stroke="#7a5a34" stroke-width="1.4"/>
+    <rect x="70" y="436" width="180" height="100" rx="7" fill="rgba(120,53,15,.22)"/>
+    <text x="86" y="462" fill="#e8e2da" font-size="12.5" font-weight="700">Your guitar</text>
+    <text x="86" y="482" fill="#9a928a" font-size="9.5">a DI, straight in</text>
+    <text x="86" y="500" fill="#9a928a" font-size="9.5">nothing else on the way</text>
+    <text x="86" y="520" fill="#655e57" font-size="8.5">no DAW, no plug-in host</text>
+
+    <!-- input device -->
+    <rect x="300" y="436" width="212" height="100" rx="7" fill="#161210" stroke="#7a5a34" stroke-width="1.4"/>
+    <rect x="300" y="436" width="212" height="100" rx="7" fill="rgba(120,53,15,.22)"/>
+    <text x="316" y="462" fill="#e8e2da" font-size="12.5" font-weight="700">Interface in</text>
+    <text x="316" y="482" fill="#9a928a" font-size="9.5">WDM-KS input · 44.1 kHz</text>
+    <text x="316" y="500" fill="#9a928a" font-size="9.5">512-frame blocks</text>
+    <text x="316" y="520" fill="#655e57" font-size="8.5">chosen by measurement, not by taste</text>
+
+    <!-- engine chain -->
+    <rect x="572" y="300" width="560" height="310" rx="9" fill="#120e0c" stroke="#8a6a48" stroke-width="1.6"/>
+    <rect x="572" y="300" width="560" height="310" rx="9" fill="rgba(120,53,15,.10)"/>
+    <text x="592" y="326" fill="#e8e2da" font-size="13" font-weight="700">The audio callback</text>
+    <text x="592" y="344" fill="#9a928a" font-size="9.5">amphead/engine2.py — runs on the audio thread, allocation-free</text>
+
+    <!-- stage 1 capture -->
+    <rect class="st s1" x="592" y="362" width="160" height="132" rx="7" fill="#1b1410" stroke="#f0a45c" stroke-width="1.5"/>
+    <text x="606" y="386" fill="#f0a45c" font-size="10" letter-spacing="1.6">1 · CAPTURE</text>
+    <text x="606" y="406" fill="#e8e2da" font-size="26" font-weight="700">NAM</text>
+    <text x="606" y="426" fill="#9a928a" font-size="9">WaveNet, in plain numpy</text>
+    <text x="606" y="443" fill="#9a928a" font-size="9">a .nam file is the amp</text>
+    <text x="606" y="460" fill="#655e57" font-size="8.5">0.0000 error vs PyTorch</text>
+
+    <path d="M 752 428 L 786 428" stroke="#f0a45c" stroke-width="1.6" marker-end="url(#aAudio)"/>
+
+    <!-- stage 2 tone -->
+    <rect class="st s2" x="786" y="362" width="150" height="132" rx="7" fill="#1b1410" stroke="#f0a45c" stroke-width="1.5"/>
+    <text x="800" y="386" fill="#f0a45c" font-size="10" letter-spacing="1.6">2 · TONE</text>
+    <text x="800" y="406" fill="#e8e2da" font-size="22" font-weight="700">±12 dB</text>
+    <text x="800" y="426" fill="#9a928a" font-size="9">bass · mid · treble</text>
+    <text x="800" y="443" fill="#9a928a" font-size="9">three filters, state kept</text>
+    <text x="800" y="460" fill="#655e57" font-size="8.5">flat = true bypass</text>
+
+    <path d="M 936 428 L 970 428" stroke="#f0a45c" stroke-width="1.6" marker-end="url(#aAudio)"/>
+
+    <!-- stage 3 cabinet -->
+    <rect class="st s3" x="970" y="362" width="144" height="132" rx="7" fill="#1b1410" stroke="#f0a45c" stroke-width="1.5"/>
+    <text x="984" y="386" fill="#f0a45c" font-size="10" letter-spacing="1.6">3 · CABINET</text>
+    <text x="984" y="406" fill="#e8e2da" font-size="22" font-weight="700">FIR</text>
+    <text x="984" y="426" fill="#9a928a" font-size="9">a .wav impulse</text>
+    <text x="984" y="443" fill="#9a928a" font-size="9">resampled to 44.1</text>
+    <text x="984" y="460" fill="#655e57" font-size="8.5">overlap-save, no scipy</text>
+
+    <!-- master gate -->
+    <rect class="st s4" x="592" y="512" width="522" height="76" rx="7" fill="#1b1013" stroke="#ef7a86" stroke-width="1.5"/>
+    <text x="606" y="536" fill="#ef7a86" font-size="10" letter-spacing="1.6">4 · MASTER — the gate</text>
+    <text x="606" y="558" fill="#e8e2da" font-size="10.5">silent at −60 dB until you press LIVE · arms at −6 dB, a measured safe level · can go to +12 dB</text>
+    <text x="606" y="576" fill="#655e57" font-size="8.5">arm is a level, not a switch that guesses; SILENCE parks it and takes the stages out of the path</text>
+
+    <!-- the gate is in the path: cabinet down into master, master right into the interface -->
+    <path d="M 1042 494 L 1042 508" stroke="#f0a45c" stroke-width="1.8" marker-end="url(#aAudio)"/>
+    <path d="M 1114 550 L 1156 550 L 1156 486 L 1178 486" fill="none" stroke="#f0a45c" stroke-width="1.8" marker-end="url(#aAudio)"/>
+    <rect x="1182" y="436" width="204" height="100" rx="7" fill="#161210" stroke="#7a5a34" stroke-width="1.4"/>
+    <rect x="1182" y="436" width="204" height="100" rx="7" fill="rgba(120,53,15,.22)"/>
+    <text x="1198" y="462" fill="#e8e2da" font-size="12.5" font-weight="700">Interface out</text>
+    <text x="1198" y="482" fill="#9a928a" font-size="9.5">WDM-KS output</text>
+    <text x="1198" y="500" fill="#9a928a" font-size="9.5">44.1 kHz · 512 frames</text>
+    <text x="1198" y="520" fill="#655e57" font-size="8.5">20.0 ms round trip, measured</text>
+
+    <path d="M 1284 536 L 1284 570" stroke="#f0a45c" stroke-width="1.8" marker-end="url(#aAudio)"/>
+    <rect x="1182" y="576" width="204" height="76" rx="7" fill="#161210" stroke="#7a5a34" stroke-width="1.4"/>
+    <text x="1198" y="602" fill="#e8e2da" font-size="12.5" font-weight="700">Amp in the room</text>
+    <text x="1198" y="622" fill="#9a928a" font-size="9.5">what the two files sound like</text>
+    <text x="1198" y="640" fill="#655e57" font-size="8.5">change the files = change the amp</text>
+
+    <!-- audio dot: guitar -> chain -> out -> speaker -->
+    <circle r="5" class="pulse">
+      <animateMotion dur="2.6s" repeatCount="indefinite"
+        path="M 250 486 L 300 486 L 548 486 L 548 428 L 672 428 L 861 428 L 1042 428 L 1042 550 L 1156 550 L 1156 486 L 1284 486 L 1284 576"/>
+    </circle>
+
+    <!-- ============ FILES / STATE ============ -->
+    <text x="34" y="690" fill="#a98bf0" font-size="10" letter-spacing="2.2">WHAT THE ENGINE CHECKS, AND WHAT IT REMEMBERS</text>
+
+    <rect x="70" y="704" width="400" height="40" rx="6" fill="#12100e" stroke="#4b3a6b" stroke-width="1.2"/>
+    <text x="84" y="720" fill="#c9b6ff" font-size="10">amphead/library.py</text>
+    <text x="84" y="736" fill="#9a928a" font-size="8.5">scans your .nam and .wav folders · the tone's name is its two file names</text>
+
+    <rect x="490" y="704" width="400" height="40" rx="6" fill="#12100e" stroke="#4b3a6b" stroke-width="1.2"/>
+    <text x="504" y="720" fill="#c9b6ff" font-size="10">~/.amphead2.json</text>
+    <text x="504" y="736" fill="#9a928a" font-size="8.5">the last chain played · Setup brings back the amp you had</text>
+
+    <rect x="910" y="704" width="400" height="40" rx="6" fill="#12100e" stroke="#4b3a6b" stroke-width="1.2"/>
+    <text x="924" y="720" fill="#c9b6ff" font-size="10">ENGINE_MEASUREMENTS.md</text>
+    <text x="924" y="736" fill="#9a928a" font-size="8.5">every number above came from a run on this machine</text>
+
+    <!-- legend -->
+    <g transform="translate(70,672)">
+      <line x1="0" y1="0" x2="26" y2="0" stroke="#f0a45c" stroke-width="2"/>
+      <text x="32" y="3.5" fill="#9a928a" font-size="8.5">audio</text>
+      <line x1="86" y1="0" x2="112" y2="0" stroke="#6fd6c3" stroke-width="2"/>
+      <text x="118" y="3.5" fill="#9a928a" font-size="8.5">control</text>
+      <line x1="184" y1="0" x2="210" y2="0" stroke="#6fd6c3" stroke-width="2" stroke-dasharray="5 5"/>
+      <text x="216" y="3.5" fill="#9a928a" font-size="8.5">setting something on the chain</text>
+      <rect x="378" y="-5" width="24" height="10" rx="2" fill="none" stroke="#ef7a86" stroke-width="1.5"/>
+      <text x="410" y="3.5" fill="#9a928a" font-size="8.5">the safety gate</text>
+    </g>
+
+    <!-- parked-host note -->
+    <text x="1350" y="726" fill="#655e57" font-size="8.5" text-anchor="end">the DAW rig still exists in the repo, parked: nothing on this page touches it</text>
+  </svg>
+  </div>
+
+  <div class="steps">
+    <div class="step"><div class="n">1</div><div class="t"><b>You press SET UP.</b> <span>No sound yet — the engine opens the interface and parks the master at −60 dB. The last chain you played is loaded back in.</span></div></div>
+    <div class="step"><div class="n">2</div><div class="t"><b>You pick a capture and a cab.</b> <span>The two knobs at the top of the face list the files on this machine, by folder. The tone's name is just those two names.</span></div></div>
+    <div class="step"><div class="n">3</div><div class="t"><b>You press LIVE.</b> <span>That arms the chain and brings the master up to −6 dB, a level measured so a −18 dBFS DI peaks at −2.9 dBFS instead of clipping.</span></div></div>
+    <div class="step"><div class="n">4</div><div class="t"><b>Audio runs on its own thread.</b> <span>Guitar in → capture → tone → cabinet → master → out. Same 512-frame block, 20 ms round trip, about 15% of one core.</span></div></div>
+    <div class="step"><div class="n">5</div><div class="t"><b>You turn the knobs.</b> <span>Each move is a route, a verb, and a real change on the audio thread — and the engine reports the value back, so the face shows what the engine holds, not what you asked for.</span></div></div>
+    <div class="step"><div class="n">6</div><div class="t"><b>SILENCE is always one press away.</b> <span>It parks the master and takes all three stages out of the path. Pressing LIVE afterwards puts exactly those stages back and says so.</span></div></div>
+  </div>
+
+  <p class="note">Two processes, one rule: the pane never owns the audio. The engine is a separate process holding the device, so a slow click, a redraw, or a closed chat can never stall the callback. Everything the face shows is something the engine answered — the mute button, the meter, and the numbers on the knobs all come back from the same place.</p>
+</div>
+</body>
+</html>
