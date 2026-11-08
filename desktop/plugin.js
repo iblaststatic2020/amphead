@@ -455,20 +455,42 @@ function PowerButton({ running, armed, busy, onSetup, onLive }) {
     standby: { text: 'GO LIVE', sub: 'arm at the safe level', fill: 'var(--ui-bg-quaternary)', ink: 'var(--ui-text-primary)' },
     live: { text: 'LIVE', sub: 'press to stand by', fill: '#e5533d', ink: '#fff' }
   }[state]
+  // A lamp beside the words, the way a real front panel has one. It is the only part of the switch
+  // that is allowed to glow, and it glows only when the amp is actually making sound.
+  const lamp = state === 'live' ? '#fff' : 'rgba(0,0,0,0.35)'
   return jsxs('button', {
     type: 'button',
     disabled: busy,
     onClick: state === 'setup' ? onSetup : onLive,
     'aria-label': `${look.text}: ${look.sub}`,
-    className: 'flex shrink-0 flex-col items-center rounded-md px-3 py-1.5 outline-none',
+    className: 'relative flex shrink-0 flex-col items-center rounded-md px-3 py-1.5 outline-none',
     style: {
-      background: look.fill,
-      border: '1px solid var(--ui-stroke-primary)',
-      boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.25), 0 1px 3px rgba(0,0,0,0.3)',
+      // domed, not flat: light on the top lip, shadow under the bottom one
+      background:
+        `linear-gradient(180deg, color-mix(in srgb, ${look.fill} 86%, #fff) 0%,` +
+        ` ${look.fill} 52%,` +
+        ` color-mix(in srgb, ${look.fill} 84%, rgba(0,0,0,1)) 100%)`,
+      border: '1px solid color-mix(in srgb, var(--ui-stroke-primary) 70%, rgba(0,0,0,1))',
+      boxShadow:
+        'inset 0 1px 0 rgba(255,255,255,0.32), inset 0 -2px 3px rgba(0,0,0,0.35),' +
+        ' 0 2px 5px rgba(0,0,0,0.45)',
       cursor: busy ? 'default' : 'pointer',
-      minWidth: 92
+      minWidth: 92,
+      textShadow: '0 1px 0 rgba(0,0,0,0.3)'
     },
     children: [
+      jsx('span', {
+        style: {
+          position: 'absolute',
+          right: 5,
+          top: 5,
+          width: 4,
+          height: 4,
+          borderRadius: '50%',
+          background: lamp,
+          boxShadow: state === 'live' ? '0 0 6px 1px rgba(255,255,255,0.8)' : 'inset 0 1px 1px rgba(0,0,0,0.6)'
+        }
+      }),
       jsx('span', {
         className: 'text-[0.8125rem] font-bold uppercase leading-none tracking-[0.12em]',
         style: { color: look.ink },
@@ -867,7 +889,15 @@ function AmpFace({ rest }) {
                   disabled: busy,
                   onClick: () => act('/teardown', {}),
                   className: 'shrink-0 text-[0.5rem] uppercase leading-none tracking-[0.1em] underline-offset-2 hover:underline',
-                  style: { color: SECOND.color, cursor: busy ? 'default' : 'pointer' },
+                  // a real ghost button: the app's button defaults would paint a white box here
+                  style: {
+                    color: SECOND.color,
+                    cursor: busy ? 'default' : 'pointer',
+                    background: 'transparent',
+                    border: 0,
+                    padding: 0,
+                    font: 'inherit'
+                  },
                   children: 'close engine'
                 })
               ]
@@ -900,19 +930,19 @@ function AmpFace({ rest }) {
 
           // ---- the knobs, on one plate, the way a head groups them ----
           jsxs('div', {
-            style: { ...PLATE, padding: '6px 6px 4px' },
+            style: { ...PLATE, padding: '7px 6px 5px' },
             children: [
-              // Two rows, in the order the signal travels: in, the amp's own tone, then out
-              // and the room. Laid out with inline styles, not utility classes, because the
-              // plate has to measure the same in the app and in the browser harness; a missing
-              // class there turned six knobs into a 480-pixel vertical list.
-              jsxs('div', {
+              // Six knobs in a 3 x 2 grid, in the order the signal travels: in, the amp's own
+              // tone, then out and the room. A grid and not two flex rows, because six does not
+              // divide four-and-two: the treble used to sit alone on a line of its own, which
+              // read as a mistake in a 300px pane.
+              jsx('div', {
                 style: {
-                  display: 'flex',
-                  alignItems: 'flex-start',
-                  justifyContent: 'center',
-                  gap: 4,
-                  flexWrap: 'wrap'
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(3, 1fr)',
+                  justifyItems: 'center',
+                  rowGap: 6,
+                  columnGap: 2
                 },
                 children: [
                   jsx(ChickenKnob, {
@@ -936,20 +966,7 @@ function AmpFace({ rest }) {
                     busy,
                     disabled: !running,
                     onCommit: (db) => turnKnob(name, db)
-                  }, name))
-                ]
-              }),
-              jsxs('div', {
-                style: {
-                  display: 'flex',
-                  alignItems: 'flex-start',
-                  justifyContent: 'center',
-                  gap: 14,
-                  marginTop: 4,
-                  paddingTop: 5,
-                  borderTop: '1px dashed var(--ui-stroke-secondary)'
-                },
-                children: [
+                  }, name)),
                   jsx(ChickenKnob, {
                     label: 'OUT',
                     size: 40,
@@ -975,7 +992,7 @@ function AmpFace({ rest }) {
                 ]
               }),
               jsx('div', {
-                className: 'mt-0.5 text-center text-[0.5rem] leading-tight',
+                className: 'mt-1 text-center text-[0.5rem] leading-tight',
                 style: MUTED,
                 children: running
                   ? 'in drives the amp · out balances the cab · master is the room · drag, shift for fine'

@@ -45,6 +45,10 @@
         background: var(--ui-card);
       }
     </style>
+    <!-- The app ships Tailwind to its panes. The harness loads the same utility classes from the
+         Play CDN, otherwise every `flex`, `gap-2` and `justify-between` in the face silently
+         collapses to a block and the preview lies about the layout. -->
+    <script src="https://cdn.tailwindcss.com"></script>
   </head>
   <body>
     <div style="display: flex; gap: 34px; align-items: flex-start">
