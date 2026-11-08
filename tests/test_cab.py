@@ -97,6 +97,48 @@ class CabTest(unittest.TestCase):
         quieter = render(Cab(ir, 48000, gain_db=-6.0), x, 4)
         self.assertAlmostEqual(float(quieter[0] / plain[0]), 0.5011, places=3)
 
+    def test_a_cabinet_far_longer_than_the_block_is_exact(self):
+        """The five second IR that made the amp cut in and out: 262144 taps at 512 frames.
+
+        Overlap-save with one transform of the whole IR is exact but costs 117% of realtime
+        here, so the output stream starves. Partitions are exact too, and the test that says
+        so is the same convolution, not a level or a vibe.
+        """
+        rng = np.random.default_rng(21)
+        ir = (rng.standard_normal(8192) * 0.01).astype(np.float32)
+        ir[0] = 0.4
+        x = (rng.standard_normal(4096) * 0.1).astype(np.float32)
+        got = render(Cab(ir, 48000, normalize=False), x, 512)
+        want = np.convolve(x, ir)[: x.size]
+        self.assertLess(float(np.max(np.abs(got - want))), 1e-4)
+
+    def test_the_transform_stays_the_size_of_a_block_however_long_the_cabinet(self):
+        """This is the fix itself: cost per block must stop depending on the IR length."""
+        short = Cab(np.zeros(2048, dtype=np.float32) + 0.001, 48000, normalize=False)
+        short.process(np.zeros(512, dtype=np.float32))
+        long = Cab(np.zeros(200000, dtype=np.float32) + 0.001, 48000, normalize=False)
+        long.process(np.zeros(512, dtype=np.float32))
+        self.assertEqual(short._ring.shape[1], 513)
+        self.assertEqual(long._ring.shape[1], 513, "the transform grew with the cabinet")
+        self.assertEqual(short._partitions, 4)
+        self.assertEqual(long._partitions, 391)
+
+    def test_a_long_cabinet_still_fits_inside_its_own_block(self):
+        """A wall-clock budget, deliberately generous: 200000 taps measured ~1.3 ms per 512
+        frame block (11.6 ms of audio) after partitioning, against 13.6 ms before. Slow CI
+        machines should still clear 4x realtime headroom."""
+        import time
+
+        cab = Cab(np.ones(200000, dtype=np.float32) / 200000, 44100, normalize=False)
+        x = np.random.default_rng(3).standard_normal(512).astype(np.float32) * 0.1
+        cab.process(x)
+        start = time.perf_counter()
+        for _ in range(20):
+            cab.process(x)
+        per_block = (time.perf_counter() - start) / 20
+        self.assertLess(per_block, 4 * 512 / 44100,
+                        "a long cabinet no longer fits in its block: the output will starve")
+
     def test_empty_ir_is_an_error(self):
         with self.assertRaises(ValueError):
             Cab(np.zeros(0, dtype=np.float32), 48000)

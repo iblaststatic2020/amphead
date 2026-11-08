@@ -23,6 +23,10 @@ const TONE_LABELS = { bass: 'BASS', mid: 'MID', treble: 'TREBLE' }
 const TONE_RANGE = 12 // ±12 dB, same as the tone stack the engine runs
 const MASTER_LOW = -60
 const MASTER_HIGH = 12
+// Trim either side of the amp. +/-24 dB is the range the engine accepts: enough to make a clean
+// DI drive a lead capture, and enough to sit a loud cabinet beside a quiet one.
+const GAIN_LOW = -24
+const GAIN_HIGH = 24
 
 const toDb = (peak) => (peak <= 0.000001 ? -60 : Math.max(-60, 20 * Math.log10(peak)))
 const dbWords = (db) => `${db > 0 ? '+' : ''}${Number(db).toFixed(1)} dB`
@@ -176,8 +180,11 @@ function ChickenKnob({ label, db, min, max, neutral = 0, size = 44, busy, disabl
   const angle = -135 + at * 270
   const ticks = Array.from({ length: 11 }, (_, i) => i)
 
+  // A fixed cell, so six knobs sit in known places instead of reflowing as their readouts
+  // change width. Without it "TREBLE" and a "-6.0 dB" push their neighbours around.
   return jsxs('div', {
     className: 'flex select-none flex-col items-center gap-1',
+    style: { width: size + 18 },
     children: [
       jsxs('div', {
         className: 'relative',
@@ -656,11 +663,33 @@ function AmpFace({ rest }) {
           jsxs('div', {
             style: { ...PLATE, padding: '6px 6px 4px' },
             children: [
+              // Two rows, in the order the signal travels: in, the amp's own tone, then out
+              // and the room. Laid out with inline styles, not utility classes, because the
+              // plate has to measure the same in the app and in the browser harness; a missing
+              // class there turned six knobs into a 480-pixel vertical list.
               jsxs('div', {
-                className: 'flex items-start justify-center gap-1',
+                style: {
+                  display: 'flex',
+                  alignItems: 'flex-start',
+                  justifyContent: 'center',
+                  gap: 4,
+                  flexWrap: 'wrap'
+                },
                 children: [
+                  jsx(ChickenKnob, {
+                    label: 'IN',
+                    size: 40,
+                    db: Number(typeof s.input_gain_db === 'number' ? s.input_gain_db : 0),
+                    min: GAIN_LOW,
+                    max: GAIN_HIGH,
+                    neutral: 0,
+                    busy,
+                    disabled: !running,
+                    onCommit: (db) => act('/input_gain', { db })
+                  }, 'in'),
                   ...TONE_NAMES.map((name) => jsx(ChickenKnob, {
                     label: TONE_LABELS[name],
+                    size: 40,
                     db: Number(tone[name] || 0),
                     min: -TONE_RANGE,
                     max: TONE_RANGE,
@@ -668,13 +697,34 @@ function AmpFace({ rest }) {
                     busy,
                     disabled: !running,
                     onCommit: (db) => turnKnob(name, db)
-                  }, name)),
-                  jsx('span', {
-                    className: 'mx-1 self-stretch',
-                    style: { width: 1, background: 'var(--ui-stroke-secondary)' }
-                  }),
+                  }, name))
+                ]
+              }),
+              jsxs('div', {
+                style: {
+                  display: 'flex',
+                  alignItems: 'flex-start',
+                  justifyContent: 'center',
+                  gap: 14,
+                  marginTop: 4,
+                  paddingTop: 5,
+                  borderTop: '1px dashed var(--ui-stroke-secondary)'
+                },
+                children: [
+                  jsx(ChickenKnob, {
+                    label: 'OUT',
+                    size: 40,
+                    db: Number(typeof s.output_gain_db === 'number' ? s.output_gain_db : 0),
+                    min: GAIN_LOW,
+                    max: GAIN_HIGH,
+                    neutral: 0,
+                    busy,
+                    disabled: !running,
+                    onCommit: (db) => act('/output_gain', { db })
+                  }, 'out'),
                   jsx(ChickenKnob, {
                     label: 'MASTER',
+                    size: 40,
                     db: Number(typeof s.master_db === 'number' ? s.master_db : MASTER_LOW),
                     min: MASTER_LOW,
                     max: MASTER_HIGH,
@@ -689,7 +739,7 @@ function AmpFace({ rest }) {
                 className: 'mt-0.5 text-center text-[0.5rem] leading-tight',
                 style: MUTED,
                 children: running
-                  ? 'drag to turn · shift for fine · double-click resets'
+                  ? 'in drives the amp · out balances the cab · master is the room · drag, shift for fine'
                   : 'the engine is off: set up before the knobs answer'
               })
             ]

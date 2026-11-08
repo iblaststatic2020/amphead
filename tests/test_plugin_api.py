@@ -327,6 +327,47 @@ class TestPretty(unittest.TestCase):
         self.assertEqual(API._pretty("On"), "On")
 
 
+class TestTheGainKnobs(unittest.TestCase):
+    """In and out, either side of the amp, both reachable from the face."""
+
+    def rig(self, seen):
+        rig = mock.Mock()
+        rig.name = "amphead2"
+        rig.set_input_gain.side_effect = lambda db: seen.append(("in", db)) or {"db": db}
+        rig.set_output_gain.side_effect = lambda db: seen.append(("out", db)) or {"db": db}
+        return rig
+
+    def test_input_gain_reaches_the_engine(self):
+        seen = []
+        with mock.patch.object(API.port, "choose", lambda name=None: self.rig(seen)):
+            payload = API.input_gain({"db": 6})
+        self.assertEqual(seen, [("in", 6.0)])
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["db"], 6.0)
+
+    def test_output_gain_reaches_the_engine(self):
+        seen = []
+        with mock.patch.object(API.port, "choose", lambda name=None: self.rig(seen)):
+            payload = API.output_gain({"db": -4.5})
+        self.assertEqual(seen, [("out", -4.5)])
+        self.assertTrue(payload["ok"])
+
+    def test_both_knobs_stop_at_24_db(self):
+        seen = []
+        with mock.patch.object(API.port, "choose", lambda name=None: self.rig(seen)):
+            API.input_gain({"db": 90})
+            API.output_gain({"db": -90})
+        self.assertEqual(seen, [("in", 24.0), ("out", -24.0)])
+
+    def test_a_rig_without_trim_says_so_instead_of_pretending(self):
+        rig = mock.Mock(spec=["set_master", "master", "label"])
+        rig.label = "REAPER"
+        with mock.patch.object(API.port, "choose", lambda name=None: rig):
+            payload = API.input_gain({"db": 3})
+        self.assertFalse(payload["ok"])
+        self.assertIn("REAPER", payload["output"])
+
+
 class TestParkedMaster(unittest.TestCase):
     """Armed and fed but parked is silent, so the face must not call it READY."""
 

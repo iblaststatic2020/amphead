@@ -24,6 +24,9 @@ const rig = {
   running: true,
   armed: false,
   master_db: -60,
+  // The two trims either side of the amp, as the engine reports them.
+  input_gain_db: 0,
+  output_gain_db: 0,
   tone: { bass: 0, mid: 0, treble: 0 },
   capture: 'PEAVEY - 6506 - CLEAN - B0 - HIGH - G4.0',
   capture_path: CAPTURES[1].path,
@@ -44,7 +47,7 @@ export const state = () => {
       ok: true, engine: 'amphead2', verdict: 'ENGINE OFF',
       reason: 'the local engine is not running: press Setup',
       project: 'AmpHead 2', ui: 'hidden', running: false, armed: false, monitor: false,
-      master_db: null, demo: false, problems: [], chain: [], knobs: [], tone: null,
+      master_db: null, input_gain_db: null, output_gain_db: null, demo: false, problems: [], chain: [], knobs: [], tone: null,
       tone_name: '', capture: '', capture_path: '', cab: '', cab_path: '',
       samplerate: 0, blocksize: 0, latency_ms: 0, mode: '',
       device: { driver: '', buffer: '', rate: '', out_ms: 0, closed: true }
@@ -57,6 +60,8 @@ export const state = () => {
     reason: armed ? 'armed, monitoring, 20.0 ms round trip' : 'the track is not armed, flip LIVE to play',
     project: 'AmpHead 2', ui: 'hidden', running: true, armed, monitor: armed,
     master_db: rig.master_db,
+    input_gain_db: rig.input_gain_db,
+    output_gain_db: rig.output_gain_db,
     // A stage silence switched out is a stage the face must not pretend is playing.
     problems: rig.stages.some((stage) => !stage.enabled) ? ['a stage is switched out of the path'] : [],
     chain: rig.stages.map((stage) => ({ name: stage.name, enabled: stage.enabled })),
@@ -123,6 +128,14 @@ export async function rest(path, options) {
     if (key && key in rig.tone) rig.tone[key] = db
     return { ok: true, norm: body.value, value: db, param_name: key,
              output: `${key} ${db > 0 ? '+' : ''}${db.toFixed(1)} dB` }
+  }
+  // The two trims either side of the amp: -24..+24, and they never touch the master.
+  if (bare === '/input_gain' || bare === '/output_gain') {
+    const key = bare === '/input_gain' ? 'input_gain_db' : 'output_gain_db'
+    const asked = Number(body.db)
+    const db = Number.isFinite(asked) ? Math.max(-24, Math.min(24, asked)) : rig[key]
+    rig[key] = db
+    return { ok: true, db, output: `${bare === '/input_gain' ? 'input' : 'output'} gain ${db} dB` }
   }
   // The ramp: -60 is silent, +12 is the engine's own ceiling (not a DAW's 0).
   if (bare === '/master') {

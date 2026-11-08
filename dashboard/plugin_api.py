@@ -322,6 +322,11 @@ def state() -> dict[str, Any]:
         "cab": live.get("cab") or "",
         "cab_path": live.get("cab_path") or "",
         "tone": live.get("tone") or {},
+        # The trim either side of the amp. Input gain is how hard the capture is driven,
+        # output gain balances the cabinet, and both are separate from the master so the
+        # master can stay at a level that is known to be safe.
+        "input_gain_db": live.get("input_gain_db"),
+        "output_gain_db": live.get("output_gain_db"),
         # The two files together, said the way a player says it, so "what tone is this" has an
         # answer that is not a file name. Derived, never stored: the name cannot drift from
         # what is actually loaded.
@@ -527,6 +532,52 @@ def master_level(body: dict) -> dict[str, Any]:
             return {"output": f"NOT SET: {exc}", "ok": False}
     where = "silent" if float(level or 0) <= -60 else f"master at {level} dB"
     return {"output": f"{where}; raise it in steps and listen", "ok": True, "db": level}
+
+
+def _trim(kind: str, body: dict) -> dict[str, Any]:
+    """Move one of the two gain knobs either side of the amp, and say where it landed.
+
+    These are not the master. Input gain decides how hard the capture is driven, which is a
+    tone decision; output gain balances the cabinet against the next capture. Keeping both
+    separate from the master means the master can stay at the level that was known to be safe
+    while the player still has a way to make it louder or dirtier.
+    """
+    try:
+        asked = float(body.get("db"))
+    except (TypeError, ValueError):
+        return {"output": "NO GAIN: say how many dB", "ok": False}
+    if not math.isfinite(asked):
+        return {"output": "NO GAIN: say how many dB", "ok": False}
+    db = max(-24.0, min(24.0, asked))
+    setter = "set_input_gain" if kind == "input" else "set_output_gain"
+    name = "input_gain_db" if kind == "input" else "output_gain_db"
+    with _speaking_to_tools() as tools:
+        write = getattr(tools.RIG, setter, None)
+        if write is None:
+            return {"output": f"NOT SET: {tools.RIG.label} has no {kind} gain", "ok": False}
+        try:
+            got = write(db=db)
+        except port.NoRig:
+            return {"output": f"NOT SET: {tools.RIG.label} is not running", "ok": False}
+        except port.RigError as exc:
+            return {"output": f"NOT SET: {exc}", "ok": False}
+    word = "driving the amp" if kind == "input" else "after the cabinet"
+    return {
+        "output": f"{kind} gain {got.get('db')} dB ({word})",
+        "ok": True,
+        name: got.get("db"),
+        "db": got.get("db"),
+    }
+
+
+@router.post("/input_gain")
+def input_gain(body: dict) -> dict[str, Any]:
+    return _trim("input", body)
+
+
+@router.post("/output_gain")
+def output_gain(body: dict) -> dict[str, Any]:
+    return _trim("output", body)
 
 
 @router.post("/knob")

@@ -147,6 +147,19 @@ class TestToneIsThreeKnobs(unittest.TestCase):
         knob = self.source[self.source.index("function ChickenKnob("):self.source.index("function Plate(")]
         self.assertIn("if (dragging || Date.now() < settled.current) return", knob)
 
+    def test_the_gain_knobs_sit_either_side_of_the_amp(self):
+        """In drives the capture, out balances the cabinet. Both are on the plate, in order."""
+        plate = self.source[self.source.index("the knobs, on one plate"):]
+        plate = plate[:plate.index("jsx(Meter")]
+        self.assertLess(plate.index("label: 'IN'"), plate.index("...TONE_NAMES.map"),
+                        "the input knob must come before the tone the amp makes")
+        self.assertLess(plate.index("...TONE_NAMES.map"), plate.index("label: 'OUT'"),
+                        "the output knob must come after the tone")
+        self.assertIn("act('/input_gain', { db })", plate)
+        self.assertIn("act('/output_gain', { db })", plate)
+        self.assertIn("const GAIN_LOW = -24", self.source)
+        self.assertIn("const GAIN_HIGH = 24", self.source)
+
     def test_the_master_has_the_engines_headroom_not_a_daws_zero(self):
         self.assertIn("const MASTER_HIGH = 12", self.source)
         self.assertIn("const MASTER_LOW = -60", self.source)

@@ -214,35 +214,44 @@ name, and an unknown label is refused by name instead of comparing against whate
 ## The amp face (Hermes side)
 
 The pane is the interface. It is a desktop plugin half that ships in this package
-(`desktop/plugin.js`) and talks to `dashboard/plugin_api.py`, which reads REAPER directly.
+(`desktop/plugin.js`) and talks to `dashboard/plugin_api.py`, which speaks to the local
+engine process. Nothing else needs to be open: no DAW, no second window.
 
 | row | what it answers |
 |---|---|
-| verdict | one word: `READY`, `STANDBY`, `NO SIGNAL`, `CLIPPING`, `DEVICE CLOSED`, `REAPER NOT RUNNING`, `REAPER BUSY`, plus the reason in a sentence |
+| verdict | one word: `READY`, `STANDBY`, `NO SIGNAL`, `CLIPPING`, `ENGINE OFF`, `DEVICE CLOSED`, plus the reason in a sentence |
 | input meter | live peak in dB with a latching clip light |
-| LIVE switch | one button: arm and monitor, leaving the master parked at -60 dB so the player ramps it up; or disarm and park the master |
-| chain | the real plugin list on the guitar track, in order, marked on or bypassed |
-| amp | eight knobs as sliders, sitting where the host says they sit, with the host's own read-back beside each one |
-| tones | `clean`, `crunch`, `lead`, and a free-text box that takes "make it crunchier" |
-| latency, master, project | the numbers REAPER would show, on screen while REAPER is minimized |
+| the switch | `engine off` opens the engine silent; `standby` arms it at the safe -6 dB; `live` is playing |
+| the plate | the tone is named from the two files on the chain (capture + cabinet), with the sample rate, block size and round trip under it |
+| files | amp capture picker and cabinet picker, listing what is actually in the NAM and IR folders |
+| the knobs, on one plate | `IN` (drives the capture), `BASS`/`MID`/`TREBLE` (the amp's own tone), `OUT` (balances the cabinet), `MASTER` (the room) |
 
-Routes: `GET /api/plugins/amphead/state`, `GET /api/plugins/amphead/meter` (150 ms poll),
-`POST /live`, `POST /panic`, `POST /tweak`, `POST /preset`, `POST /focus`. The pane polls `/state`
-at 1.5 s and `/meter` at 150 ms; the status bar chip polls `/meter` at 400 ms and `/state` at 4 s.
+Routes: `GET /api/plugins/amphead/state`, `GET /meter` (150 ms poll), `GET /library`,
+`POST /setup`, `POST /live`, `POST /master`, `POST /input_gain`, `POST /output_gain`,
+`POST /panic`, `POST /teardown`, `POST /set`, `POST /capture`, `POST /cab`. The pane polls
+`/state` at 1.5 s and `/meter` at 150 ms; the status bar chip polls `/meter` at 400 ms and
+`/state` at 4 s.
+
+The two trim knobs are digital trims either side of the capture, `-24 .. +24 dB`. `IN` is
+how hard the capture is driven, which is a tone decision as much as a level one, so it is not
+the master. `OUT` sits after the cabinet so two captures can be balanced without moving the
+master off a level that is known to be safe. The master keeps its own `-60 .. +12 dB` on top
+of both. Neither trim moves when the engine is off: the knob reports the engine's own number
+back, so a failed write looks like a knob that did not move rather than one that did.
 
 The face is not a second opinion. `/state` runs the same `verdict.judge` the `amphead_ready` tool
 runs, and every write route calls the same handler chat calls (`tools.handle_set`,
 `tools.handle_tone`), so a slider drag and the sentence "more gain" cannot do different things.
 
-Dragging a slider holds the value your finger chose until you let go, then writes through `/tweak`
-as a normalized value and shows the plugin's own read-back when the state poll comes back. If the
-bridge cannot report a normalized value, the row shows the number instead of a slider, because a
-slider sitting in the wrong place is worse than no slider.
+Dragging a knob holds the value your finger chose until you let go, then writes it and shows the
+engine's own read-back when the state poll comes back. Double-click returns a knob to neutral,
+shift drags finely. Every knob is labelled in dB in place, so the plate explains itself without a
+tooltip.
 
-A chain row brings that plugin forward in REAPER (`FX_FOCUS`, plus last-touched so the chain window
-scrolls to it) but only while REAPER's window is really on screen. When it is minimized or on the
-hidden desktop the row is not clickable and answers in place: "un-minimize REAPER first". Restoring
-a window the player put away is a UI decision they did not ask for.
+A cabinet longer than one audio block used to be the one thing that could still make this face lie:
+the convolution cost more than the block it had to fill, the output starved, and the player heard
+crackle. `amphead/cab.py` is partitioned now, so a 262 144-tap 4x12 costs 1.83 ms of an 11.6 ms
+block instead of 13.6 ms. Numbers in `ENGINE_MEASUREMENTS.md`.
 
 An armed rig whose master is parked at -60 dB says `STANDBY`, not `READY`. A rig that would be
 silent is not ready to play, and that rule lives in the judge, so the tool, the pane and the status

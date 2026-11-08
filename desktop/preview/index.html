@@ -51,6 +51,19 @@
         <div id="chip" style="display: inline-flex; align-items: center; height: 22px; padding: 0 6px; border: 1px solid var(--ui-stroke-secondary); border-radius: 5px; background: var(--ui-card)"></div>
       </section>
     </div>
+    <!-- The app hands a plugin `react` and `@hermes/plugin-sdk`; a browser needs them named.
+         Pinned so a face that renders here renders in the app, not in some later React. -->
+    <script type="importmap">
+      {
+        "imports": {
+          "react": "https://esm.sh/react@18.3.1",
+          "react/": "https://esm.sh/react@18.3.1/",
+          "react/jsx-runtime": "https://esm.sh/react@18.3.1/jsx-runtime",
+          "react-dom/client": "https://esm.sh/react-dom@18.3.1/client",
+          "@hermes/plugin-sdk": "./sdk.js"
+        }
+      }
+    </script>
     <script type="module" src="./main.js"></script>
   </body>
 </html>

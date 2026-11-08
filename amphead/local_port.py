@@ -412,6 +412,16 @@ class AmpHead2Rig:
                         expect: str | None = None, **kw: Any) -> dict:
         return {"db": self._call(cmd="gain", output_gain_db=float(db)).get("output_gain_db")}
 
+    def set_input_gain(self, db: float = 0.0, **kw: Any) -> dict:
+        """How hard the interface signal hits the capture. Nudging this up is how a clean
+        DI is made to drive an amp, which is a tone control as much as a level."""
+        return {"db": self._call(cmd="gain", input_gain_db=float(db)).get("input_gain_db")}
+
+    def set_output_gain(self, db: float = 0.0, **kw: Any) -> dict:
+        """Level between the cabinet and the master, so balancing two captures never means
+        moving the master and losing the number that was safe to be loud at."""
+        return {"db": self._call(cmd="gain", output_gain_db=float(db)).get("output_gain_db")}
+
     def set_input(self, track: int = 1, spec: Any = 1, **kw: Any) -> dict:
         """`spec` is the socket number off the front panel: 1 is IN 1. Never a device index."""
         number = int(spec if spec not in (None, "") else 1)

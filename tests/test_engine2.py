@@ -88,6 +88,35 @@ class ChainTest(unittest.TestCase):
         # FakeAmp delays by one sample, so compare against the same delay.
         self.assertLess(float(np.max(np.abs(y[1:] - expected[:-1]))), 1e-6)
 
+    def test_input_gain_drives_the_amp_and_output_gain_only_sets_the_level(self):
+        """The two new knobs have to be in different places, or they are the same knob.
+
+        A hard clipper stands in for a capture: driven from a quiet DI it is nearly linear,
+        and +12 dB into it flattens the peaks. Undoing that with -12 dB after it leaves a
+        different waveform at the same level, which is what "input gain changes tone" means.
+        """
+        class Clipper:
+            def process(self, x):
+                return np.clip(x * 8.0, -1.0, 1.0).astype(np.float32)
+
+        x = ramp()
+        clean = process_chain(x, Chain(armed=True, master_db=0.0, amp=Clipper()))
+        driven = process_chain(
+            x, Chain(armed=True, master_db=0.0, amp=Clipper(),
+                     input_gain_db=12.0, output_gain_db=-12.0))
+        self.assertFalse(np.allclose(clean, driven, atol=1e-3),
+                         "input and output gain are in the same place in the chain")
+        # Both are still a level: neither may push the block past the clamp on its own.
+        self.assertLessEqual(float(np.max(np.abs(driven))), 1.0)
+
+    def test_the_trim_knobs_stop_at_24_db(self):
+        """Past 24 dB the knob is a distortion control, so it stops answering like a level."""
+        engine = Engine()
+        engine.set_gain("input_gain_db", 60.0)
+        engine.set_gain("output_gain_db", -60.0)
+        self.assertEqual(engine.chain.input_gain_db, 24.0)
+        self.assertEqual(engine.chain.output_gain_db, -24.0)
+
     def test_output_is_clamped(self):
         chain = Chain(armed=True, master_db=24.0, amp=FakeAmp(20.0))
         y = process_chain(ramp(), chain)

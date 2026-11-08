@@ -39,7 +39,11 @@ METERS_HZ = 30.0
 
 #: Blocks of silence pushed into the hand-off queue when the streams open, so the
 #: output side starts with slack instead of chasing the input side from empty.
-PRIME_BLOCKS = 3
+# Slack the two clock domains can eat before the output thread has nothing to play. Measured
+# against a 262144-tap cabinet: two or three blocks arrived early in the first ten seconds and
+# then nothing, i.e. the queue was being *built* on a device that had already started pulling,
+# not drifting. Six blocks of head start covers the open and the first transforms.
+PRIME_BLOCKS = 6
 
 #: Frames per callback. 512 is the measured sweet spot here: the device reports the
 #: same 20 ms round trip at 128, 256 and 512 because kernel-streaming latency comes
@@ -191,6 +195,11 @@ class Engine:
         allowed = {"master_db", "input_gain_db", "output_gain_db"}
         if name not in allowed:
             raise ValueError(f"unknown gain {name!r}; expected one of {', '.join(sorted(allowed))}")
+        if name in ("input_gain_db", "output_gain_db"):
+            # Trim either side of the amp, in dB. 24 dB up is already enough to push a clean DI
+            # into the capture as hard as an overdrive pedal would; past that the knob stops
+            # being a level and becomes a distortion control that clips the master anyway.
+            db = max(-24.0, min(24.0, float(db)))
         return self.update(**{name: float(db)})
 
     # lifecycle -------------------------------------------------------------
