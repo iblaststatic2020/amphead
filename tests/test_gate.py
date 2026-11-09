@@ -163,6 +163,55 @@ class TheProbePicksABlockSize(unittest.TestCase):
         self.assertIsNone(tune.choose(rows))
         self.assertIn("cannot fill a block", tune.verdict(rows, None))
 
+    def test_a_refused_size_puts_the_chain_back_where_it_found_it(self):
+        from types import SimpleNamespace
+        from amphead import tune
+
+        class Fake:
+            samplerate = 48000
+            blocksize = 512
+            mode = None
+
+            def __init__(self):
+                self.chain = SimpleNamespace(armed=True, master_db=-6.0)
+                self.stopped = 0
+                self.running = False
+
+            def update(self, armed=None, master_db=None):
+                self.chain = SimpleNamespace(
+                    armed=self.chain.armed if armed is None else armed,
+                    master_db=self.chain.master_db if master_db is None else master_db)
+                return self.chain
+
+            def stop(self):
+                self.stopped += 1
+                self.running = False
+
+            def start(self):
+                raise RuntimeError("invalid device")
+
+        engine = Fake()
+        with self.assertRaises(RuntimeError):
+            tune.soak(engine, 256, seconds=1.0)
+        self.assertTrue(engine.chain.armed, "a failed soak left the amp armed and silent")
+        self.assertEqual(engine.chain.master_db, -6.0)
+        self.assertGreaterEqual(engine.stopped, 1)
+
+    def test_one_refused_block_size_does_not_end_the_calibration(self):
+        from types import SimpleNamespace
+        from unittest import mock
+        from amphead import tune
+        engine = SimpleNamespace(samplerate=48000)
+        good = {"blocksize": 512, "block_ms": 10.67, "seconds": 2, "blocks": 40,
+                "underflows": 0, "overflows": 0, "late": 0, "work_ms": 2.0,
+                "peak_ms": 3.0, "peak_realtime": 0.28, "mode": "wdm-ks-exclusive", "ok": True}
+        with mock.patch("amphead.tune.soak", side_effect=[RuntimeError("invalid device"), good]):
+            rows = tune.soak_all(engine, candidates=(256, 512), seconds=1.0)
+        self.assertEqual([r["blocksize"] for r in rows], [256, 512])
+        self.assertIn("invalid device", rows[0]["error"])
+        self.assertEqual(tune.choose_soak(rows), 512)
+        self.assertEqual(tune.soak_verdict(rows, 512), "512 frames, 10.7 ms a block, 2 s with nothing dropped")
+
     def test_a_heavy_chain_is_never_left_below_the_floor(self):
         from amphead import tune
         # The small size technically fits, the large one does not. Calibration must still

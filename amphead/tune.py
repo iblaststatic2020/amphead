@@ -143,25 +143,29 @@ def soak(engine, blocksize: int, seconds: float = 2.0) -> dict:
     engine.update(armed=True, master_db=-60.0)
     if engine.running:
         engine.stop()
-    engine.start()
-    # Let the driver fill its buffer and the partition bank warm up, then zero the counters.
-    # Without this, the first blocks after every start count as misses and a perfectly good
-    # size looks guilty of a stutter that only happened once, on opening.
-    if seconds >= 1.0:
-        time.sleep(SOAK_SETTLE)
-        reset = getattr(engine, "reset_counters", None)
-        if callable(reset):
-            reset()
-        started = time.perf_counter()
-        time.sleep(max(0.1, seconds - SOAK_SETTLE))
-    else:
-        started = time.perf_counter()
-        time.sleep(max(0.5, seconds))
-    got = engine.counters
-    mode = engine.mode
-    elapsed = time.perf_counter() - started
-    engine.stop()
-    engine.update(armed=was[0], master_db=was[1])
+    try:
+        engine.start()
+        # Let the driver fill its buffer and the partition bank warm up, then zero the counters.
+        # Without this, the first blocks after every start count as misses and a perfectly good
+        # size looks guilty of a stutter that only happened once, on opening.
+        if seconds >= 1.0:
+            time.sleep(SOAK_SETTLE)
+            reset = getattr(engine, "reset_counters", None)
+            if callable(reset):
+                reset()
+            started = time.perf_counter()
+            time.sleep(max(0.1, seconds - SOAK_SETTLE))
+        else:
+            started = time.perf_counter()
+            time.sleep(max(0.5, seconds))
+        got = engine.counters
+        mode = engine.mode
+        elapsed = time.perf_counter() - started
+    finally:
+        # A refused size must not leave the amp armed and silent. The next candidate, and the
+        # tune's own finally, both expect the chain to be exactly where this call found it.
+        engine.stop()
+        engine.update(armed=was[0], master_db=was[1])
     dropped = got.get("underflows", 0) + got.get("overflows", 0) + got.get("late", 0)
     block_ms = 1000.0 * blocksize / float(engine.samplerate)
     peak_ms = float(got.get("peak_ms") or 0.0)
@@ -190,7 +194,17 @@ def soak_all(engine, candidates=SOAK_CANDIDATES, seconds: float = 2.0, progress=
     for index, blocksize in enumerate(candidates):
         if progress:
             progress(f"{blocksize} frames", index, len(candidates))
-        rows.append(soak(engine, blocksize, seconds=seconds))
+        try:
+            rows.append(soak(engine, blocksize, seconds=seconds))
+        except Exception as exc:
+            # One size the driver refuses must not end the whole calibration. Record it and
+            # try the next size: a rig that will not open at 256 may be perfectly happy at 512.
+            rows.append({
+                "blocksize": int(blocksize), "block_ms": round(1000.0 * blocksize / engine.samplerate, 2),
+                "seconds": 0.0, "blocks": 0, "underflows": 0, "overflows": 0, "late": 0,
+                "work_ms": 0.0, "peak_ms": 0.0, "peak_realtime": 0.0, "mode": None,
+                "ok": False, "error": f"{type(exc).__name__}: {exc}",
+            })
     return rows
 
 
@@ -212,7 +226,8 @@ def choose_soak(rows: list[dict], floor: int = SAFE_FLOOR) -> int | None:
 
 def soak_verdict(rows: list[dict], picked: int | None, floor: int = SAFE_FLOOR) -> str:
     if picked is None:
-        return "the device would not open at any block size"
+        why = next((r.get("error") for r in rows if r.get("error")), "")
+        return "the device would not open at any block size" + (f": {why}" if why else "")
     row = next(r for r in rows if r["blocksize"] == picked)
     bad = row["underflows"] + row["overflows"] + row.get("late", 0)
     if row["ok"]:

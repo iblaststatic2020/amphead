@@ -1386,7 +1386,8 @@ function AmpFace({ rest }) {
     if (!tuned) return ''
     if (tuned.error) return `calibrate failed · ${tuned.error}`
     if (tuned.cancelled) return 'calibration cancelled · the amp came back where it was'
-    const size = tuned.blocksize ? `${tuned.blocksize} frames` : 'no usable size'
+    if (!tuned.blocksize) return tuned.verdict || 'calibrate found no usable size'
+    const size = `${tuned.blocksize} frames`
     const trip = tuned.round_trip_ms ? ` · ${Number(tuned.round_trip_ms).toFixed(1)} ms round trip` : ''
     const move = tuned.changed === true ? ' · saved' : ' · no change'
     return `calibrated · ${size}${trip}${move}`
