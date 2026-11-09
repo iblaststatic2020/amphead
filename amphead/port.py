@@ -45,6 +45,18 @@ def choose(name: str | None = None) -> Any:
     return AmpHead2Rig()
 
 
+_ACTIVE: Any = None
+
+
 def active() -> Any:
-    """The rig the tools hold for the life of the process."""
-    return choose()
+    """The one rig this process shares.
+
+    Tools and the pane each ask for a rig. Handing back a new object every time also
+    handed back a new engine process, so the pane and the agent could hold different
+    devices, different loaded captures and different error states. The rig is now made
+    once per process: one engine, one device, one answer.
+    """
+    global _ACTIVE
+    if _ACTIVE is None:
+        _ACTIVE = choose()
+    return _ACTIVE

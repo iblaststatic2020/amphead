@@ -548,7 +548,15 @@ class AmpHead2Rig:
         # Arming opens the device if it is closed: a player pressing Live should not
         # also have to know that the stream was closed while the rig sat idle.
         if not self._call(cmd="status").get("running"):
-            self._call(cmd="start")
+            try:
+                self._call(cmd="start")
+            except port.RigError:
+                # A process that was started before the interface moved, or before the
+                # plugin was updated, holds that old picture in memory. Replace it and
+                # try once on the current code and the current device list instead of
+                # handing the player a stale -9996 from a process nobody can see.
+                self.client.stop()
+                self._call(cmd="start")
         # Arming moves the master to the measured default. A player who already asked for
         # a level in the same breath meant that level, so put it back afterwards.
         before = self._call(cmd="status").get("master_db")

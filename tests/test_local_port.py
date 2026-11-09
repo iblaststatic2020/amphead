@@ -219,6 +219,52 @@ class InterpreterTest(unittest.TestCase):
 
 
 class ArmTest(unittest.TestCase):
+    def test_the_pane_and_the_tools_share_one_rig(self):
+        """Two rig objects mean two engine processes and two device truths."""
+        port._ACTIVE = None
+        try:
+            self.assertIs(port.active(), port.active())
+        finally:
+            port._ACTIVE = None
+
+    def test_a_start_that_fails_on_an_old_process_is_retried_on_a_fresh_one(self):
+        """GO LIVE must not inherit a device error from a process started earlier.
+
+        The pane and the tools each used to build their own rig, so a long-lived engine
+        could keep an old device list while a repair ran in another process. Pressing
+        Live on that engine kept replaying -9996. A failed start now replaces the engine
+        once, which is cheap and makes the click mean the current code.
+        """
+
+        class StaleOnce(FakeClient):
+            def __init__(self):
+                super().__init__()
+                self.starts = 0
+                self.stops = 0
+                self.running = True
+
+            def call(self, timeout=None, **request):
+                if request.get("cmd") == "status":
+                    return {"ok": True, "running": False, "master_db": self.master_db}
+                if request.get("cmd") == "start":
+                    self.starts += 1
+                    if self.starts == 1:
+                        raise port.RigSaidNo(
+                            "Error opening InputStream: Invalid device [PaErrorCode -9996]")
+                    return {"mode": "wdm-ks-exclusive"}
+                return super().call(timeout=timeout, **request)
+
+            def stop(self):
+                self.stops += 1
+                return True
+
+        client = StaleOnce()
+        r = local_port.AmpHead2Rig(client=client)
+        out = r.arm()
+        self.assertTrue(out["armed"])
+        self.assertEqual(client.starts, 2)
+        self.assertEqual(client.stops, 1)
+
     def test_arming_a_rig_with_a_level_already_set_keeps_that_level(self):
         r = rig()
         r.set_master(-9.0)
