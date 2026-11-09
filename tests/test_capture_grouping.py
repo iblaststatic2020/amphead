@@ -7,14 +7,23 @@ from pathlib import Path
 
 NODE = shutil.which("node")
 ROOT = Path(__file__).resolve().parents[1]
+START = "// ---- capture grouping ----"
+END = "// ---- end capture grouping ----"
+
+
+def grouping_source():
+    """The real block from plugin.js, because the desktop runtime forbids sibling imports."""
+    face = (ROOT / "desktop" / "plugin.js").read_text(encoding="utf-8")
+    if START not in face or END not in face:
+        raise AssertionError("capture grouping markers are missing from desktop/plugin.js")
+    return face.split(START, 1)[1].split(END, 1)[0]
 
 
 def run_tree(rows):
-    """Run the real desktop grouping module under node, so the test cannot drift from the face."""
-    source = ROOT / "desktop" / "captures.js"
+    """Run the face's own grouping block under node, so the test cannot drift from the view."""
     with tempfile.TemporaryDirectory() as tmp:
-        module = Path(tmp) / "captures.mjs"
-        shutil.copyfile(source, module)
+        module = Path(tmp) / "grouping.mjs"
+        module.write_text(grouping_source() + "\nexport { captureTree };\n", encoding="utf-8")
         script = (
             f"import {{captureTree}} from {json.dumps(module.as_uri())}; "
             f"const rows = {json.dumps(rows)}; "

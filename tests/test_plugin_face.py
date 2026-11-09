@@ -261,7 +261,8 @@ class TestEveryCaptureCanBeFound(unittest.TestCase):
 
     def test_captures_are_a_tree_not_a_phone_book(self):
         source = face()
-        self.assertIn("import { captureTree } from './captures.js'", source)
+        self.assertIn("// ---- capture grouping ----", source)
+        self.assertNotIn("./captures.js", source)  # desktop runtime allows only sdk and react imports
         self.assertIn("const tree = capture ? captureTree(matches) : []", source)
         self.assertIn("capture ? drawTree() : shown.map", source)
         self.assertIn("aria-expanded", source)
