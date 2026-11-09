@@ -22,6 +22,8 @@ if np is None:  # pragma: no cover
 FIXTURES = Path(__file__).parent / "fixtures"
 NAM = FIXTURES / "tiny_wavenet.nam"
 REF = FIXTURES / "tiny_wavenet_ref.txt"
+A2_NAM = FIXTURES / "tiny_wavenet_a2.nam"
+A2_REF = FIXTURES / "tiny_wavenet_a2_ref.txt"
 
 
 def stream(model, x, block):
@@ -60,6 +62,24 @@ class NamTest(unittest.TestCase):
                 skip = model.receptive_field
                 err = float(np.max(np.abs(got[skip:] - self.y[skip:])))
                 self.assertLess(err, 1e-5)
+
+    def test_a2_streaming_matches_reference(self):
+        data = np.loadtxt(A2_REF)
+        x, want = data[:, 0].astype(np.float32), data[:, 1].astype(np.float32)
+        model = WaveNet.load(A2_NAM)
+        self.assertEqual(model.receptive_field, 10)
+        for block in (32, 64, 128, 257, 1000):
+            with self.subTest(block=block):
+                got = stream(model, x, block)
+                self.assertEqual(got.size, want.size)
+                err = float(np.max(np.abs(got - want)))
+                self.assertLess(err, 1e-5)
+
+    def test_a2_reset_makes_it_repeatable(self):
+        model = WaveNet.load(A2_NAM)
+        first = stream(model, self.x, 128)
+        second = stream(model, self.x, 128)
+        np.testing.assert_array_equal(first, second)
 
     def test_block_size_does_not_change_the_result(self):
         many = stream(WaveNet.load(NAM), self.x, 128)
@@ -112,6 +132,67 @@ class NamTest(unittest.TestCase):
         doc = {"architecture": "LSTM", "config": {}, "weights": []}
         with self.assertRaisesRegex(NotSupported, "WaveNet"):
             WaveNet.load(self.tmp(doc, "lstm.nam"))
+
+    def container(self, *submodels):
+        return {
+            "version": "0.7.0",
+            "architecture": "SlimmableContainer",
+            "config": {"submodels": list(submodels)},
+            "weights": [],
+            "sample_rate": 48000,
+        }
+
+    def test_slimmable_container_uses_the_full_submodel(self):
+        full = json.loads(NAM.read_text())
+        quiet = json.loads(NAM.read_text())
+        quiet["config"]["head_scale"] = 0.0
+        doc = self.container(
+            {"max_value": 1.0, "model": full},
+            {"max_value": 0.5, "model": quiet},
+        )
+        model = WaveNet.load(self.tmp(doc, "container.nam"))
+        got = stream(model, self.x, 128)
+        want = stream(WaveNet.load(NAM), self.x, 128)
+        self.assertLess(float(np.max(np.abs(got - want))), 1e-5)
+
+    def test_slimmable_container_can_hold_an_a2_submodel(self):
+        full = json.loads(A2_NAM.read_text())
+        quiet = json.loads(A2_NAM.read_text())
+        quiet["config"]["head_scale"] = 0.0
+        doc = self.container(
+            {"max_value": 1.0, "model": full},
+            {"max_value": 0.5, "model": quiet},
+        )
+        data = np.loadtxt(A2_REF)
+        x = data[:, 0].astype(np.float32)
+        got = stream(WaveNet.load(self.tmp(doc, "a2-container.nam")), x, 128)
+        want = stream(WaveNet.load(A2_NAM), x, 128)
+        self.assertLess(float(np.max(np.abs(got - want))), 1e-5)
+
+    def test_slimmable_container_inherits_the_outer_sample_rate(self):
+        child = json.loads(NAM.read_text())
+        child.pop("sample_rate", None)
+        model = WaveNet.load(
+            self.tmp(self.container({"max_value": 1.0, "model": child}), "container.nam")
+        )
+        self.assertEqual(model.sample_rate, 48000)
+
+    def test_rejects_a_container_with_no_submodels(self):
+        with self.assertRaisesRegex(NotSupported, "no submodels"):
+            WaveNet.load(self.tmp(self.container(), "empty-container.nam"))
+
+    def test_rejects_a_container_submodel_that_is_not_wavenet(self):
+        doc = self.container(
+            {"max_value": 1.0, "model": {"architecture": "LSTM", "config": {}, "weights": []}}
+        )
+        with self.assertRaisesRegex(NotSupported, "LSTM"):
+            WaveNet.load(self.tmp(doc, "lstm-container.nam"))
+
+    def test_rejects_a_container_without_a_numeric_max(self):
+        child = json.loads(NAM.read_text())
+        doc = self.container({"max_value": "loud", "model": child})
+        with self.assertRaisesRegex(NotSupported, "numeric max_value"):
+            WaveNet.load(self.tmp(doc, "bad-container.nam"))
 
     def test_rejects_separate_output_head(self):
         doc = json.loads(NAM.read_text())

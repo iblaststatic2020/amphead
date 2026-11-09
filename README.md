@@ -273,13 +273,15 @@ its own answer in `~/.amphead2.json` so the face can show what was last asked fo
 
 ## Where the maths comes from
 
-`amphead/nam.py` is our own numpy implementation of the graph a `.nam` file describes: one 1x1
-rechannel, dilated convs with tanh, a 1x1 mix per layer, a summed head and a head scale. No
+`amphead/nam.py` is our own numpy implementation of the graphs a `.nam` file describes. The older
+graph is one 1x1 rechannel, dilated convs with tanh, a 1x1 mix per layer, a summed head and a head
+scale. The newer A2 graph adds a per-layer activation, a layer 1x1, and a causal head filter. No
 upstream code is vendored and torch is not a dependency of anything that ships; the parity test
-generates its golden file with the upstream `neural-amp-modeler` package and compares the
-streaming path sample by sample, because an implementation that agrees with the reference is
-worth more than one that looks like it. Only plain WaveNet captures load: LSTM, gated activations,
-FiLM conditioning and a separate output head are refused by name rather than guessed at.
+generates its golden files with the upstream `neural-amp-modeler` package and compares the streaming
+path sample by sample, because an implementation that agrees with the reference is worth more than
+one that looks like it. `SlimmableContainer` files also load: they hold complete WaveNet submodels,
+so the engine runs the full-width one and leaves the quality dial to NAM Core. LSTM, gated
+activations, FiLM conditioning and a separate output head are refused by name rather than guessed at.
 
 Neural Amp Modeler and the `.nam` format belong to their authors (MIT). Nothing here is affiliated
 with that project, and no capture or cabinet is redistributed with this repo.
