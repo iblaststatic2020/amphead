@@ -263,6 +263,11 @@ its own answer in `~/.amphead2.json` so the face can show what was last asked fo
 - **Latency is measured, not promised.** The number is the driver's own report *plus one block*, because
   that block is also in the way; 16 ms round trip is what this interface does at 256 frames, not a floor
   for every machine. The face shows the sum, not the flattering half.
+- **A saved device number is a slot, not a device.** Windows renumbers the PortAudio list when a
+  USB interface is plugged in or removed, so the pair that was 37/38 can become 2/3. The engine
+  checks the saved slots before opening, re-picks the interface pair when one is gone or the two
+  endpoints speak different host APIs, and retries once if PortAudio still reports
+  `Invalid device [PaErrorCode -9996]`; it does not hand a stale slot to the driver.
 - **Nothing arms loud.** GO LIVE opens at whatever the master knob shows, and a fresh amp shows the
   floor, so the first press is silence you raise yourself rather than a fixed level.
 

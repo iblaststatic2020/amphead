@@ -497,7 +497,7 @@ class Engine:
             finished_callback=self._device_closed,
         )
 
-    def start(self) -> str:
+    def start(self, _retry: bool = True) -> str:
         """Open the device and report which mode took.
 
         Order is deliberate: duplex first, because a single stream cannot hold the
@@ -518,21 +518,64 @@ class Engine:
         import sounddevice as sd
 
         apis = sd.query_hostapis()
+        devices = sd.query_devices()
+
+        def usable(index, want_input: bool) -> bool:
+            """Whether a saved slot still holds a device that can do this direction.
+
+            PortAudio device numbers are positions in a list Windows rebuilds whenever
+            a USB interface is plugged in or unplugged. The number is not an identity:
+            the box that was 37 yesterday is 2 today, and the stale one opens nothing.
+            """
+            try:
+                row = devices[int(index)]
+            except (IndexError, KeyError, TypeError, ValueError):
+                return False
+            wanted = "max_input_channels" if want_input else "max_output_channels"
+            return int(row[wanted] or 0) >= (1 if want_input else 2)
+
+        def repick(why: str) -> bool:
+            dev_in, dev_out, picked = choose_devices(sd)
+            if dev_in is None or dev_out is None:
+                return False
+            self.input_device, self.output_device = dev_in, dev_out
+            self._last_error = f"{why}; using {picked}"
+            return True
+
         if self.input_device is None or self.output_device is None:
             dev_in, dev_out, picked = choose_devices(sd)
             self.input_device = self.input_device if self.input_device is not None else dev_in
             self.output_device = self.output_device if self.output_device is not None else dev_out
             self._last_error = f"devices auto-chosen ({picked})"
+        elif not usable(self.input_device, True) or not usable(self.output_device, False):
+            # Do not hand a dead slot to PortAudio and let it report -9996. Find the
+            # live pair first, because the fix is always the same and costs one query.
+            if not repick("the saved audio device is gone"):
+                self._last_error = "no usable audio input and output pair"
 
         def hostapi(index) -> str:
             return str(apis[sd.query_devices(int(index))["hostapi"]]["name"])
 
         try:
-            self.input_channels = int(sd.query_devices(int(self.input_device))["max_input_channels"])
+            same_api = (sd.query_devices(int(self.input_device))["hostapi"]
+                        == sd.query_devices(int(self.output_device))["hostapi"])
         except Exception:
-            self.input_channels = self.channels
-        if self.input_channels and self.input_channel >= self.input_channels:
-            self.input_channel = 0
+            same_api = False
+        if not same_api:
+            # A pair from two host APIs cannot open as one duplex stream. The split
+            # fallback still plays, but it costs a queue, so prefer a matched pair.
+            repick("the saved devices speak different host APIs")
+
+        def refresh_input_channels() -> None:
+            try:
+                self.input_channels = int(
+                    sd.query_devices(int(self.input_device))["max_input_channels"])
+            except Exception:
+                self.input_channels = self.channels
+            if self.input_channels and self.input_channel >= self.input_channels:
+                self.input_channel = 0
+
+        refresh_input_channels()
 
         wasapi = "WASAPI" in hostapi(self.input_device) or "WASAPI" in hostapi(self.output_device)
         named = "wdm-ks" if "WDM-KS" in hostapi(self.output_device) else (
@@ -548,7 +591,7 @@ class Engine:
         for exclusive, label in timing:
             attempts.append(("duplex", exclusive, label, asked))
             attempts.append(("duplex", exclusive, label + "-low", None))
-            attempts.append(("split", exclusive, label + "-queue", None))
+            attempts.append(("split", exclusive, label, None))
 
         last: Exception | None = None
         for kind, exclusive, label, latency in attempts:
@@ -581,7 +624,18 @@ class Engine:
             self.mode = label
             self._last_error = None
             return self.mode
-        self._last_error = f"{type(last).__name__}: {last}" if last else "no stream opened"
+        message = f"{type(last).__name__}: {last}" if last else "no stream opened"
+        if (_retry and last is not None
+                and ("invalid device" in str(last).lower() or "-9996" in str(last))):
+            # The list can change between the check above and the open. One fresh pick
+            # and one reopen is enough; a second failure is a real driver problem.
+            dev_in, dev_out, picked = choose_devices(sd)
+            if (dev_in is not None and dev_out is not None
+                    and (dev_in, dev_out) != (self.input_device, self.output_device)):
+                self.input_device, self.output_device = dev_in, dev_out
+                self._last_error = None
+                return self.start(_retry=False)
+        self._last_error = message
         raise RuntimeError(self._last_error)
 
     def stop(self) -> None:
