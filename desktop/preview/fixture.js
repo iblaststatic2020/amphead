@@ -9,7 +9,12 @@
 
 const CAPTURES = [
   { path: 'C:\\Users\\Chris\\Documents\\Guitar Amp Sims\\NAM\\Bugera 6262\\Phillipe P Bugera6262-Lead-M77-ESR0,020.nam', name: 'Phillipe P Bugera6262-Lead-M77-ESR0,020', folder: 'Bugera 6262' },
-  { path: 'C:\\Users\\Chris\\Documents\\Guitar Amp Sims\\NAM\\Peavey 6505\\PEAVEY - 6506 - CLEAN - B0 - HIGH - G4.0.nam', name: 'PEAVEY - 6506 - CLEAN - B0 - HIGH - G4.0', folder: 'Peavey 6505' }
+  { path: 'C:\\Users\\Chris\\Documents\\Guitar Amp Sims\\NAM\\Peavey 6505\\PEAVEY - 6506 - CLEAN - B0 - HIGH - G4.0.nam', name: 'PEAVEY - 6506 - CLEAN - B0 - HIGH - G4.0', folder: 'Peavey 6505' },
+  { path: 'C:\\Users\\Chris\\Documents\\Guitar Amp Sims\\NAM\\Peavey 6505\\PEAVEY - 6506 - CLEAN - B1 - NORMAL - G4.0.nam', name: 'PEAVEY - 6506 - CLEAN - B1 - NORMAL - G4.0', folder: 'Peavey 6505' },
+  { path: 'C:\\Users\\Chris\\Documents\\Guitar Amp Sims\\NAM\\Peavey 6505\\PEAVEY - 6506 - CRUNCH - B0 - HIGH - G4.0.nam', name: 'PEAVEY - 6506 - CRUNCH - B0 - HIGH - G4.0', folder: 'Peavey 6505' },
+  { path: 'C:\\Users\\Chris\\Documents\\Guitar Amp Sims\\NAM\\Peavey 6505\\PEAVEY - 6506 - CRUNCH - B1 - NORMAL - G6.0.nam', name: 'PEAVEY - 6506 - CRUNCH - B1 - NORMAL - G6.0', folder: 'Peavey 6505' },
+  { path: 'C:\\Users\\Chris\\Documents\\Guitar Amp Sims\\NAM\\Peavey 6505\\PEAVEY - 6506 - RED - B0 - HIGH - G4.0.nam', name: 'PEAVEY - 6506 - RED - B0 - HIGH - G4.0', folder: 'Peavey 6505' },
+  { path: 'C:\\Users\\Chris\\Documents\\Guitar Amp Sims\\NAM\\Peavey 6505\\PEAVEY - 6506 - RED - B1 - NORMAL - G6.0.nam', name: 'PEAVEY - 6506 - RED - B1 - NORMAL - G6.0', folder: 'Peavey 6505' }
 ]
 
 const CABS = [

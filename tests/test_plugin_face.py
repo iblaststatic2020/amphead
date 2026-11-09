@@ -259,6 +259,13 @@ class TestEveryCaptureCanBeFound(unittest.TestCase):
         self.assertNotIn("matches.slice(0, 60)", source)
         self.assertIn("scroll or type to narrow", source)
 
+    def test_captures_are_a_tree_not_a_phone_book(self):
+        source = face()
+        self.assertIn("import { captureTree } from './captures.js'", source)
+        self.assertIn("const tree = capture ? captureTree(matches) : []", source)
+        self.assertIn("capture ? drawTree() : shown.map", source)
+        self.assertIn("aria-expanded", source)
+
 
 class TestTheAimIsOnTheFace(unittest.TestCase):
     """What the agent was asked to aim at, printed in the tool's own words.

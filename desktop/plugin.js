@@ -13,6 +13,7 @@
 import { PALETTE_AREA, ROUTES_AREA, SIDEBAR_NAV_AREA, host, useQuery, useQueryClient } from '@hermes/plugin-sdk'
 import { jsx, jsxs } from 'react/jsx-runtime'
 import { useEffect, useRef, useState } from 'react'
+import { captureTree } from './captures.js'
 
 const MUTED = { color: 'var(--ui-text-quaternary)' }
 const SECOND = { color: 'var(--ui-text-secondary)' }
@@ -373,7 +374,9 @@ const headline = (out) => {
 }
 
 // A cabinet or an amp: a search box and the files under it. 600 captures is a list nobody scrolls,
-// so typing narrows it, and the folder under each name tells two close relatives apart.
+// so the captures are folded into brand, model, then the flavour the file names already carry
+// (clean, crunch, red...), and typing narrows the tree to the parts that still match. Cabs stay a
+// flat list; there are few enough that a folder under each name is the whole story.
 //
 // When the list is empty the plate does not scan anything: it says which folders it read and offers
 // one press that searches the usual places. The search is local file names, but it is still somebody
@@ -393,6 +396,106 @@ function FilePicker({ items, currentPath, busy, onPick, placeholder, kind, rest,
   const shown = matches
   const capture = kind !== 'cab'
   const rows = (hunt && hunt.rows) || []
+  // Captures arrive as one long alphabetical list, which is why finding one felt like scrolling a
+  // phone book. The tree groups them the way the player names them: brand, model, then the
+  // flavour already written in the file (clean, crunch, red...). Cabs stay flat; there are few.
+  const tree = capture ? captureTree(matches) : []
+  const [open, setOpen] = useState(() => new Set())
+  const searching = words.length > 0
+  const flip = (key) => setOpen((prev) => {
+    const next = new Set(prev)
+    if (next.has(key)) next.delete(key)
+    else next.add(key)
+    return next
+  })
+  const unfolded = (key, depth) => searching || (depth === 0 && tree.length === 1) || open.has(key)
+
+  const groupRow = (node, depth, fullKey) => {
+    const on = unfolded(fullKey, depth)
+    return jsxs('button', {
+      type: 'button',
+      key: fullKey,
+      onClick: () => flip(fullKey),
+      'aria-expanded': on,
+      className: 'flex w-full items-center gap-1 px-2 py-1 text-left outline-none',
+      style: { paddingLeft: `${8 + depth * 10}px`, background: 'transparent' },
+      children: [
+        jsx('span', {
+          className: 'w-2 shrink-0 text-[0.5rem] leading-none',
+          style: MUTED,
+          children: on ? '▾' : '▸'
+        }),
+        jsx('span', {
+          className: 'min-w-0 flex-1 truncate text-[0.625rem] font-semibold uppercase tracking-wide',
+          style: { color: 'var(--ui-text-secondary)' },
+          children: node.label
+        }),
+        jsx('span', {
+          className: 'shrink-0 text-[0.5rem] tabular-nums',
+          style: MUTED,
+          children: node.count
+        })
+      ]
+    }, fullKey)
+  }
+
+  const fileRow = (file, depth, compact) => {
+    const here = file.path === currentPath
+    const cols = compact
+      ? [jsx('span', {
+        className: 'w-full truncate text-[0.6875rem] leading-tight',
+        style: { color: here ? 'var(--ui-accent)' : 'var(--ui-text-primary)' },
+        children: file.label || file.name
+      }, 'name')]
+      : [
+        jsx('span', {
+          className: 'w-full truncate text-[0.6875rem] leading-tight',
+          style: { color: here ? 'var(--ui-accent)' : 'var(--ui-text-primary)' },
+          children: file.name
+        }, 'name'),
+        jsx('span', {
+          className: 'w-full truncate text-[0.5rem] leading-tight',
+          style: MUTED,
+          children: file.folder
+        }, 'folder')
+      ]
+    return jsxs('button', {
+      type: 'button',
+      disabled: busy,
+      onClick: () => onPick(file.path),
+      className: `flex w-full flex-col items-start ${compact ? 'gap-0 py-0.5' : 'gap-0 py-1'} text-left outline-none`,
+      style: {
+        paddingLeft: `${8 + depth * 10}px`,
+        paddingRight: '8px',
+        background: here ? 'color-mix(in srgb, var(--ui-accent) 16%, transparent)' : 'transparent',
+        borderLeft: here ? '2px solid var(--ui-accent)' : '2px solid transparent'
+      },
+      children: cols
+    }, file.path)
+  }
+
+  const drawTree = () => {
+    const out = []
+    for (const brand of tree) {
+      out.push(groupRow(brand, 0, brand.key))
+      if (!unfolded(brand.key, 0)) continue
+      for (const model of brand.models) {
+        out.push(groupRow(model, 1, model.key))
+        if (!unfolded(model.key, 1)) continue
+        if (model.items.length) {
+          for (const file of model.items) out.push(fileRow(file, 2, true))
+          continue
+        }
+        for (const variant of model.variants) {
+          const key = `${model.key}>${variant.key}`
+          out.push(groupRow(variant, 2, key))
+          if (!unfolded(key, 2)) continue
+          for (const file of variant.items) out.push(fileRow(file, 3, true))
+        }
+      }
+    }
+    return out
+  }
 
   async function searchFolders() {
     setWhy('')
@@ -521,31 +624,7 @@ function FilePicker({ items, currentPath, busy, onPick, placeholder, kind, rest,
               ]
             }))
           : (shown.length
-            ? shown.map((file) => {
-              const here = file.path === currentPath
-              return jsxs('button', {
-                type: 'button',
-                disabled: busy,
-                onClick: () => onPick(file.path),
-                className: 'flex flex-col items-start gap-0 px-2 py-1 text-left outline-none',
-                style: {
-                  background: here ? 'color-mix(in srgb, var(--ui-accent) 16%, transparent)' : 'transparent',
-                  borderLeft: here ? '2px solid var(--ui-accent)' : '2px solid transparent'
-                },
-                children: [
-                  jsx('span', {
-                    className: 'w-full truncate text-[0.6875rem] leading-tight',
-                    style: { color: here ? 'var(--ui-accent)' : 'var(--ui-text-primary)' },
-                    children: file.name
-                  }),
-                  jsx('span', {
-                    className: 'w-full truncate text-[0.5rem] leading-tight',
-                    style: MUTED,
-                    children: file.folder
-                  })
-                ]
-              }, file.path)
-            })
+            ? (capture ? drawTree() : shown.map((file) => fileRow(file, 0, false)))
             : jsxs('div', {
               className: 'flex flex-col items-start gap-1 px-2 py-1.5',
               children: [
