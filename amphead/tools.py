@@ -288,6 +288,11 @@ def handle_setup(args: dict[str, Any], **_kw) -> str:
 def handle_teardown(args: dict[str, Any], **_kw) -> str:
     try:
         if not RIG.running:
+            reap = getattr(RIG, "reap", None)
+            killed = list(reap() or []) if callable(reap) else []
+            if killed:
+                return (f"CLOSED: stopped {len(killed)} engine process"
+                        f"{'' if len(killed) == 1 else 'es'} left from an earlier session")
             return "ALREADY CLOSED: the switch reads SET UP"
         gone = RIG.stop()
     except port.RigError as exc:

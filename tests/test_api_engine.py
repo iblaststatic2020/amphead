@@ -249,6 +249,13 @@ class SwitchTest(ApiTest):
         self.assertTrue(out["ok"])
         self.assertFalse(self.rig.open)
 
+    def test_teardown_reaps_an_engine_left_from_an_earlier_session(self):
+        self.rig.running = False
+        self.rig.reap = lambda: [4242]
+        out = plugin_api.teardown({})
+        self.assertTrue(out["ok"])
+        self.assertIn("stopped 1 engine process", out["output"])
+
 
 class TrimTest(ApiTest):
     def test_input_gain_is_written_and_echoed(self):

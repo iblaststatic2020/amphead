@@ -1624,15 +1624,28 @@ function AmpFace({ rest }) {
                   type: 'button',
                   disabled: locked,
                   onClick: () => act('/teardown', {}),
-                  className: 'shrink-0 text-[0.5rem] uppercase leading-none tracking-[0.1em] underline-offset-2 hover:underline',
-                  // a real ghost button: the app's button defaults would paint a white box here
+                  className: 'shrink-0 rounded uppercase leading-none tracking-[0.08em]',
                   style: {
-                    color: SECOND.color,
-                    cursor: locked ? 'default' : 'pointer',
-                    background: 'transparent',
-                    border: 0,
-                    padding: 0,
-                    font: 'inherit'
+                    color: 'var(--ui-text-primary)',
+                    cursor: locked ? 'wait' : 'pointer',
+                    background: 'color-mix(in srgb, var(--ui-text-primary) 9%, transparent)',
+                    border: '1px solid var(--ui-stroke-secondary)',
+                    padding: '5px 8px',
+                    fontSize: '0.5625rem',
+                    fontWeight: 600,
+                    fontFamily: 'inherit',
+                    opacity: locked ? 0.55 : 1,
+                    boxShadow: 'inset 0 1px 0 color-mix(in srgb, var(--ui-text-primary) 8%, transparent)',
+                    transition: 'background 120ms ease, border-color 120ms ease'
+                  },
+                  onMouseEnter: (event) => {
+                    if (locked) return;
+                    event.currentTarget.style.background = 'color-mix(in srgb, var(--ui-text-primary) 16%, transparent)';
+                    event.currentTarget.style.borderColor = 'var(--ui-text-quaternary)';
+                  },
+                  onMouseLeave: (event) => {
+                    event.currentTarget.style.background = 'color-mix(in srgb, var(--ui-text-primary) 9%, transparent)';
+                    event.currentTarget.style.borderColor = 'var(--ui-stroke-secondary)';
                   },
                   children: 'close engine'
                 })

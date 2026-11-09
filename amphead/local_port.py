@@ -56,6 +56,57 @@ class EngineSilent(port.RigTimeout):
 _ABLE: dict[str, bool] = {}
 
 
+def _engine_pids() -> list[int]:
+    """Every engine process this machine still has, whoever started it.
+
+    PortAudio slots are not the only thing that goes stale. Two rigs in one gateway, or a
+    tool call and a pane click, can leave an engine behind that the pane's own client no
+    longer knows about. Closing the amp has to mean the process is gone, not merely that
+    the client in front of it stopped answering.
+    """
+    if os.name != "nt":
+        try:
+            out = subprocess.run(["ps", "-eo", "pid=,args="], capture_output=True,
+                                 text=True, timeout=10)
+        except (OSError, subprocess.SubprocessError):
+            return []
+        pids: list[int] = []
+        for line in out.stdout.splitlines():
+            parts = line.strip().split(None, 1)
+            if len(parts) == 2 and parts[0].isdigit() and "amphead.engine_main" in parts[1]:
+                pids.append(int(parts[0]))
+        return pids
+    query = ["wmic", "process", "where",
+             "name='python.exe' and CommandLine like '%-m amphead.engine_main%'",
+             "get", "ProcessId"]
+    try:
+        out = subprocess.run(query, capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return []
+    return [int(line.strip()) for line in out.stdout.splitlines() if line.strip().isdigit()]
+
+
+def reap_engines() -> list[int]:
+    """Stop every engine process left on this machine and say which ones went.
+
+    Called when the player closes the engine. The pane's client normally stops its own
+    process, but a second engine from an earlier rig or an agent call would otherwise keep
+    the interface open with no control left on the face to release it.
+    """
+    killed: list[int] = []
+    for pid in _engine_pids():
+        try:
+            if os.name == "nt":
+                subprocess.run(["taskkill", "/F", "/PID", str(pid)],
+                               capture_output=True, timeout=10)
+            else:
+                os.kill(pid, 9)
+        except (OSError, subprocess.SubprocessError):
+            continue
+        killed.append(pid)
+    return killed
+
+
 def _able(python: str) -> bool:
     """Whether this interpreter can host the engine, asked once and remembered.
 
@@ -695,7 +746,13 @@ class AmpHead2Rig:
 
 
     def stop(self) -> bool:
-        return self.client.stop()
+        gone = bool(self.client.stop())
+        leftover = reap_engines()
+        return gone or bool(leftover)
+
+    def reap(self) -> list[int]:
+        """Close engines from earlier rigs or agent calls that no client here owns."""
+        return reap_engines()
 
 
 

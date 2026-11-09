@@ -335,5 +335,26 @@ class MenuTest(unittest.TestCase):
         self.assertEqual(saved["capture"], "C:/amps/Bugera 6262/Lead.nam")
 
 
+class ReapTest(unittest.TestCase):
+    """Close means the process is gone, including one this client never owned."""
+
+    def test_close_kills_every_engine_process_left_on_the_machine(self):
+        r = rig()
+        r.client.stop = lambda: True
+        with mock.patch("amphead.local_port._engine_pids", return_value=[111, 222]), \
+                mock.patch("amphead.local_port.subprocess.run") as run:
+            self.assertTrue(r.stop())
+        kills = [call.args[0] for call in run.call_args_list if call.args]
+        self.assertIn(["taskkill", "/F", "/PID", "111"], kills)
+        self.assertIn(["taskkill", "/F", "/PID", "222"], kills)
+
+    def test_a_live_process_from_an_earlier_rig_counts_as_closed(self):
+        r = rig()
+        r.client.stop = lambda: False
+        with mock.patch("amphead.local_port._engine_pids", return_value=[333]), \
+                mock.patch("amphead.local_port.subprocess.run"):
+            self.assertTrue(r.stop(), "a reaped process is a closed engine")
+
+
 if __name__ == "__main__":
     unittest.main()

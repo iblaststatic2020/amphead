@@ -283,6 +283,16 @@ def setup_rig(body: dict | None = None) -> dict[str, Any]:
 def teardown(body: dict | None = None) -> dict[str, Any]:
     """Close the engine, so the face has a way back to SET UP."""
     if not RIG.running:
+        # The switch says SET UP, but that only means this client has no process. An engine
+        # from an earlier rig or an agent call may still be holding the interface, and the
+        # player has no control left on the face to release it. Close means close.
+        reap = getattr(RIG, "reap", None)
+        killed = list(reap() or []) if callable(reap) else []
+        if killed:
+            return {"output": ("the engine is already closed here: stopped "
+                               f"{len(killed)} engine process{'' if len(killed) == 1 else 'es'} "
+                               "left from an earlier session"),
+                    "ok": True}
         return {"output": "the engine is already closed: the switch reads SET UP", "ok": True}
     gone = bool(RIG.stop())
     return {"output": ("engine closed: the switch reads SET UP again" if gone
