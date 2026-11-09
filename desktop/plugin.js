@@ -139,6 +139,93 @@ function captureTree(items) {
 }
 // ---- end capture grouping ----
 
+// ---- ir grouping ----
+// Cabinets do not have captures' brand/model shape, but 327 loose wavs scroll just as badly.
+// The pack folder is the section (HSCC Cabs, Scharrface, Pipp Priss...), and the cabinet or
+// speaker in the file name is the group under it (BlackBack, G12-65, RKH 4x12). The rest of the
+// name stays as the row: "440", "57", "Center", "blend 3". Files whose cabinet appears only once
+// are shown directly under the pack rather than made into a group of one.
+//
+// The split point is the first microphone, position, or blend word, because that is where the
+// speaker name ends and the take begins. When none is present, the first word is the cabinet
+// (Aurora412_Scooped -> Aurora412). This is a reading of the names the packs already ship, not
+// an invented taxonomy.
+
+const IR_CUT = /(^|[\s_-])(sm57|sm7|57b|57|md421w?|441u?|440|421|cap|cone|off\s*axis|center|centre|board|blend)(?=$|[\s_-])/i
+
+function irFamily(name) {
+  const text = captureTidy(name).replace(/^\[[^\]]*\]\s*/, '')
+  const cut = IR_CUT.exec(text)
+  let prefix = cut ? text.slice(0, cut.index).replace(/[\s,_-]+$/, '') : ''
+  if (!prefix) prefix = text.split(/\s+/)[0].replace(/[,.;:]+$/, '')
+  let label = prefix
+  if (!/\d/.test(label)) label = label.replace(/-+/g, ' ')
+  label = captureTidy(label)
+  return { key: label.toLowerCase(), label, prefix }
+}
+
+function irShort(name, prefix) {
+  let out = captureTidy(name).replace(/^\[[^\]]*\]\s*/, '')
+  if (prefix && out.toLowerCase().startsWith(prefix.toLowerCase())) out = out.slice(prefix.length)
+  out = out.replace(/^[\s,_-]+/, '').replace(/\s+/g, ' ').trim()
+  return out || captureTidy(name)
+}
+
+function irTree(items) {
+  const packs = new Map()
+  for (const file of items || []) {
+    const pack = captureTidy(file.folder) || 'OTHER'
+    const packKey = pack.toLowerCase()
+    if (!packs.has(packKey)) packs.set(packKey, { key: `ir:${packKey}`, label: pack, families: new Map() })
+    const family = irFamily(file.name)
+    const packNode = packs.get(packKey)
+    if (!packNode.families.has(family.key)) {
+      packNode.families.set(family.key, { key: family.key, label: family.label, items: [] })
+    }
+    packNode.families.get(family.key).items.push({
+      ...file,
+      label: irShort(file.name, family.prefix)
+    })
+  }
+
+  const tree = []
+  for (const packNode of packs.values()) {
+    const families = [...packNode.families.values()]
+      .map((family) => ({ ...family, count: family.items.length }))
+      .sort((a, b) => a.label.localeCompare(b.label))
+    // A group of one is a door with one thing behind it. Keep those files flat under the pack,
+    // and when the pack has only one cabinet there is no choice to fold at all. Loose rows keep
+    // the full file name because no group header is there to say the rest.
+    const looseFamilies = families.length === 1
+      ? families
+      : families.filter((family) => family.count === 1)
+    const loose = looseFamilies
+      .flatMap((family) => family.items)
+      .map((item) => ({ ...item, label: captureTidy(item.name) }))
+    const models = families.length === 1
+      ? []
+      : families
+        .filter((family) => family.count > 1)
+        .map((family) => ({
+          key: `${packNode.key}>${family.key}`,
+          label: family.label,
+          count: family.count,
+          items: family.items,
+          variants: []
+        }))
+    tree.push({
+      key: packNode.key,
+      label: packNode.label,
+      count: families.reduce((sum, family) => sum + family.count, 0),
+      items: loose,
+      models
+    })
+  }
+  tree.sort((a, b) => a.label.localeCompare(b.label))
+  return tree
+}
+// ---- end ir grouping ----
+
 const MUTED = { color: 'var(--ui-text-quaternary)' }
 const SECOND = { color: 'var(--ui-text-secondary)' }
 const ACCENT = { color: 'var(--ui-accent)' }
@@ -498,9 +585,9 @@ const headline = (out) => {
 }
 
 // A cabinet or an amp: a search box and the files under it. 600 captures is a list nobody scrolls,
-// so the captures are folded into brand, model, then the flavour the file names already carry
-// (clean, crunch, red...), and typing narrows the tree to the parts that still match. Cabs stay a
-// flat list; there are few enough that a folder under each name is the whole story.
+// so captures fold into brand, model, then the flavour the file names already carry (clean,
+// crunch, red...), and cabinets fold into pack, then speaker or cabinet (BlackBack, G12-65...).
+// Typing narrows either tree to the parts that still match.
 //
 // When the list is empty the plate does not scan anything: it says which folders it read and offers
 // one press that searches the usual places. The search is local file names, but it is still somebody
@@ -521,9 +608,9 @@ function FilePicker({ items, currentPath, busy, onPick, placeholder, kind, rest,
   const capture = kind !== 'cab'
   const rows = (hunt && hunt.rows) || []
   // Captures arrive as one long alphabetical list, which is why finding one felt like scrolling a
-  // phone book. The tree groups them the way the player names them: brand, model, then the
-  // flavour already written in the file (clean, crunch, red...). Cabs stay flat; there are few.
-  const tree = capture ? captureTree(matches) : []
+  // phone book. The tree groups captures brand > model > flavour, and cabinets pack > speaker,
+  // using the words already in the folder and file names. Search filters both the same way.
+  const tree = capture ? captureTree(matches) : irTree(matches)
   const [open, setOpen] = useState(() => new Set())
   const searching = words.length > 0
   const flip = (key) => setOpen((prev) => {
@@ -603,6 +690,8 @@ function FilePicker({ items, currentPath, busy, onPick, placeholder, kind, rest,
     for (const brand of tree) {
       out.push(groupRow(brand, 0, brand.key))
       if (!unfolded(brand.key, 0)) continue
+      // Cabinets with no sibling speaker sit directly under their pack.
+      for (const file of brand.items || []) out.push(fileRow(file, 1, true))
       for (const model of brand.models) {
         out.push(groupRow(model, 1, model.key))
         if (!unfolded(model.key, 1)) continue
@@ -748,7 +837,7 @@ function FilePicker({ items, currentPath, busy, onPick, placeholder, kind, rest,
               ]
             }))
           : (shown.length
-            ? (capture ? drawTree() : shown.map((file) => fileRow(file, 0, false)))
+            ? drawTree()
             : jsxs('div', {
               className: 'flex flex-col items-start gap-1 px-2 py-1.5',
               children: [

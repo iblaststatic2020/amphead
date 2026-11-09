@@ -19,7 +19,12 @@ const CAPTURES = [
 
 const CABS = [
   { path: 'C:\\Users\\Chris\\Documents\\Guitar Amp Sims\\IRs\\Aurora\\AURORA_212_GOV.wav', name: 'AURORA_212_GOV', folder: 'Aurora' },
-  { path: 'C:\\Users\\Chris\\Documents\\Guitar Amp Sims\\IRs\\Celestion\\Vintage 30 4x12 close.wav', name: 'Vintage 30 4x12 close', folder: 'Celestion' }
+  { path: 'C:\\Users\\Chris\\Documents\\Guitar Amp Sims\\IRs\\Celestion\\Vintage 30 4x12 close.wav', name: 'Vintage 30 4x12 close', folder: 'Celestion' },
+  { path: 'C:\\Users\\Chris\\Documents\\Guitar Amp Sims\\IRs\\HSCC Cabs\\BlackBack 440.wav', name: 'BlackBack 440', folder: 'HSCC Cabs' },
+  { path: 'C:\\Users\\Chris\\Documents\\Guitar Amp Sims\\IRs\\HSCC Cabs\\BlackBack 57.wav', name: 'BlackBack 57', folder: 'HSCC Cabs' },
+  { path: 'C:\\Users\\Chris\\Documents\\Guitar Amp Sims\\IRs\\HSCC Cabs\\BlackBack Board.wav', name: 'BlackBack Board', folder: 'HSCC Cabs' },
+  { path: 'C:\\Users\\Chris\\Documents\\Guitar Amp Sims\\IRs\\HSCC Cabs\\Cali 57.wav', name: 'Cali 57', folder: 'HSCC Cabs' },
+  { path: 'C:\\Users\\Chris\\Documents\\Guitar Amp Sims\\IRs\\FenrIR\\Factory IRs\\AURORA_212_WIZ.wav', name: 'AURORA_212_WIZ', folder: 'FenrIR / Factory IRs' }
 ]
 
 const off = () => new URLSearchParams(location.search).get('off') === '1'
