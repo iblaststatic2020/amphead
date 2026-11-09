@@ -106,13 +106,15 @@ def choose(rows: list[dict], floor: int = SAFE_FLOOR) -> int | None:
         if row["fits"] and row["blocksize"] >= floor:
             return int(row["blocksize"])
     # Nothing at or above the floor fits: name the safest size that still runs in time, so the
-    # answer is the least bad one rather than the smallest.
+    # answer is the least bad one rather than the smallest. If even that misses, name the
+    # largest size at or above the floor: calibration may leave a heavy rig at 1024, but it
+    # must never leave it at 64 because the fallback found one size that technically ran.
     fitting = [r for r in rows if r["render_ms"] <= r["block_ms"] and r["blocksize"] >= floor]
     if fitting:
         return int(min(fitting, key=lambda r: r["render_ms"] / r["block_ms"])["blocksize"])
-    fitting = [r for r in rows if r["render_ms"] <= r["block_ms"]]
-    if fitting:
-        return int(max(fitting, key=lambda r: r["blocksize"])["blocksize"])
+    above = [r for r in rows if r["blocksize"] >= floor]
+    if above:
+        return int(max(above, key=lambda r: r["blocksize"])["blocksize"])
     return None
 
 
@@ -203,8 +205,6 @@ def choose_soak(rows: list[dict], floor: int = SAFE_FLOOR) -> int | None:
     if clean:
         return int(min(clean, key=lambda r: r["blocksize"])["blocksize"])
     live = [r for r in rows if r["blocks"] and r["blocksize"] >= floor]
-    if not live:
-        live = [r for r in rows if r["blocks"]]
     if not live:
         return None
     return int(max(live, key=lambda r: r["blocksize"])["blocksize"])

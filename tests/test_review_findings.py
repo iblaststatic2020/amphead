@@ -102,6 +102,27 @@ class TestAFailedCallbackIsVisible(unittest.TestCase):
         self.assertFalse(engine.chain.armed)
         self.assertIn("device closed", engine._last_error)
 
+    def test_a_stop_i_asked_for_is_not_a_device_failure(self):
+        engine = _engine()
+        engine.update(armed=True, master_db=-6.0)
+        closed = []
+
+        class Stream:
+            def stop(self):
+                # PortAudio runs finished_callback while the stream is being closed, which
+                # is exactly the path that used to record a fault after every tune.
+                closed.append(engine._closing)
+                engine._device_closed()
+
+            def close(self):
+                pass
+
+        engine._duplex = Stream()
+        engine.stop()
+        self.assertEqual(closed, [True])
+        self.assertIsNone(engine._last_error)
+        self.assertTrue(engine.chain.armed, "STOP is not an unplug")
+
 
 class TestTakesAreNeverOverwritten(unittest.TestCase):
     def test_free_path_steps_aside_instead_of_replacing(self):

@@ -118,7 +118,7 @@ class VerbTest(unittest.TestCase):
     def test_tune_measures_without_opening_the_device(self):
         got = self.server.tune(live=False)
         self.assertEqual(got["running"], False)
-        self.assertIn(got["picked"], (64, 128, 256, 512, 1024))
+        self.assertGreaterEqual(got["picked"], 256)
         self.assertTrue(got["rows"])
         self.assertIn("frames", got["verdict"])
 
@@ -132,9 +132,23 @@ class VerbTest(unittest.TestCase):
         got = self.server.tuning_summary()
         self.assertFalse(got["running"])
         self.assertEqual(got["phase"], "done")
-        self.assertIn(got["blocksize"], (64, 128, 256, 512, 1024))
+        self.assertGreaterEqual(got["blocksize"], 256)
         self.assertIn("frames", got["verdict"])
         self.assertFalse(self.server.handle({"cmd": "status"})["result"]["tuning"]["running"])
+
+    def test_a_device_that_will_not_open_does_not_get_a_guessed_size(self):
+        """A render stopwatch is not a reason to change the block size.
+
+        The live soak is the only measurement with a driver deadline. If it cannot open
+        the device, the honest answer is to fail and leave the size alone, not to fall
+        back to a render-only number and save it.
+        """
+        before = self.server.engine.blocksize
+        with mock.patch("amphead.engine_main.tune.soak_all",
+                        side_effect=RuntimeError("no device")):
+            with self.assertRaises(RuntimeError):
+                self.server.tune(live=True)
+        self.assertEqual(self.server.engine.blocksize, before)
 
     def test_a_tune_locks_the_chain_but_not_status(self):
         self.server._tuning["running"] = True

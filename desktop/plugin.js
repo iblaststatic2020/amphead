@@ -1379,6 +1379,18 @@ function AmpFace({ rest }) {
   const running = s.running === true
   const tuning = s.tuning || {}
   const tuningNow = !!tuning.running
+  // The last finished calibration stays on the face until the chain changes. Without this line
+  // a tune that picked the size already in use looked like a button that did nothing at all.
+  const tuned = !tuningNow && tuning.finished ? tuning : null
+  const tunedText = (() => {
+    if (!tuned) return ''
+    if (tuned.error) return `calibrate failed · ${tuned.error}`
+    if (tuned.cancelled) return 'calibration cancelled · the amp came back where it was'
+    const size = tuned.blocksize ? `${tuned.blocksize} frames` : 'no usable size'
+    const trip = tuned.round_trip_ms ? ` · ${Number(tuned.round_trip_ms).toFixed(1)} ms round trip` : ''
+    const move = tuned.changed === true ? ' · saved' : ' · no change'
+    return `calibrated · ${size}${trip}${move}`
+  })()
   // A tune stops the device on purpose. The page stays alive, but the knobs and the chain are
   // not measured yet, so every control waits instead of sending a verb the engine will refuse.
   const locked = busy || tuningNow
@@ -1577,22 +1589,22 @@ function AmpFace({ rest }) {
                   // A real button, not another underlined word: this one changes the device.
                   jsx('button', {
                     type: 'button',
-                    disabled: locked || !running,
+                    disabled: locked,
                     onClick: () => act('/tune', {}),
                     title: running
                       ? 'Calibrate: measures buffer sizes, picks the smallest one that never misses, and reopens the amp by itself.'
-                      : 'Calibrate: open the engine first.',
+                      : 'Calibrate: measures the loaded chain and leaves the device as it found it; press GO LIVE after.',
                     'aria-label': 'Calibrate buffer and round trip',
                     className: 'shrink-0 text-[0.5rem] uppercase leading-none tracking-[0.1em]',
                     style: {
                       color: SECOND.color,
-                      cursor: locked || !running ? 'default' : 'pointer',
+                      cursor: locked ? 'default' : 'pointer',
                       background: 'color-mix(in srgb, var(--ui-text-primary) 6%, transparent)',
                       border: '1px solid var(--ui-stroke-secondary)',
                       borderRadius: 4,
                       padding: '3px 5px',
                       font: 'inherit',
-                      opacity: locked || !running ? 0.5 : 1
+                      opacity: locked ? 0.5 : 1
                     },
                     children: tuningNow ? 'measuring' : 'calibrate'
                   })
@@ -1604,9 +1616,16 @@ function AmpFace({ rest }) {
                 ? jsx('div', {
                   className: 'mt-1 text-[0.5rem] leading-tight',
                   style: MUTED,
-                  children: `calibrating · ${tuning.phase || 'starting'} · ${Number(tuning.seconds || 0).toFixed(0)}s · the amp reopens by itself`
+                  children: `calibrating · ${tuning.phase || 'starting'} · ${Number(tuning.seconds || 0).toFixed(0)}s · the amp comes back where it was`
                 })
-                : null,
+                : tunedText
+                  ? jsx('div', {
+                    className: 'mt-1 text-[0.5rem] leading-tight',
+                    style: MUTED,
+                    title: tuning.verdict || '',
+                    children: tunedText
+                  })
+                  : null,
               // What the agent was asked to sound like, and how far the library actually got. The
               // line is the tool's own words, so the face cannot overstate the match.
               s.aim

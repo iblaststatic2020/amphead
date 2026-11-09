@@ -249,6 +249,16 @@ class TestTheGateIsOnTheFace(unittest.TestCase):
         self.assertIn("Calibrate: measures buffer sizes", source)
         self.assertIn("maxHeight: 'clamp(120px, 32vh, 220px)'", source)
 
+    def test_a_finished_calibration_says_what_it_did_on_the_face(self):
+        source = face()
+        # A tune that picks the size already in use must still leave a line behind, or the
+        # button reads as broken to the player who pressed it.
+        self.assertIn("const tuned = !tuningNow && tuning.finished", source)
+        self.assertIn("calibrated · ${size}${trip}${move}", source)
+        self.assertIn("tuned.changed === true ? ' · saved' : ' · no change'", source)
+        self.assertIn("disabled: locked,", source)
+        self.assertNotIn("disabled: locked || !running", source)
+
 
 class TestEveryCaptureCanBeFound(unittest.TestCase):
     """The picker may scroll, but it must not hide rows behind a silent cap."""

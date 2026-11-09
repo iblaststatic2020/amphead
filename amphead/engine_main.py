@@ -590,6 +590,7 @@ class Server:
         if was_running:
             self.engine.stop()
         rows: list[dict] = []
+        live_error: Exception | None = None
         try:
             if live:
                 try:
@@ -611,11 +612,17 @@ class Server:
                     words = tune.soak_verdict(rows, picked)
                 except TuneCancelled:
                     raise
-                except Exception:
+                except Exception as exc:
+                    # A render stopwatch is not a device measurement. If the soak could not
+                    # open the device, saving the size it would have guessed is how a
+                    # calibration makes a rig choppier than it found it.
+                    live_error = exc
                     rows, picked, words = [], None, ""
             else:
                 words = ""
             if not rows:
+                if live_error is not None:
+                    raise RuntimeError(f"the device would not open: {live_error}") from live_error
                 step("measuring this chain")
                 rows = tune.measure(self.engine.chain, self.engine.samplerate)
                 picked = int(blocksize) if blocksize else tune.choose(rows)

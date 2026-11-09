@@ -264,6 +264,10 @@ class Engine:
         # The take in progress, if any. A block is queued and a writer thread does the disk work,
         # so a slow drive costs a counted dropped block rather than a hole in the audio.
         self._take: Take | None = None
+        # PortAudio calls finished_callback for an intentional close too. Without this flag
+        # every calibration and every STOP wrote "the device closed" into the status, so a
+        # clean restart read as an unplugged interface.
+        self._closing = False
 
     # state -----------------------------------------------------------------
     # recording --------------------------------------------------------------
@@ -385,8 +389,8 @@ class Engine:
         self._meter.blocks = self._meter.underflows = self._meter.overflows = 0
         self._meter.late = 0
         self._meter.work_ms = self._meter.peak_ms = 0.0
-        # Kept, unlike the per-stream counters: a failure that happened in the last stream is
-        # exactly what the player needs to see after a restart.
+        # `_last_error` is not kept here either: a successful open below is a clean slate.
+        # The callback error count is, because that glitch did happen.
 
 
     @property
@@ -467,6 +471,9 @@ class Engine:
         "it opened" is not the same as "it plays".
         """
         self.reset_counters()
+        # A new open is a new stream. Keeping yesterday's "device closed" after a clean
+        # restart made every status read like a fault that was still happening.
+        self._last_error = None
         # Prime for the size this stream will actually use. Calibration opens a new stream
         # for every candidate, so this is also what makes each candidate's measurement its
         # own: without it, a smaller block runs padded to the old, larger filter and looks
@@ -536,6 +543,7 @@ class Engine:
                 self.stop()
                 continue
             self.mode = label
+            self._last_error = None
             return self.mode
         self._last_error = f"{type(last).__name__}: {last}" if last else "no stream opened"
         raise RuntimeError(self._last_error)
@@ -544,13 +552,17 @@ class Engine:
         take, self._take = self._take, None
         if take is not None:
             take.stop()
-        for stream in (self._duplex, self._in_stream, self._out_stream):
-            if stream is not None:
-                try:
-                    stream.stop()
-                    stream.close()
-                except Exception:
-                    pass
+        self._closing = True
+        try:
+            for stream in (self._duplex, self._in_stream, self._out_stream):
+                if stream is not None:
+                    try:
+                        stream.stop()
+                        stream.close()
+                    except Exception:
+                        pass
+        finally:
+            self._closing = False
         self._duplex = self._in_stream = self._out_stream = None
         self.mode = None
 
@@ -716,6 +728,8 @@ class Engine:
         stream object looking open, so `running` stays true and every readout says LIVE while
         the device is gone. Setting the reason here makes the next status say what happened.
         """
+        if self._closing:
+            return
         self._last_error = "the audio device closed the stream (unplugged, asleep, or taken over)"
         self._parked_by_idle = False
         self._chain = replace(self._chain, armed=False, master_db=SAFE_MASTER_DB)

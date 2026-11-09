@@ -163,6 +163,19 @@ class TheProbePicksABlockSize(unittest.TestCase):
         self.assertIsNone(tune.choose(rows))
         self.assertIn("cannot fill a block", tune.verdict(rows, None))
 
+    def test_a_heavy_chain_is_never_left_below_the_floor(self):
+        from amphead import tune
+        # The small size technically fits, the large one does not. Calibration must still
+        # leave the rig at the large size: 64 frames is an explicit request, not a fallback.
+        rows = [{"blocksize": 64, "block_ms": 1.5, "render_ms": 0.5, "fits": True},
+                {"blocksize": 1024, "block_ms": 23.2, "render_ms": 30.0, "fits": False}]
+        self.assertEqual(tune.choose(rows), 1024)
+        live = [{"blocksize": 64, "ok": True, "blocks": 40, "underflows": 0, "overflows": 0,
+                 "late": 0, "block_ms": 1.5, "seconds": 3},
+                {"blocksize": 512, "ok": False, "blocks": 40, "underflows": 12, "overflows": 0,
+                 "late": 0, "block_ms": 11.6, "seconds": 3}]
+        self.assertEqual(tune.choose_soak(live), 512)
+
 
 if __name__ == "__main__":
     unittest.main()
