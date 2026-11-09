@@ -250,6 +250,16 @@ class TestTheGateIsOnTheFace(unittest.TestCase):
         self.assertIn("maxHeight: 'clamp(120px, 32vh, 220px)'", source)
 
 
+class TestEveryCaptureCanBeFound(unittest.TestCase):
+    """The picker may scroll, but it must not hide rows behind a silent cap."""
+
+    def test_the_picker_keeps_every_match(self):
+        source = face()
+        self.assertIn("const shown = matches", source)
+        self.assertNotIn("matches.slice(0, 60)", source)
+        self.assertIn("scroll or type to narrow", source)
+
+
 class TestTheAimIsOnTheFace(unittest.TestCase):
     """What the agent was asked to aim at, printed in the tool's own words.
 

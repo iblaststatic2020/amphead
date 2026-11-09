@@ -390,7 +390,7 @@ function FilePicker({ items, currentPath, busy, onPick, placeholder, kind, rest,
     const hay = `${file.name} ${file.folder}`.toLowerCase()
     return words.every((word) => hay.includes(word))
   })
-  const shown = matches.slice(0, 60)
+  const shown = matches
   const capture = kind !== 'cab'
   const rows = (hunt && hunt.rows) || []
 
@@ -466,12 +466,13 @@ function FilePicker({ items, currentPath, busy, onPick, placeholder, kind, rest,
       hunting ? null : jsxs('div', {
         className: 'text-[0.5rem] leading-tight',
         style: MUTED,
-        children: `${matches.length} matched${matches.length > shown.length ? `, showing ${shown.length}` : ''}`
+        children: `${matches.length} matched${matches.length > 8 ? ' · scroll or type to narrow' : ''}`
       }),
       jsx('div', {
         className: 'flex flex-col overflow-y-auto rounded-md',
         // The height is capped in style, not only by a utility class, so the list can never
-        // grow into the face and push the knobs away. 60 rows still scroll inside this box.
+        // grow into the face and push the knobs away. Every match lives here and scrolls inside
+        // this box; the old 60 row cut hid files that the search could still find.
         style: {
           ...WELL,
           maxHeight: 'clamp(120px, 32vh, 220px)',
