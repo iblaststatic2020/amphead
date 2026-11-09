@@ -48,25 +48,30 @@ def _conv1x1(w: np.ndarray, x: np.ndarray, b: np.ndarray | None = None) -> np.nd
     return y
 
 
-def _activation(x: np.ndarray, spec) -> np.ndarray:
-    """The activation a NAM WaveNet layer names, applied elementwise."""
+def _resolve_activation(spec):
+    """Resolve an activation once, not on every block.
+
+    A2 captures name their activation per layer, often as a dict. Looking that
+    dict up and branching 20 times a block is measurable; a LeakyReLU is also
+    cheaper as max(x, slope*x) than as a three-argument where().
+    """
     if isinstance(spec, str):
         name = spec.lower()
         if name == "tanh":
-            return np.tanh(x)
+            return np.tanh
         if name == "relu":
-            return np.maximum(x, 0.0)
+            return lambda x: np.maximum(x, 0.0)
         raise NotSupported(f"activation {spec!r} is not supported")
     if not isinstance(spec, dict):
         raise NotSupported(f"activation {spec!r} is not supported")
     name = str(spec.get("type", "")).lower()
     if name == "leakyrelu":
         slope = float(spec.get("negative_slope", 0.01))
-        return np.where(x >= 0.0, x, slope * x)
+        return lambda x: np.maximum(x, x * slope)
     if name == "tanh":
-        return np.tanh(x)
+        return np.tanh
     if name == "relu":
-        return np.maximum(x, 0.0)
+        return lambda x: np.maximum(x, 0.0)
     raise NotSupported(f"activation {spec!r} is not supported")
 
 
@@ -81,6 +86,12 @@ class _Layer:
         self.x1_b = x1_b
         self.dilation = int(dilation)
         self.kernel = int(conv_w.shape[2])
+        # The taps of one layer are a single matrix-vector product once the input
+        # windows are laid side by side. Keeping the flattened weights (and the two
+        # 1x1 matrices) out of the callback avoids re-indexing them every block.
+        self._wflat = np.ascontiguousarray(conv_w.reshape(conv_w.shape[0], -1))
+        self._mix = mix_w[:, 0, 0]
+        self._x1 = x1_w[:, :, 0]
         self.history_len = (self.kernel - 1) * self.dilation
         self.history: np.ndarray | None = None
 
@@ -93,23 +104,28 @@ class _Layer:
             if self.history is None:
                 self.history = np.zeros((ch, self.history_len), dtype=np.float32)
             ext = np.concatenate((self.history, x), axis=1)
-            base = self.history_len
         else:
             ext = x
-            base = 0
 
-        z = None
-        for j in range(self.kernel):
-            # The taps are stored newest-last, so tap j sits at delay (kernel-1-j).
-            # Getting this backwards still sounds like an amp, which is exactly why
-            # the reference comparison in the tests exists.
-            off = base - (self.kernel - 1 - j) * self.dilation
-            term = self.conv_w[:, :, j] @ ext[:, off:off + frames]
-            z = term if z is None else z + term
+        if self.kernel == 1:
+            z = self._wflat @ x
+        else:
+            # A strided view puts tap j of every input channel in one row, so the
+            # whole convolution is one matmul instead of one per tap. The view is
+            # built with ndarray rather than as_strided: as_strided costs more in
+            # validation than the matmul saves at these sizes.
+            s0, s1 = ext.strides
+            win = np.ndarray(
+                (ch, self.kernel, frames), dtype=ext.dtype, buffer=ext,
+                strides=(s0, s1 * self.dilation, s1),
+            )
+            z = self._wflat @ win.reshape(ch * self.kernel, frames)
         z += self.conv_b[:, None]
-        z += _conv1x1(self.mix_w, c)
+        z += self._mix[:, None] * c
         a = np.tanh(z)
-        x = x + _conv1x1(self.x1_w, a, self.x1_b)
+        residual = self._x1 @ a
+        residual += self.x1_b[:, None]
+        x += residual
 
         if self.history_len:
             self.history = ext[:, -self.history_len:].copy()
@@ -158,6 +174,11 @@ class _A2Layer:
         self.activation = activation
         self.dilation = int(dilation)
         self.kernel = int(conv_w.shape[2])
+        self._wflat = np.ascontiguousarray(conv_w.reshape(conv_w.shape[0], -1))
+        self._mix = mix_w[:, 0, 0]
+        self._x1 = x1_w[:, :, 0] if x1_w is not None else None
+        self._h1 = h1_w[:, :, 0] if h1_w is not None else None
+        self._act = _resolve_activation(activation)
         self.history_len = (self.kernel - 1) * self.dilation
         self.history: np.ndarray | None = None
 
@@ -170,25 +191,36 @@ class _A2Layer:
             if self.history is None:
                 self.history = np.zeros((ch, self.history_len), dtype=np.float32)
             ext = np.concatenate((self.history, x), axis=1)
-            base = self.history_len
         else:
             ext = x
-            base = 0
 
-        z = None
-        for j in range(self.kernel):
-            off = base - (self.kernel - 1 - j) * self.dilation
-            term = self.conv_w[:, :, j] @ ext[:, off:off + frames]
-            z = term if z is None else z + term
+        if self.kernel == 1:
+            z = self._wflat @ x
+        else:
+            s0, s1 = ext.strides
+            win = np.ndarray(
+                (ch, self.kernel, frames), dtype=ext.dtype, buffer=ext,
+                strides=(s0, s1 * self.dilation, s1),
+            )
+            z = self._wflat @ win.reshape(ch * self.kernel, frames)
         z += self.conv_b[:, None]
-        z += _conv1x1(self.mix_w, c)
-        a = _activation(z, self.activation)
-        residual = _conv1x1(self.x1_w, a, self.x1_b) if self.x1_w is not None else a
-        head = _conv1x1(self.h1_w, a, self.h1_b) if self.h1_w is not None else a
+        z += self._mix[:, None] * c
+        a = self._act(z)
+        if self._x1 is not None:
+            residual = self._x1 @ a
+            residual += self.x1_b[:, None]
+        else:
+            residual = a
+        if self._h1 is not None:
+            head = self._h1 @ a
+            head += self.h1_b[:, None]
+        else:
+            head = a
+        x += residual
 
         if self.history_len:
             self.history = ext[:, -self.history_len:].copy()
-        return x + residual, head
+        return x, head
 
     def prime(self, x: np.ndarray):
         """Set history to what an endless stream of ``x`` (one constant frame)
@@ -200,7 +232,7 @@ class _A2Layer:
         for j in range(self.kernel):
             z += self.conv_w[:, :, j] @ x
         z += self.conv_b[:, None]
-        a = _activation(z, self.activation)
+        a = self._act(z)
         residual = _conv1x1(self.x1_w, a, self.x1_b) if self.x1_w is not None else a
         head = _conv1x1(self.h1_w, a, self.h1_b) if self.h1_w is not None else a
         return x + residual, head
@@ -218,6 +250,7 @@ class WaveNetA2:
         self.sample_rate = sample_rate
         self.head_hist: np.ndarray | None = None
         self._primed = False
+        self._headflat = np.ascontiguousarray(head_w.reshape(head_w.shape[0], -1))
 
     @classmethod
     def from_doc(cls, doc: dict) -> "WaveNetA2":
@@ -353,11 +386,17 @@ class WaveNetA2:
             x, term = layer.process(x, c)
             head = term if head is None else head + term
         frames = head.shape[1]
-        all_head = np.concatenate((self.head_hist, head), axis=1)
-        y = None
-        for j in range(self.head_w.shape[2]):
-            term = self.head_w[:, :, j] @ all_head[:, j:j + frames]
-            y = term if y is None else y + term
+        taps = self.head_w.shape[2]
+        if taps == 1:
+            y = self._headflat @ head
+        else:
+            all_head = np.concatenate((self.head_hist, head), axis=1)
+            s0, s1 = all_head.strides
+            win = np.ndarray(
+                (self.head_w.shape[1], taps, frames), dtype=all_head.dtype,
+                buffer=all_head, strides=(s0, s1, s1),
+            )
+            y = self._headflat @ win.reshape(self.head_w.shape[1] * taps, frames)
         if self.head_b is not None:
             y += self.head_b[:, None]
         h = self.head_w.shape[2] - 1
