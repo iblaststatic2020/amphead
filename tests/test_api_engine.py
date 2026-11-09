@@ -297,9 +297,17 @@ class KnobTest(ApiTest):
         self.assertFalse(out["ok"])
         self.assertIn("NO PARAM", out["output"])
 
-    def test_norm_mode_scales_to_the_engines_own_range(self):
-        plugin_api.knob({"param": 2, "value": 0.4, "mode": "norm"})
-        self.assertIn(("param", "treble", 4.0), self.rig.calls)
+    def test_norm_mode_maps_the_midpoint_to_flat(self):
+        plugin_api.knob({"param": 2, "value": 0.5, "mode": "norm"})
+        self.assertIn(("param", "treble", 0.0), self.rig.calls)
+
+    def test_a_negative_norm_lands_as_a_cut_not_a_boost(self):
+        # 0.25 is a quarter turn left of flat: -6 dB, not +2.5 dB. The old route multiplied
+        # by ten and clamped at zero, so every bass cut arrived as a small bass boost.
+        plugin_api.knob({"param": 0, "value": 0.25, "mode": "norm"})
+        self.assertIn(("param", "bass", -6.0), self.rig.calls)
+        plugin_api.knob({"param": 0, "value": 1.0, "mode": "norm"})
+        self.assertIn(("param", "bass", 12.0), self.rig.calls)
 
 
 class PickTest(ApiTest):

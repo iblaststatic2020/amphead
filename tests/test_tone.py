@@ -44,6 +44,16 @@ class ToneTest(unittest.TestCase):
         self.assertAlmostEqual(20 * np.log10(low), 6.0, delta=0.4)
         self.assertAlmostEqual(20 * np.log10(high), 0.0, delta=0.5)
 
+    def test_bass_cut_removes_lows_and_leaves_highs(self):
+        # A cut is negative dB. This pins that the band really attenuates instead of
+        # treating a minus sign as an instruction to boost.
+        stack = ToneStack(self.SR, bass=-6.0)
+        low = amp(stack.process, 50, self.SR)
+        stack.reset()
+        high = amp(stack.process, 8000, self.SR)
+        self.assertAlmostEqual(20 * np.log10(low), -6.0, delta=0.4)
+        self.assertAlmostEqual(20 * np.log10(high), 0.0, delta=0.5)
+
     def test_treble_shelf_boosts_highs_and_leaves_lows(self):
         stack = ToneStack(self.SR, treble=6.0)
         high = amp(stack.process, 10000, self.SR)

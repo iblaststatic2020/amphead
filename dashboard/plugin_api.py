@@ -505,16 +505,20 @@ def knob(body: dict) -> dict[str, Any]:
     except (TypeError, ValueError):
         return {"output": "NO VALUE: say what to set it to", "ok": False}
     if str(body.get("mode") or "auto").lower() == "norm":
-        value *= 10.0
+        # The face sends the knob's position from 0 to 1, where 0.5 is flat. The engine's
+        # bands run -12 to +12 dB, so the midpoint has to land on 0 dB. Multiplying by ten
+        # and clamping at zero (the old path) turned every bass cut into a bass boost.
+        value = (max(0.0, min(1.0, value)) - 0.5) * 24.0
     try:
         wrote = RIG.set_param(track=1, fx=1, param=tone[index],
-                              value=max(0.0, min(10.0, value)), mode="auto")
+                              value=value, mode="auto")
     except port.NoRig:
         return {"output": "NOT SET: the engine is not running", "ok": False}
     except (port.RigError, LookupError, ValueError) as exc:
         return {"output": f"NOT SET: {exc}", "ok": False}
+    raw = wrote.get("raw")
     return {"output": f"{wrote.get('param_name')} at {wrote.get('fmt')}", "ok": True,
-            "param": tone[index], "value": float(wrote.get("landed") or value)}
+            "param": tone[index], "value": float(raw if raw is not None else value)}
 
 
 @router.post("/tweak")
