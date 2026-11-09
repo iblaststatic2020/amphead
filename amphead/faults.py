@@ -48,10 +48,10 @@ def explain(exc: BaseException, kind: str = "", path: str = "") -> str:
                 f"or a shorter cabinet.")
 
     if kind == CAPTURE:
-        if "only wavenet captures are supported" in lower:
+        if "only wavenet" in lower:
             model = said.rsplit("is", 1)[-1].strip() if " is " in said else "another architecture"
-            return (f"{name} is {model}, and this engine runs WaveNet captures only. Export it as "
-                    f"WaveNet in the trainer, or pick another capture from the folder.")
+            return (f"{name} is {model}, and this engine runs the WaveNet graph only. Export it "
+                    f"as WaveNet in the trainer, or pick another capture from the folder.")
         if "not supported" in lower:
             return (f"{name} uses part of the .nam format this engine does not implement. A plain "
                     f"WaveNet capture from the same folder will load.")
