@@ -101,6 +101,13 @@ class TestTheEngineOpensWhatTheSettingsSay(Rig):
         self.assertEqual((engine.samplerate, engine.blocksize), (44100, 256))
         self.assertIsNone(engine.input_device)
 
+    def test_the_click_is_not_restored_on_the_next_live(self):
+        settings.save({"bpm": 150, "metronome": True, "metronome_db": -20})
+        engine = engine_main.engine_from_settings()
+        self.assertEqual(engine.chain.bpm, 150, "the tempo is a setting")
+        self.assertEqual(engine.chain.metronome_db, -20, "the level is a setting")
+        self.assertFalse(engine.chain.metronome, "the click is switched on by the player")
+
 
 class TestTheAgentCanSetIt(Rig):
     def test_show_reads_like_a_sentence_about_this_machine(self):

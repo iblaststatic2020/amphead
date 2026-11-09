@@ -52,7 +52,9 @@ def engine_from_settings(**over) -> Engine:
         output_device=audio.get("output_device"),
         input_channel=max(0, int(audio["input_channel"]) - 1),
         bpm=float(saved.get("bpm") or 120.0),
-        metronome=bool(saved.get("metronome")),
+        # The click is a monitor the player switches on for this session, not a setting.
+        # Restoring it here is how every GO LIVE started ticking without being asked.
+        metronome=False,
         metronome_db=float(-18.0 if saved.get("metronome_db") is None else saved.get("metronome_db")),
     )
 
@@ -524,15 +526,18 @@ class Server:
     def arm(self, master_db: float | None = None) -> dict:
         # No level means the master the amp already has. Lifting it to a fixed -6 dB here is
         # how a caller that said only "arm" got a rig that came up louder than the knob.
+        # The click is never part of going live: a rig that kept ticking from the last
+        # session is a rig the player did not ask to hear.
         self.engine.update(
             armed=True,
+            metronome=False,
             master_db=self.engine.chain.master_db if master_db is None else float(master_db),
         )
         chain = self.engine.chain
         return {"armed": chain.armed, "master_db": chain.master_db}
 
     def disarm(self) -> dict:
-        chain = self.engine.update(armed=False)
+        chain = self.engine.update(armed=False, metronome=False)
         return {"armed": chain.armed, "master_db": chain.master_db}
 
     def panic(self) -> dict:

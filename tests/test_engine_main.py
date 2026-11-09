@@ -82,6 +82,18 @@ class VerbTest(unittest.TestCase):
     def test_arm_can_be_overridden(self):
         self.assertEqual(self.server.handle({"cmd": "arm", "master_db": -12})["result"]["master_db"], -12.0)
 
+    def test_going_live_does_not_carry_the_click_in_from_the_last_session(self):
+        """The click is a monitor the player turns on. Live must not start it unasked."""
+        self.server.engine.set_tempo(metronome=True)
+        self.server.handle({"cmd": "arm"})
+        status = self.server.handle({"cmd": "status"})["result"]
+        self.assertFalse(status["metronome"])
+
+    def test_leaving_live_leaves_the_click_off(self):
+        self.server.engine.set_tempo(metronome=True)
+        self.server.handle({"cmd": "disarm"})
+        self.assertFalse(self.server.handle({"cmd": "status"})["result"]["metronome"])
+
     def test_bypass_switches_a_stage_out_and_keeps_it_loaded(self):
         fixture = str(Path(__file__).resolve().parent / "fixtures" / "tiny_wavenet.nam")
         self.server.handle({"cmd": "load_capture", "path": fixture})
