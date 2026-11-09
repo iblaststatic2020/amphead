@@ -224,6 +224,39 @@ class TheTuneSoaksQuietly(unittest.TestCase):
         self.assertFalse(row["ok"])
         self.assertIn("dropped", tune.soak_verdict([row], 128))
 
+    def test_measure_primes_the_cabinet_for_each_candidate(self):
+        """A hardware-free measurement still has to rebuild the partition bank when the
+        block size changes, or a 128 frame candidate is timed while padded to 512."""
+        from amphead import tune
+        from amphead.engine2 import Chain
+
+        class SpyCab:
+            def __init__(self):
+                self.primes = []
+
+            def prime(self, frames):
+                self.primes.append(frames)
+
+            def process(self, block):
+                return block
+
+        cab = SpyCab()
+        tune.measure(Chain(cab=cab), 44100, candidates=(128, 256), warmup=0, measured=1)
+        self.assertEqual(cab.primes, [128, 256])
+
+    def test_a_block_that_used_most_of_its_deadline_fails_even_with_no_drops(self):
+        """The missed-block counter is not the whole story: a callback using 90% of its
+        deadline has not dropped a block yet, but the next interruption will. Calibration
+        must reject it before the player hears the stutter."""
+        from amphead import tune
+        engine = self._engine(drops=0)
+        engine.counters = {"blocks": 100, "underflows": 0, "overflows": 0, "late": 0,
+                           "work_ms": 7.1, "peak_ms": 7.1}
+        row = tune.soak(engine, 256, seconds=0.01)
+        self.assertFalse(row["ok"])
+        self.assertGreater(row["peak_realtime"], tune.PEAK_HEADROOM)
+        self.assertIn("worst block", tune.soak_verdict([row], 256))
+
     def test_the_pick_is_the_smallest_size_that_held_above_the_floor(self):
         from amphead import tune
         rows = [{"blocksize": 64, "ok": False, "blocks": 10, "underflows": 2, "overflows": 0,

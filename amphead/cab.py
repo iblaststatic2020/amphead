@@ -18,6 +18,12 @@ the cabinet is.
 It is exact. The tests compare a streamed signal against transform convolution over the
 whole signal and require a match to 1e-5, for a short cabinet and for one much longer than
 the block, because "sounds right" is not a test and a truncated overlap clicks every block.
+
+Partitioning makes the cost flat per audible tap, not free: every partition is another
+multiply-accumulate in every block. IR packs often pad a 0.25 s cabinet to a power of two,
+which turns 51 quiet partitions into 1024 busy ones and is enough to stutter a block that
+was comfortable before. So a loaded wav is trimmed to its last audible sample first; the
+padding was never part of the cabinet.
 """
 
 from __future__ import annotations
@@ -25,6 +31,39 @@ from __future__ import annotations
 from pathlib import Path
 
 import numpy as np
+
+
+#: A cabinet's usable tail is its first few hundred milliseconds. Everything after that is
+#: room, noise, or dither, and a file padded to a power of two can be seconds of near-silence.
+#: Below this level the tail is inaudible even with the master up, but it still costs a
+#: partition per block and is the difference between a smooth amp and a stuttering one.
+TRIM_BELOW_DB = -80.0
+TRIM_KEEP_MS = 50.0
+
+
+def trim_tail(ir: np.ndarray, samplerate: int) -> np.ndarray:
+    """Drop trailing near-silence, keeping the last audible decay and a short grace tail.
+
+    A "5.9 second" cabinet whose last audible sample is at 0.24 s is not a long cabinet; it
+    is a short cabinet in a padded file. Feeding the padding through the partition bank adds
+    work to every block for sound nobody can hear. The cut is relative to the IR's own peak
+    and 80 dB down, well below the noise floor of any guitar recording.
+    """
+    ir = np.asarray(ir, dtype=np.float32).reshape(-1)
+    if ir.size < 2:
+        return ir
+    peak = float(np.max(np.abs(ir)))
+    if peak <= 0.0:
+        return ir
+    floor = peak * (10.0 ** (TRIM_BELOW_DB / 20.0))
+    above = np.flatnonzero(np.abs(ir) > floor)
+    if above.size == 0:
+        return ir
+    keep = max(2, int(round(samplerate * TRIM_KEEP_MS / 1000.0)))
+    end = min(ir.size, int(above[-1]) + 1 + keep)
+    if end >= ir.size:
+        return ir
+    return np.ascontiguousarray(ir[:end])
 
 
 def resample(ir: np.ndarray, sr_from: int, sr_to: int) -> np.ndarray:
@@ -71,6 +110,9 @@ class Cab:
             ir = ir / self.peak
         self.ir = ir.astype(np.float32)
         self.length = int(self.ir.size)
+        #: The file's length before trailing near-silence was removed, for a caller that
+        #: wants to mention the saving. Zero means the file was already tight.
+        self.trimmed_from = 0
         self.samplerate = samplerate
         #: The rate the impulse response was captured at, before any resampling.
         self.file_rate = int(file_rate or samplerate or 0)
@@ -89,12 +131,17 @@ class Cab:
         gain_db: float = 0.0,
         normalize: bool = True,
         rate: int | None = None,
+        trim: bool = True,
     ) -> "Cab":
         """Read a 16, 24 or 32 bit PCM wav with the standard library only.
 
         scipy would do this in one line, but it is a 40 MB dependency for one file
         format. ``rate`` is the rate the engine runs at, and the file is resampled
         to it, because a 44.1 kHz cabinet in a 48 kHz chain is a different cabinet.
+
+        ``trim`` drops trailing near-silence before the IR reaches the partition bank.
+        A padded cabinet costs a full partition for every silent block, and one padded to
+        a power of two can be seconds of it. Pass ``trim=False`` to keep the file exact.
         """
         import wave
 
@@ -119,15 +166,21 @@ class Cab:
             raise ValueError(f"unsupported wav sample width: {width} bytes")
         if channels > 1:
             data = data.reshape(-1, channels).mean(axis=1)
+        original_length = int(data.size)
+        if trim:
+            data = trim_tail(data, file_rate)
+        trimmed_from = original_length if data.size < original_length else 0
         if rate is not None and int(rate) != file_rate:
             data = resample(data, file_rate, int(rate))
-        return cls(
+        cab = cls(
             data,
             samplerate=int(rate or file_rate),
             gain_db=gain_db,
             normalize=normalize,
             file_rate=file_rate,
         )
+        cab.trimmed_from = trimmed_from
+        return cab
 
     #: A cabinet is not worth more partitions than this before the rest is noise floor.
     MAX_PARTITIONS = 4096

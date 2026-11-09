@@ -128,6 +128,36 @@ class TestTheDuplexOpen(unittest.TestCase):
         finally:
             eng.stop()
 
+    def test_a_cabinet_is_primed_before_the_callback_and_primes_for_each_block_size(self):
+        """The partition bank depends on the block size. Building it in the callback is a
+        dropout, and leaving the old bank in place makes a smaller block run padded to the
+        old size. Both loading and opening must prime at the size the stream will use."""
+        sys.modules["sounddevice"] = fake_sounddevice()
+
+        class SpyCab:
+            def __init__(self):
+                self.calls = []
+
+            def prime(self, frames):
+                self.calls.append(frames)
+
+        eng = self.engine()
+        cab = SpyCab()
+        eng.update(cab=cab)
+        self.assertEqual(cab.calls, [512], "loading did not prime at the current size")
+        try:
+            eng.start()
+        finally:
+            eng.stop()
+        self.assertEqual(cab.calls, [512, 512], "opening did not prime again off the thread")
+        cab.calls.clear()
+        eng.blocksize = 128
+        try:
+            eng.start()
+        finally:
+            eng.stop()
+        self.assertEqual(cab.calls, [128], "the new block size used the old partition bank")
+
     def test_the_duplex_callback_writes_both_channels(self):
         eng = self.engine()
         eng.update(armed=False)

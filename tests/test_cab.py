@@ -174,6 +174,41 @@ class CabTest(unittest.TestCase):
             self.assertAlmostEqual(float(cab.ir[1]), 0.5, places=4)
             self.assertAlmostEqual(float(cab.ir[2]), -0.5, places=4)
 
+    def test_from_wav_drops_padding_that_would_cost_partitions(self):
+        """A cabinet padded to a power of two is still a short cabinet, and the padding
+        costs transform work in every callback. Cut it at load, keep a little decay after
+        the last audible sample, and say how long the file was."""
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "padded.wav"
+            data = np.zeros(44100 * 2, dtype=np.int16)
+            data[:4] = (16384, 8192, 4096, 2048)
+            with wave.open(str(path), "wb") as w:
+                w.setnchannels(1)
+                w.setsampwidth(2)
+                w.setframerate(44100)
+                w.writeframes(data.tobytes())
+            cab = Cab.from_wav(path, normalize=False)
+            self.assertEqual(cab.trimmed_from, data.size)
+            self.assertLess(cab.length, 44100 // 4)
+            self.assertAlmostEqual(float(cab.ir[0]), 0.5, places=4)
+            self.assertGreater(cab.length, 3, "the decay tail was cut, not just the padding")
+            exact = Cab.from_wav(path, normalize=False, trim=False)
+            self.assertEqual(exact.length, data.size)
+            self.assertEqual(exact.trimmed_from, 0)
+
+    def test_from_wav_keeps_a_file_whose_tail_is_audible_to_the_end(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "live-tail.wav"
+            data = (np.linspace(0.5, 0.001, 4000) * 32767).astype(np.int16)
+            with wave.open(str(path), "wb") as w:
+                w.setnchannels(1)
+                w.setsampwidth(2)
+                w.setframerate(44100)
+                w.writeframes(data.tobytes())
+            cab = Cab.from_wav(path, normalize=False)
+            self.assertEqual(cab.trimmed_from, 0)
+            self.assertEqual(cab.length, data.size)
+
     def test_from_wav_stereo_is_summed_to_mono(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "st.wav"

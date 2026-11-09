@@ -29,6 +29,19 @@ HEADROOM = 0.5
 # player can leave set all day: 5.8 ms a block at 44.1 kHz, still well under the 40 ms
 # where playing starts to feel late. Smaller sizes stay reachable by asking for one.
 SAFE_FLOOR = 256
+# Calibration only opens the stream for sizes it is willing to leave set. Measuring 64 and
+# 128 when the answer will never be below 256 costs two device reopens and thirteen seconds,
+# and each reopen is a chance for a driver to misbehave. An explicit smaller size can still
+# be measured or set by asking for it.
+SOAK_CANDIDATES = tuple(size for size in CANDIDATES if size >= SAFE_FLOOR)
+# A missed block counter only sees deadlines the driver reported. A callback that is late
+# but not yet over the wire does not increment it, yet it is the start of the same stutter.
+# The worst callback in a soak therefore has to fit inside this much of its block, not just
+# inside the block: 65% leaves a third of the deadline for the operating system to interrupt.
+PEAK_HEADROOM = 0.65
+# The first half second of a stream is not the steady state: the driver is filling its own
+# buffer and the partition bank is touching fresh pages. Reset after that, then measure.
+SOAK_SETTLE = 0.5
 
 
 def _signal(blocksize: int):
@@ -52,6 +65,12 @@ def measure(chain, samplerate: int, candidates=CANDIDATES, warmup: int = WARMUP,
     for blocksize in candidates:
         budget_ms = 1000.0 * blocksize / float(samplerate)
         x = _signal(blocksize)
+        # Build the cabinet's bank for THIS size before timing. Without this a smaller
+        # candidate runs padded to the previous, larger filter, so every size below the
+        # current one measures the same and the smallest looks no cheaper than the largest.
+        prime = getattr(chain, "prime", None)
+        if callable(prime):
+            prime(blocksize)
         # The first block at a new size rebuilds the cabinet's partitions and touches fresh
         # pages. That cost is real but it is paid once, so it is warmup, not measurement.
         for i in range(warmup):
@@ -123,28 +142,48 @@ def soak(engine, blocksize: int, seconds: float = 2.0) -> dict:
     if engine.running:
         engine.stop()
     engine.start()
-    started = time.perf_counter()
-    time.sleep(max(0.5, seconds))
+    # Let the driver fill its buffer and the partition bank warm up, then zero the counters.
+    # Without this, the first blocks after every start count as misses and a perfectly good
+    # size looks guilty of a stutter that only happened once, on opening.
+    if seconds >= 1.0:
+        time.sleep(SOAK_SETTLE)
+        reset = getattr(engine, "reset_counters", None)
+        if callable(reset):
+            reset()
+        started = time.perf_counter()
+        time.sleep(max(0.1, seconds - SOAK_SETTLE))
+    else:
+        started = time.perf_counter()
+        time.sleep(max(0.5, seconds))
     got = engine.counters
     mode = engine.mode
     elapsed = time.perf_counter() - started
     engine.stop()
     engine.update(armed=was[0], master_db=was[1])
     dropped = got.get("underflows", 0) + got.get("overflows", 0) + got.get("late", 0)
+    block_ms = 1000.0 * blocksize / float(engine.samplerate)
+    peak_ms = float(got.get("peak_ms") or 0.0)
+    # The median in measure() is a planning number. This is the actual worst callback on the
+    # actual device, and if it used more than two thirds of its block the rig has no room
+    # left for the next thing Windows does. A counter with no drops is not enough on its own.
+    peak_ok = peak_ms <= 0.0 or peak_ms <= block_ms * PEAK_HEADROOM
     return {
         "blocksize": int(blocksize),
-        "block_ms": round(1000.0 * blocksize / float(engine.samplerate), 2),
+        "block_ms": round(block_ms, 2),
         "seconds": round(elapsed, 2),
         "blocks": got.get("blocks", 0),
         "underflows": got.get("underflows", 0),
         "overflows": got.get("overflows", 0),
         "late": got.get("late", 0),
+        "work_ms": round(float(got.get("work_ms") or 0.0), 2),
+        "peak_ms": round(peak_ms, 2),
+        "peak_realtime": round(peak_ms / block_ms, 3) if peak_ms and block_ms else 0.0,
         "mode": mode,
-        "ok": got.get("blocks", 0) > 0 and dropped == 0,
+        "ok": got.get("blocks", 0) > 0 and dropped == 0 and peak_ok,
     }
 
 
-def soak_all(engine, candidates=CANDIDATES, seconds: float = 2.0, progress=None) -> list[dict]:
+def soak_all(engine, candidates=SOAK_CANDIDATES, seconds: float = 2.0, progress=None) -> list[dict]:
     rows = []
     for index, blocksize in enumerate(candidates):
         if progress:
@@ -185,5 +224,10 @@ def soak_verdict(rows: list[dict], picked: int | None, floor: int = SAFE_FLOOR) 
                     f"you want it")
         return (f"{picked} frames, {row['block_ms']:.1f} ms a block, "
                 f"{row['seconds']:.0f} s with nothing dropped")
+    peak = float(row.get("peak_ms") or 0.0)
+    if bad == 0 and peak:
+        return (f"{picked} frames, {row['block_ms']:.1f} ms a block, the worst block took "
+                f"{peak:.1f} ms: nothing dropped, but there is not enough room left for "
+                f"another app to interrupt, so this one is not safe")
     return (f"{picked} frames, {row['block_ms']:.1f} ms a block, "
             f"{bad} dropped block{'s' if bad != 1 else ''}: this chain is too heavy for it")

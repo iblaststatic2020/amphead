@@ -151,6 +151,19 @@ class Chain:
     tone_on: bool = True
     cab_on: bool = True
 
+    def prime(self, frames: int) -> None:
+        """Build every stage's transform bank for this block size, off the audio thread.
+
+        The cabinet's partition set depends on the block size, and building it inside the
+        first callback is 11 ms of work in a 5.8 ms slot: the load itself is a dropout, and
+        a block size change measured against the old set is measured wrong. Anything that
+        knows the size calls this before the stream opens.
+        """
+        if self.cab is not None:
+            prime = getattr(self.cab, "prime", None)
+            if callable(prime):
+                prime(int(frames))
+
 
 @dataclass
 class Meter:
@@ -164,6 +177,11 @@ class Meter:
     # A callback that took longer than its block is already a miss even when the driver
     # never complains: on kernel streaming a gap is silent until someone hears it.
     late: int = 0
+    #: What the last callback cost, and the worst one since the counters were reset. The
+    #: median says whether the chain fits on average; the peak says whether it ever did
+    #: not, which is the difference between "looks fine" and "the amp hiccupped".
+    work_ms: float = 0.0
+    peak_ms: float = 0.0
     blocks: int = 0
     stamp: float = field(default_factory=time.time)
 
@@ -333,6 +351,15 @@ class Engine:
 
     def update(self, **kwargs) -> Chain:
         """Swap the whole chain atomically. Anything the callback sees is complete."""
+        cab = kwargs.get("cab")
+        if cab is not None:
+            # Build the cabinet's partition bank before the callback can see it. Doing it
+            # inside the first block turns loading a long IR into a dropout at the exact
+            # moment the player expects to hear the cabinet, and leaves the old bank in
+            # place when the block size shrinks.
+            prime = getattr(cab, "prime", None)
+            if callable(prime):
+                prime(self.blocksize)
         with self._lock:
             self._chain = replace(self._chain, **kwargs)
             # A player reaching for the master or the switch is the end of the silence.
@@ -357,6 +384,7 @@ class Engine:
         running total and makes a fresh block size look busy when it is not."""
         self._meter.blocks = self._meter.underflows = self._meter.overflows = 0
         self._meter.late = 0
+        self._meter.work_ms = self._meter.peak_ms = 0.0
         # Kept, unlike the per-stream counters: a failure that happened in the last stream is
         # exactly what the player needs to see after a restart.
 
@@ -366,6 +394,8 @@ class Engine:
         """Starved and dropped blocks since the stream opened. The only honest latency check."""
         return {"underflows": self._meter.underflows, "overflows": self._meter.overflows,
                 "late": self._meter.late, "blocks": self._meter.blocks,
+                "work_ms": round(self._meter.work_ms, 2),
+                "peak_ms": round(self._meter.peak_ms, 2),
                 # Failures inside the callback, which are otherwise invisible: the stream is
                 # still open and the pane still says LIVE, but the output has been silence.
                 "callback_errors": self._cb_errors}
@@ -428,7 +458,6 @@ class Engine:
         )
 
     def start(self) -> str:
-        self.reset_counters()
         """Open the device and report which mode took.
 
         Order is deliberate: duplex first, because a single stream cannot hold the
@@ -437,6 +466,12 @@ class Engine:
         then WASAPI shared. On the AudioBox those are 20 ms, refused and 112 ms, so
         "it opened" is not the same as "it plays".
         """
+        self.reset_counters()
+        # Prime for the size this stream will actually use. Calibration opens a new stream
+        # for every candidate, so this is also what makes each candidate's measurement its
+        # own: without it, a smaller block runs padded to the old, larger filter and looks
+        # exactly as expensive as the size it is supposed to beat.
+        self._chain.prime(self.blocksize)
         import sounddevice as sd
 
         apis = sd.query_hostapis()
@@ -626,8 +661,13 @@ class Engine:
         # instead, which is silence without the stale state behind it.
         started = time.perf_counter()
         y = process_chain(x, chain)
-        if frames and (time.perf_counter() - started) > frames / float(self.samplerate):
-            self._meter.late += 1
+        if frames:
+            work_ms = (time.perf_counter() - started) * 1000.0
+            self._meter.work_ms = work_ms
+            if work_ms > self._meter.peak_ms:
+                self._meter.peak_ms = work_ms
+            if work_ms > 1000.0 * frames / float(self.samplerate):
+                self._meter.late += 1
         if not chain.armed:
             # A take that is running keeps the time it was promised: every block still lands
             # in the file, as silence. Dropping them makes a wav shorter than the performance,

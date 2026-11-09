@@ -414,6 +414,7 @@ class Server:
         return {
             "cab": self.cab_name,
             "taps": int(cab.length),
+            "trimmed_from": int(cab.trimmed_from),
             "samplerate": cab.samplerate,
             "resampled": cab.samplerate != cab.file_rate,
             "file_rate": cab.file_rate,
@@ -584,6 +585,7 @@ class Server:
 
         step("starting")
         was_running = self.engine.running
+        was_blocksize = self.engine.blocksize
         armed = self.engine.chain.armed
         if was_running:
             self.engine.stop()
@@ -618,7 +620,7 @@ class Server:
                 rows = tune.measure(self.engine.chain, self.engine.samplerate)
                 picked = int(blocksize) if blocksize else tune.choose(rows)
                 words = tune.verdict(rows, picked)
-            changed = picked is not None and picked != self.engine.blocksize
+            changed = picked is not None and picked != was_blocksize
             if apply and picked:
                 step(f"saving {picked} frames")
                 self.engine.blocksize = int(picked)
