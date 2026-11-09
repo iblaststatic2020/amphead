@@ -159,6 +159,54 @@ class ChainTest(unittest.TestCase):
         self.assertLess(float(np.max(np.abs(a - b))), 1e-5)
 
 
+class FakeTake:
+    """A take that keeps its blocks in memory, so the click can be checked against it."""
+
+    def __init__(self) -> None:
+        self.blocks = []
+
+    def push(self, block) -> None:
+        self.blocks.append(np.array(block, copy=True))
+
+
+class TempoTest(unittest.TestCase):
+    def test_the_click_is_in_the_monitor_and_not_in_the_take(self):
+        engine = Engine(samplerate=48000, blocksize=512)
+        engine.update(armed=False)
+        engine._take = FakeTake()
+        engine.set_tempo(bpm=120, metronome=True)
+        heard = []
+        for _ in range(100):
+            heard.append(engine._render(np.zeros((512, 1), dtype=np.float32), 512))
+        written = np.concatenate(engine._take.blocks)
+        self.assertEqual(float(np.max(np.abs(written))), 0.0)
+        self.assertGreater(float(np.max(np.abs(np.concatenate(heard)))), 0.0)
+
+    def test_the_click_lands_on_the_beat(self):
+        engine = Engine(samplerate=48000, blocksize=512)
+        engine.set_tempo(bpm=120, metronome=True)
+        engine._click_reset.set()
+        block = engine._click_block(48000, engine.chain)
+        lit = np.flatnonzero(np.abs(block) > 0.0)
+        self.assertLess(int(lit[0]), 10)
+        second = int(lit[lit > 20000][0])
+        self.assertAlmostEqual(second, 24000, delta=10)
+
+    def test_bpm_stops_at_the_ends_of_the_range(self):
+        engine = Engine()
+        self.assertEqual(engine.set_tempo(bpm=900).bpm, 300.0)
+        self.assertEqual(engine.set_tempo(bpm=10).bpm, 40.0)
+
+    def test_changing_tempo_restarts_the_grid(self):
+        engine = Engine(samplerate=48000, blocksize=512)
+        engine.set_tempo(bpm=120, metronome=True)
+        engine._render(np.zeros((512, 1), dtype=np.float32), 512)
+        engine.set_tempo(bpm=90)
+        self.assertTrue(engine._click_reset.is_set())
+        click = engine._click_block(1, engine.chain)
+        self.assertIsNotNone(click)
+
+
 class FakeHost:
     """Just enough of sounddevice to answer the question "which pair would you open?"."""
 

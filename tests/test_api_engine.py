@@ -31,6 +31,9 @@ class FakeRig:
         self.clip = False
         self.peak = 0.2
         self.master_db = -6.0
+        self.bpm = 120.0
+        self.metronome = False
+        self.metronome_db = -18.0
 
     # ---- what the engine knows -------------------------------------------------------------
     def state(self):
@@ -39,6 +42,8 @@ class FakeRig:
                 "capture_path": self.capture_path, "cab": self.cab,
                 "cab_path": self.cab_path, "input_channel": self.input_channel,
                 "input_gain_db": self.in_db, "output_gain_db": self.out_db,
+                "bpm": self.bpm, "metronome": self.metronome,
+                "metronome_db": self.metronome_db,
                 "tone": {"bass": 5.0, "mid": 5.0, "treble": 5.0},
                 "device": {"closed": self.closed, "inputs": 2, "mode": "wdm-ks",
                            "buffer": "512", "rate": "44100", "latency_out_ms": 5.1},
@@ -84,6 +89,17 @@ class FakeRig:
         self.calls.append(("out", db))
         self.out_db = db
         return {"db": db}
+
+    def set_tempo(self, bpm=None, metronome=None, metronome_db=None):
+        if bpm is not None:
+            self.bpm = float(bpm)
+        if metronome is not None:
+            self.metronome = bool(metronome)
+        if metronome_db is not None:
+            self.metronome_db = float(metronome_db)
+        self.calls.append(("tempo", self.bpm, self.metronome))
+        return {"bpm": self.bpm, "metronome": self.metronome,
+                "metronome_db": self.metronome_db}
 
     def set_gate(self, db=-80.0):
         self.calls.append(("gate", db))
@@ -268,6 +284,27 @@ class TrimTest(ApiTest):
         out = plugin_api.gate({"db": "hiss"})
         self.assertFalse(out["ok"])
         self.assertIn("NO LEVEL", out["output"])
+
+    def test_tempo_is_written_and_echoed(self):
+        out = plugin_api.tempo({"bpm": 192})
+        self.assertTrue(out["ok"])
+        self.assertIn(("tempo", 192.0, False), self.rig.calls)
+        self.assertEqual(out["bpm"], 192.0)
+
+    def test_tempo_stops_at_the_ends_of_the_range(self):
+        self.assertEqual(plugin_api.tempo({"bpm": 999})["bpm"], 300.0)
+        self.assertEqual(plugin_api.tempo({"bpm": 1})["bpm"], 40.0)
+
+    def test_the_click_is_switched_without_moving_the_tempo(self):
+        out = plugin_api.tempo({"metronome": True})
+        self.assertEqual(out["bpm"], 120.0)
+        self.assertTrue(out["metronome"])
+        self.assertIn("click on", out["output"])
+
+    def test_a_word_instead_of_a_tempo_is_refused(self):
+        out = plugin_api.tempo({"bpm": "fast"})
+        self.assertFalse(out["ok"])
+        self.assertIn("NO TEMPO", out["output"])
 
     def test_tune_starts_at_once_and_names_its_phase(self):
         out = plugin_api.tune({})

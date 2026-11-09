@@ -41,6 +41,11 @@ DEFAULTS: dict[str, Any] = {
     # Noise gate threshold in dBFS in front of the amp. -80 is off, which is the default:
     # a gate that arrives switched on is a gate that eats a quiet riff on the first take.
     "gate_db": -80.0,
+    # The click. Monitoring only, never in the take. 120 is a neutral starting count;
+    # a player recording to a song changes it once and the file remembers.
+    "bpm": 120.0,
+    "metronome": False,
+    "metronome_db": -18.0,
     "audio": {
         "input_device": None,
         "output_device": None,

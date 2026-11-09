@@ -44,12 +44,16 @@ def engine_from_settings(**over) -> Engine:
     audio = settings.audio()
     audio.update({k: v for k, v in over.items() if v is not None})
     engine2.TARGET_LATENCY_MS = float(audio.get("latency_ms") or engine2.TARGET_LATENCY_MS)
+    saved = settings.load()
     return Engine(
         samplerate=int(audio["samplerate"]),
         blocksize=int(audio["blocksize"]),
         input_device=audio.get("input_device"),
         output_device=audio.get("output_device"),
         input_channel=max(0, int(audio["input_channel"]) - 1),
+        bpm=float(saved.get("bpm") or 120.0),
+        metronome=bool(saved.get("metronome")),
+        metronome_db=float(-18.0 if saved.get("metronome_db") is None else saved.get("metronome_db")),
     )
 
 
@@ -187,6 +191,9 @@ class Server:
             "input_gain_db": chain.input_gain_db,
             "output_gain_db": chain.output_gain_db,
             "gate_db": chain.gate_db,
+            "bpm": chain.bpm,
+            "metronome": chain.metronome,
+            "metronome_db": chain.metronome_db,
             "capture": self.capture_name,
             "cab": self.cab_name,
             # Not an error, a tone fact: the pane has to be able to say it where the player
@@ -462,6 +469,23 @@ class Server:
                 pass
         chain = self.engine.chain
         return {"gate_db": chain.gate_db, "open": chain.gate is not None and not chain.gate.off}
+
+    def tempo(self, bpm: float | None = None, metronome: bool | None = None,
+              metronome_db: float | None = None) -> dict:
+        """Set the count and the click. The click is monitor-only and remembered."""
+        if bpm is not None or metronome is not None or metronome_db is not None:
+            chain = self.engine.set_tempo(
+                bpm=None if bpm is None else float(bpm),
+                metronome=metronome,
+                metronome_db=None if metronome_db is None else float(metronome_db))
+            try:
+                settings.save({"bpm": float(chain.bpm), "metronome": bool(chain.metronome),
+                               "metronome_db": float(chain.metronome_db)})
+            except Exception:
+                pass
+        chain = self.engine.chain
+        return {"bpm": chain.bpm, "metronome": chain.metronome,
+                "metronome_db": chain.metronome_db}
 
     def rig(self, capture: str | None = None, cab: str | None = None, **knobs) -> dict:
         """Land a whole sound in one command: capture, cabinet, tone, trims, gate.
@@ -760,6 +784,7 @@ class Server:
         "tone": "tone_set",
         "gain": "gain",
         "gate": "gate",
+        "tempo": "tempo",
         "rig": "rig",
         "arm": "arm",
         "disarm": "disarm",
@@ -777,7 +802,7 @@ class Server:
 
     #: Verbs that may run while a tune owns the device. Everything else waits, because a
     #: capture load or a start in the middle of a soak would measure the wrong chain.
-    TUNE_SAFE = {"status", "meter", "library", "devices", "take_state",
+    TUNE_SAFE = {"status", "meter", "library", "devices", "take_state", "tempo",
                  "tune_start", "tune_status", "tune_cancel"}
 
     def handle(self, request: dict) -> dict:

@@ -1199,6 +1199,86 @@ function Grille({ lit, heat }) {
 // somewhere: into chat, into a DAW, into a script.
 const mediaUrl = (path) => `hermes-media://stream/${encodeURIComponent(path)}`
 
+function TempoStrip({ bpm, metronome, busy, onTempo }) {
+  const value = Math.round(Number(bpm) || 120)
+  const tiny = 'flex shrink-0 items-center rounded px-1.5 py-1 text-[0.5rem] font-semibold uppercase tracking-[0.08em]'
+  const stepper = (label, delta) => jsx('button', {
+    type: 'button',
+    disabled: busy,
+    onClick: () => onTempo({ bpm: Math.min(300, Math.max(40, value + delta)) }),
+    className: 'flex h-5 w-5 shrink-0 items-center justify-center rounded text-[0.625rem] font-bold',
+    style: {
+      color: 'var(--ui-text-secondary)',
+      background: 'var(--ui-bg-quaternary)',
+      border: '1px solid var(--ui-stroke-secondary)',
+      cursor: busy ? 'default' : 'pointer',
+      opacity: 1
+    },
+    children: label
+  })
+
+  return jsxs('div', {
+    className: 'mt-1.5 rounded-md px-2 py-1.5',
+    style: { ...WELL },
+    children: [
+      jsxs('div', {
+        className: 'flex items-center gap-2',
+        children: [
+          jsx('span', {
+            className: 'shrink-0 text-[0.5rem] font-semibold uppercase tracking-[0.08em]',
+            style: MUTED,
+            children: 'tempo'
+          }),
+          stepper('−', -1),
+          jsx('input', {
+            key: value,
+            type: 'number',
+            min: 40,
+            max: 300,
+            step: 1,
+            defaultValue: value,
+            disabled: busy,
+            onBlur: (e) => {
+              const next = Math.round(Number(e.target.value))
+              if (Number.isFinite(next) && next !== value) onTempo({ bpm: next })
+            },
+            onKeyDown: (e) => { if (e.key === 'Enter') e.currentTarget.blur() },
+            className: 'w-12 shrink-0 rounded bg-transparent text-center font-mono text-[0.6875rem] font-bold',
+            style: { color: 'var(--ui-text-primary)', border: '1px solid var(--ui-stroke-secondary)' },
+            'aria-label': 'tempo in beats per minute'
+          }),
+          stepper('+', 1),
+          jsx('span', { className: 'shrink-0 text-[0.5rem]', style: MUTED, children: 'bpm' })
+        ]
+      }),
+      jsxs('div', {
+        className: 'mt-1 flex items-center gap-2',
+        children: [
+          jsx('button', {
+            type: 'button',
+            disabled: busy,
+            onClick: () => onTempo({ metronome: !metronome }),
+            className: tiny,
+            style: {
+              color: metronome ? '#fff' : 'var(--ui-text-secondary)',
+              background: metronome ? 'var(--ui-accent)' : 'var(--ui-bg-quaternary)',
+              border: '1px solid var(--ui-stroke-secondary)',
+              cursor: busy ? 'default' : 'pointer',
+              opacity: 1
+            },
+            children: metronome ? 'click on' : 'click off'
+          }),
+          jsx('span', {
+            className: 'min-w-0 flex-1 truncate text-[0.5rem] leading-tight',
+            style: MUTED,
+            children: 'monitor only · never in the take'
+          })
+        ]
+      })
+    ]
+  })
+}
+
 function TakeStrip({ take, recording, busy, running, onRecord, onSay }) {
   const audio = useRef(null)
   const [playing, setPlaying] = useState(false)
@@ -1762,6 +1842,13 @@ function AmpFace({ rest }) {
             running,
             onRecord: () => act('/record', { on: !recording }),
             onSay: setSaid
+          }),
+
+          jsx(TempoStrip, {
+            bpm: s.bpm,
+            metronome: s.metronome,
+            busy: locked,
+            onTempo: (patch) => act('/tempo', patch)
           }),
 
           jsx(Meter, { peak, clip: clipped.current || !!reading.clip }),

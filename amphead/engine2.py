@@ -34,6 +34,7 @@ from .limits import SILENT_DB
 from .park import AutoPark
 from .record import Take
 from .limits import master as clamp_master, gate as clamp_gate, trim as clamp_trim
+from .limits import bpm as clamp_bpm, click_db as clamp_click_db
 
 #: Where the master sits when the chain is disarmed. Quiet enough to be harmless,
 #: not muted, so a wrong arm is audible as "too quiet" rather than silent-but-live.
@@ -150,6 +151,11 @@ class Chain:
     amp_on: bool = True
     tone_on: bool = True
     cab_on: bool = True
+    # The click is monitoring, never part of the take: the file is what the amp made,
+    # not the room. bpm is the grid, and the player can hear it before arming.
+    bpm: float = 120.0
+    metronome: bool = False
+    metronome_db: float = -18.0
 
     def prime(self, frames: int) -> None:
         """Build every stage's transform bank for this block size, off the audio thread.
@@ -230,6 +236,9 @@ class Engine:
         output_device: int | None = None,
         channels: int = 1,
         input_channel: int = 0,
+        bpm: float = 120.0,
+        metronome: bool = False,
+        metronome_db: float = -18.0,
     ) -> None:
         self.samplerate = int(samplerate)
         self.blocksize = int(blocksize)
@@ -243,7 +252,13 @@ class Engine:
         self.mode: str | None = None
         self._lock = threading.Lock()
         self._gate = Gate(threshold_db=GATE_FLOOR_DB, rate=self.samplerate)
-        self._chain = Chain(gate=self._gate)
+        self._chain = Chain(gate=self._gate, bpm=clamp_bpm(bpm),
+                            metronome=bool(metronome),
+                            metronome_db=clamp_click_db(metronome_db))
+        # Samples since the click grid was last reset. The callback advances it, and
+        # start_take resets it so a take always begins on beat one.
+        self._click_t = 0.0
+        self._click_reset = threading.Event()
         self._meter = Meter()
         self._duplex = None
         self._in_stream = None
@@ -287,6 +302,8 @@ class Engine:
                 take.stop()
                 raise ValueError("two takes raced for the same engine; the second was not started")
             self._take = take
+            # A take starts on beat one, not wherever the click happened to be.
+            self._click_reset.set()
             # Pressing record is the player reaching for the amp, so the silence is over.
             self._park.reset()
             self._parked_by_idle = False
@@ -409,6 +426,25 @@ class Engine:
         db = clamp_gate(db)
         self._gate.set_threshold(db)
         return self.update(gate_db=db)
+
+    def set_tempo(self, bpm: float | None = None, metronome: bool | None = None,
+                  metronome_db: float | None = None) -> Chain:
+        """Set the click's grid and whether it is running.
+
+        The click is added after the take push, so it is heard in the room and never
+        written to the wav. Changing the tempo while the click is on restarts the grid
+        at the next block, which is what a player means when they turn the number.
+        """
+        patch: dict = {}
+        if bpm is not None:
+            patch["bpm"] = clamp_bpm(bpm)
+        if metronome is not None:
+            patch["metronome"] = bool(metronome)
+        if metronome_db is not None:
+            patch["metronome_db"] = clamp_click_db(metronome_db)
+        if patch:
+            self._click_reset.set()
+        return self.update(**patch)
 
     # lifecycle -------------------------------------------------------------
     def _open_split(self, sd, exclusive: bool, wasapi: bool = True):
@@ -644,6 +680,36 @@ class Engine:
         outdata[:, 0] = block
         outdata[:, 1] = block
 
+    def _click_block(self, frames: int, chain: Chain):
+        """One block of click, or None when no beat falls in this block.
+
+        Generated per sample from the position on the grid rather than from a sample
+        file: the tempo can change without reloading anything, and the click stays
+        sample-accurate across block boundaries. Accent every fourth beat.
+        """
+        import numpy as np
+
+        if frames <= 0:
+            return None
+        if self._click_reset.is_set():
+            self._click_reset.clear()
+            self._click_t = 0.0
+        beat = 60.0 * float(self.samplerate) / float(chain.bpm)
+        t = self._click_t + np.arange(frames, dtype=np.float64)
+        self._click_t += float(frames)
+        phase = np.mod(t, beat)
+        length = max(1, int(0.010 * self.samplerate))
+        on = phase < length
+        if not on.any():
+            return None
+        index = np.floor(t / beat + 1e-9).astype(np.int64)
+        freq = np.where(index % 4 == 0, 1568.0, 1046.0)
+        env = np.exp(-phase / (0.0022 * self.samplerate))
+        wave = np.sin(2.0 * np.pi * freq * phase / float(self.samplerate))
+        out = (wave * env * db_to_gain(chain.metronome_db)).astype(np.float32)
+        out[~on] = 0.0
+        return out
+
     def _render(self, indata, frames: int):
         """One block in, one block out. The same code on both device paths."""
         import numpy as np
@@ -692,6 +758,11 @@ class Engine:
         take = self._take
         if take is not None:
             take.push(y)                              # queued, never written in the callback
+        # After the push: the click is for the player's ear, not for the file.
+        if chain.metronome:
+            click = self._click_block(frames, chain)
+            if click is not None:
+                y = np.clip(y + click, -1.0, 1.0).astype(np.float32)
         return y
 
     def _on_duplex(self, indata, outdata, frames, time_info, status) -> None:

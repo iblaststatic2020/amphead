@@ -482,6 +482,13 @@ class AmpHead2Rig:
         """
         return {"db": self._call(cmd="gate", db=float(db)).get("gate_db")}
 
+    def set_tempo(self, bpm: float | None = None, metronome: bool | None = None,
+                  metronome_db: float | None = None, **kw: Any) -> dict:
+        """The count and the click. The click is monitor-only; the take stays clean."""
+        got = self._call(cmd="tempo", bpm=bpm, metronome=metronome, metronome_db=metronome_db)
+        return {"bpm": got.get("bpm"), "metronome": bool(got.get("metronome")),
+                "metronome_db": got.get("metronome_db")}
+
     # recording --------------------------------------------------------------
     def start_take(self, path: str | None = None, name: str | None = None, **kw: Any) -> dict:
         """Record what the amp is making, to a wav. What you hear is what lands in the file."""

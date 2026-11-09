@@ -18,6 +18,10 @@ GATE = (-80.0, -20.0)
 TRIM = (-24.0, 24.0)
 #: Bass, mid, treble, the way one knob on a real head moves.
 TONE = (-12.0, 12.0)
+#: Tempo the click counts at. Below 40 is a drone, above 300 is a machine gun.
+BPM = (40.0, 300.0)
+#: Click level in dBFS. Quiet enough to play over, loud enough to find without a meter.
+CLICK_DB = (-40.0, 0.0)
 
 #: At or below this the gate is off, not merely low.
 GATE_OFF_DB = -79.5
@@ -47,6 +51,14 @@ def trim(db: float) -> float:
 
 def tone(db: float) -> float:
     return clamp(TONE, db)
+
+
+def bpm(value: float) -> float:
+    return clamp(BPM, value)
+
+
+def click_db(value: float) -> float:
+    return clamp(CLICK_DB, value)
 
 
 def gate_off(db: float | None) -> bool:

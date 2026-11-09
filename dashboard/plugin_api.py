@@ -151,6 +151,7 @@ def state() -> dict[str, Any]:
                 "running": False, "armed": False, "chain": [], "knobs": [],
                 "device": {"closed": True}, "meter": {"peak": 0.0}, "presets": [],
                 "capture": "", "cab": "", "tone": {}, "tone_name": "",
+                "bpm": float(settings.load().get("bpm") or 120.0), "metronome": False,
                 "aim": lastchain.load().get("aim") or "",
                 "aim_confidence": lastchain.load().get("aim_confidence") or "",
                 "tuning": {},
@@ -209,6 +210,9 @@ def state() -> dict[str, Any]:
         "input_gain_db": live.get("input_gain_db"),
         "output_gain_db": live.get("output_gain_db"),
         "gate_db": live.get("gate_db"),
+        "bpm": live.get("bpm"),
+        "metronome": bool(live.get("metronome")),
+        "metronome_db": live.get("metronome_db"),
         "aim": lastchain.load().get("aim") or "",
         "aim_confidence": lastchain.load().get("aim_confidence") or "",
         "take": live.get("take") or _saved_take(),
@@ -438,6 +442,34 @@ def gate(body: dict) -> dict[str, Any]:
     landed = wrote.get("db")
     word = "off" if limits.gate_off(landed) else f"{float(landed):.0f} dB"
     return {"output": f"gate {word}", "ok": True, "db": landed}
+
+
+@router.post("/tempo")
+def tempo(body: dict) -> dict[str, Any]:
+    """Set the count and the click. The click is heard in the room, never in the take."""
+    bpm = body.get("bpm")
+    if bpm not in (None, ""):
+        try:
+            bpm = limits.bpm(float(bpm))
+        except (TypeError, ValueError):
+            return {"output": "NO TEMPO: say a number of beats per minute", "ok": False}
+    else:
+        bpm = None
+    metronome = body.get("metronome")
+    if metronome is not None:
+        metronome = bool(metronome)
+    if bpm is None and metronome is None:
+        return {"output": "NO TEMPO: say BPM or click on/off", "ok": False}
+    try:
+        wrote = RIG.set_tempo(bpm=bpm, metronome=metronome)
+    except port.NoRig:
+        return {"output": "NOT SET: the engine is not running", "ok": False}
+    except port.RigError as exc:
+        return {"output": f"NOT SET: {exc}", "ok": False}
+    running = bool(wrote.get("metronome"))
+    said = f"{float(wrote.get('bpm') or 0):g} BPM · click {'on' if running else 'off'}"
+    return {"output": said, "ok": True, "bpm": wrote.get("bpm"),
+            "metronome": running, "metronome_db": wrote.get("metronome_db")}
 
 
 @router.post("/record")
