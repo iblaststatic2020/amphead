@@ -552,6 +552,7 @@ class Engine:
             # live pair first, because the fix is always the same and costs one query.
             if not repick("the saved audio device is gone"):
                 self._last_error = "no usable audio input and output pair"
+                raise RuntimeError(self._last_error)
 
         def hostapi(index) -> str:
             return str(apis[sd.query_devices(int(index))["hostapi"]]["name"])
@@ -564,7 +565,8 @@ class Engine:
         if not same_api:
             # A pair from two host APIs cannot open as one duplex stream. The split
             # fallback still plays, but it costs a queue, so prefer a matched pair.
-            repick("the saved devices speak different host APIs")
+            if not repick("the saved devices speak different host APIs"):
+                raise RuntimeError("no matched-host-API audio input and output pair")
 
         def refresh_input_channels() -> None:
             try:
