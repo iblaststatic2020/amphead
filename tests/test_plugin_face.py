@@ -241,10 +241,12 @@ class TestTheGateIsOnTheFace(unittest.TestCase):
         source = face()
         self.assertIn("act('/gate', { db })", source)
 
-    def test_there_is_a_tune_button_beside_the_latency(self):
+    def test_there_is_a_calibrate_button_beside_the_latency(self):
         source = face()
         self.assertIn("act('/tune', {})", source)
-        self.assertIn("children: tuningNow ? 'measuring' : 'tune'", source)
+        self.assertIn("children: tuningNow ? 'measuring' : 'calibrate'", source)
+        self.assertIn("title: running", source)
+        self.assertIn("Calibrate: measures buffer sizes", source)
         self.assertIn("maxHeight: 'clamp(120px, 32vh, 220px)'", source)
 
 

@@ -73,7 +73,7 @@ const CHIP_WORD = {
   'NO SIGNAL': 'no signal',
   CLIPPING: 'clipping',
   GLITCH: 'glitching',
-  TUNING: 'tuning',
+  TUNING: 'calibrating',
   'REOPENED DEVICE': 'device reopened',
   CONNECTING: 'connecting'
 }
@@ -623,7 +623,7 @@ function PowerButton({ running, armed, busy, tuning, onSetup, onLive }) {
     setup: { text: 'SET UP', sub: 'open the engine', fill: 'var(--ui-accent)', ink: 'var(--ui-bg-primary)' },
     standby: { text: 'GO LIVE', sub: 'opens at the knob', fill: 'var(--ui-bg-quaternary)', ink: 'var(--ui-text-primary)' },
     live: { text: 'LIVE', sub: 'press to stand by', fill: '#e5533d', ink: '#fff' },
-    tuning: { text: 'TUNING', sub: 'measuring blocks', fill: 'var(--ui-bg-quaternary)', ink: 'var(--ui-text-primary)' }
+    tuning: { text: 'CALIBRATING', sub: 'measuring buffers', fill: 'var(--ui-bg-quaternary)', ink: 'var(--ui-text-primary)' }
   }[state]
   // A lamp beside the words, the way a real front panel has one. It is the only part of the switch
   // that is allowed to glow, and it glows only when the amp is actually making sound.
@@ -1073,6 +1073,9 @@ function AmpFace({ rest }) {
   }, [reading.clip, peak])
 
   const verdict = s.verdict || 'CONNECTING'
+  // Calibration used to be called TUNING, which now belongs to the guitar tuner. The engine's
+  // state word stays TUNING for compatibility; the face speaks the new name.
+  const verdictText = verdict === 'TUNING' ? 'CALIBRATING' : verdict
   const armed = !!s.armed
   // How hot the valves look: the meter squashed to 0..1 over the top 40 dB, so quiet playing still
   // lights them and the very bottom of the range does not.
@@ -1180,7 +1183,7 @@ function AmpFace({ rest }) {
                   jsx('div', {
                     className: 'mt-0.5 truncate text-[0.5rem] leading-tight',
                     style: { color: VERDICT_COLOR[verdict] || SECOND.color },
-                    children: `${verdict}${s.reason ? ` · ${s.reason}` : ''}`
+                    children: `${verdictText}${s.reason ? ` · ${s.reason}` : ''}`
                   }),
                   // The diagnosis is the reason; this is the control. One imperative, on the
                   // face, so the player never has to translate "master parked" into a gesture.
@@ -1278,20 +1281,27 @@ function AmpFace({ rest }) {
                   }),
                   // Measured, not guessed: the same probe the CLI runs, on whatever capture and
                   // cabinet are loaded, so a rig that got heavier can find its own block size.
+                  // A real button, not another underlined word: this one changes the device.
                   jsx('button', {
                     type: 'button',
                     disabled: locked || !running,
                     onClick: () => act('/tune', {}),
-                    className: 'shrink-0 text-[0.5rem] uppercase leading-none tracking-[0.1em] underline-offset-2 hover:underline',
+                    title: running
+                      ? 'Calibrate: measures buffer sizes, picks the smallest one that never misses, and reopens the amp by itself.'
+                      : 'Calibrate: open the engine first.',
+                    'aria-label': 'Calibrate buffer and round trip',
+                    className: 'shrink-0 text-[0.5rem] uppercase leading-none tracking-[0.1em]',
                     style: {
                       color: SECOND.color,
                       cursor: locked || !running ? 'default' : 'pointer',
-                      background: 'transparent',
-                      border: 0,
-                      padding: 0,
-                      font: 'inherit'
+                      background: 'color-mix(in srgb, var(--ui-text-primary) 6%, transparent)',
+                      border: '1px solid var(--ui-stroke-secondary)',
+                      borderRadius: 4,
+                      padding: '3px 5px',
+                      font: 'inherit',
+                      opacity: locked || !running ? 0.5 : 1
                     },
-                    children: tuningNow ? 'measuring' : 'tune'
+                    children: tuningNow ? 'measuring' : 'calibrate'
                   })
                 ]
               }),
@@ -1301,7 +1311,7 @@ function AmpFace({ rest }) {
                 ? jsx('div', {
                   className: 'mt-1 text-[0.5rem] leading-tight',
                   style: MUTED,
-                  children: `tuning · ${tuning.phase || 'starting'} · ${Number(tuning.seconds || 0).toFixed(0)}s · the amp reopens by itself`
+                  children: `calibrating · ${tuning.phase || 'starting'} · ${Number(tuning.seconds || 0).toFixed(0)}s · the amp reopens by itself`
                 })
                 : null,
               // What the agent was asked to sound like, and how far the library actually got. The
