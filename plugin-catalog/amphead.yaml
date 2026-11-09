@@ -22,7 +22,7 @@ tier: community
 category: tools
 requires_hermes: ">=0.22.0"
 docs_url: https://github.com/iblaststatic2020/amphead#readme
-version: "1.2.1"
+version: "1.2.2"
 readme: true
 platforms:
   - windows
