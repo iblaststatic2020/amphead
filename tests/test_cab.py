@@ -90,6 +90,42 @@ class CabTest(unittest.TestCase):
         want = np.convolve(x, ir)[: x.size]
         self.assertLess(float(np.max(np.abs(got - want))), 1e-5)
 
+    def test_a_short_block_is_exact_even_when_the_cabinet_spans_several_partitions(self):
+        """A short block used to be exact only against a one-partition cabinet.
+
+        The state after the short block depends on more than the block itself, so
+        the history has to be replayed on the new grid, not padded with zeros.
+        """
+        rng = np.random.default_rng(8)
+        ir = (rng.standard_normal(300) * 0.05).astype(np.float32)
+        x = (rng.standard_normal(500) * 0.1).astype(np.float32)
+        cab = Cab(ir, 48000, normalize=False)
+        spans = [128, 37, 128, 128, 128]
+        pos = 0
+        out = []
+        for span in spans:
+            out.append(cab.process(x[pos:pos + span]))
+            pos += span
+        got = np.concatenate(out)
+        want = np.convolve(x, ir)[: x.size]
+        self.assertLess(float(np.max(np.abs(got - want))), 1e-5)
+
+    def test_a_growing_block_is_exact_when_the_cabinet_spans_several_partitions(self):
+        """Growing the block changes the partition grid, so the history moves too."""
+        rng = np.random.default_rng(9)
+        ir = (rng.standard_normal(300) * 0.05).astype(np.float32)
+        x = (rng.standard_normal(500) * 0.1).astype(np.float32)
+        cab = Cab(ir, 48000, normalize=False)
+        spans = [128, 128, 151]
+        pos = 0
+        out = []
+        for span in spans:
+            out.append(cab.process(x[pos:pos + span]))
+            pos += span
+        got = np.concatenate(out)
+        want = np.convolve(x, ir)[: got.size]
+        self.assertLess(float(np.max(np.abs(got - want))), 1e-5)
+
     def test_gain_db_scales_output(self):
         ir = np.array([1.0, 0.0], dtype=np.float32)
         x = np.array([0.25, -0.5], dtype=np.float32)
@@ -236,7 +272,22 @@ class CabTest(unittest.TestCase):
         out = cab.process(np.zeros(block, dtype=np.float32))
         self.assertEqual(out.size, block)
         self.assertEqual(cab.truncated_at, Cab.MAX_PARTITIONS * block)
-        self.assertEqual(cab._ring.shape[0], Cab.MAX_PARTITIONS)
+        self.assertEqual(cab._ring.shape[0], 2 * Cab.MAX_PARTITIONS)
+
+    def test_a_short_block_between_two_full_ones_does_not_leave_silence_in_the_tail(self):
+        """A 37-frame block is padded to process, but only its real frames are history.
+
+        Keeping the padded zeros made the next block convolve against a hole, which is
+        a click in the middle of a note. Compare the whole stream to one convolution.
+        """
+        rng = np.random.default_rng(23)
+        ir = (rng.standard_normal(96) * 0.05).astype(np.float32)
+        x = (rng.standard_normal(293) * 0.1).astype(np.float32)
+        cab = Cab(ir, 48000, normalize=False)
+        got = np.concatenate([cab.process(x[:128]), cab.process(x[128:165]),
+                              cab.process(x[165:293])])
+        want = np.convolve(x, ir)[: x.size]
+        self.assertLess(float(np.max(np.abs(got - want))), 1e-5)
 
     def test_growing_the_block_keeps_the_seam_continuous(self):
         """The carried history belongs at the end of the new frame, not the start.

@@ -91,9 +91,11 @@ class Gate:
         close_thr = open_thr * 0.5
         hold_samples = self._hold_samples
         close_step = self._close_step
-        out = np.empty_like(x)
-        for i in range(x.size):
-            sample = float(x[i])
+        samples = x.tolist()
+        out = [0.0] * len(samples)
+        # A Python float per sample is cheaper than a NumPy scalar per sample: x[i]
+        # builds a scalar object, float() then unwraps it, and the loop pays twice.
+        for i, sample in enumerate(samples):
             level = abs(sample)
             env += (attack if level > env else release) * (level - env)
 
@@ -122,4 +124,4 @@ class Gate:
         self._latched = latched
         self._hold = hold
         self._open = float(gain)
-        return out
+        return np.asarray(out, dtype=np.float32)

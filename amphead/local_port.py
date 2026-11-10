@@ -223,6 +223,13 @@ class EngineClient:
             self._stderr.put_nowait(
                 f"replaced {len(leftover)} engine process(es) left by an earlier session: "
                 + ", ".join(str(pid) for pid in leftover))
+        env = dict(os.environ)
+        # One BLAS thread per process. These arrays are a block wide, so a threaded BLAS
+        # spends its time synchronising and can wake cores that then steal the callback's
+        # core; the audio path is faster with one.
+        for key in ("OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS", "OMP_NUM_THREADS",
+                    "NUMEXPR_NUM_THREADS", "VECLIB_MAXIMUM_THREADS"):
+            env.setdefault(key, "1")
         self._proc = subprocess.Popen(
             [self.python, "-m", "amphead.engine_main"],
             cwd=str(Path(__file__).resolve().parent.parent),
@@ -231,6 +238,7 @@ class EngineClient:
             stderr=subprocess.PIPE,
             text=True,
             bufsize=1,
+            env=env,
         )
         # Drain stderr on a thread so a chatty engine can never fill a pipe and stall.
         threading.Thread(target=self._drain, daemon=True, name="amphead2-stderr").start()

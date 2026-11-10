@@ -14,6 +14,7 @@ Run it with the interpreter that has numpy and sounddevice:
 from __future__ import annotations
 
 import argparse
+import gc
 import json
 import sys
 import threading
@@ -178,6 +179,7 @@ class Server:
             "underflows": self.engine.counters["underflows"],
             "overflows": self.engine.counters["overflows"],
             "late": self.engine.counters["late"],
+            "start_late": self.engine.counters["start_late"],
             # Failures inside the callback. The stream stays open and every other field says
             # the amp is working, so without this a glitching amp looks like a quiet guitar.
             "callback_errors": self.engine.counters["callback_errors"],
@@ -239,7 +241,17 @@ class Server:
         """
         from amphead import library
 
-        return library.listing(self.capture_name, self.cab_name)
+        # The pane asks for this every time it opens, and a 2,000-file walk is a long
+        # pure-Python stretch on the same GIL the callback needs. Two seconds is short
+        # enough that a file copied into the folder still shows up on the next open.
+        now = time.monotonic()
+        cached = getattr(self, "_library_cache", None)
+        key = (self.capture_name, self.cab_name)
+        if cached and cached[0] > now and cached[1] == key:
+            return cached[2]
+        found = library.listing(self.capture_name, self.cab_name)
+        self._library_cache = (now + 2.0, key, found)
+        return found
 
     def start(self, **kw) -> dict:
         engine = self.engine
@@ -322,6 +334,12 @@ class Server:
 
         self._forget_tune()
         model = WaveNet.load(path)
+        # Do the first-block work here, not in the audio callback: a legacy capture
+        # otherwise primes its layer histories with a full receptive-field pass on the
+        # first live block, which is a dropout every time a capture is chosen.
+        prime = getattr(model, "prime", None)
+        if callable(prime):
+            prime(self.engine.blocksize)
         # A capture is not just weights: it is weights for one sample rate. Playing an 8 kHz
         # trained model on a 48 kHz stream runs its filters at six times the frequency they
         # were fit to, which reads as a thin, fizzy amp rather than as an error, and the player
@@ -360,6 +378,10 @@ class Server:
         else:
             self.rate_mismatch = None
         self.engine.update(amp=model)
+        # The capture graph is now permanent. Freezing it keeps the collector from
+        # walking 20 layers of lists during a callback; refcounts still free it when
+        # the next capture replaces it.
+        gc.freeze()
         self.capture_name = str(path)
         said = {"capture": self.capture_name, "receptive_field": model.receptive_field,
                 "samplerate": self.engine.samplerate}
@@ -419,6 +441,7 @@ class Server:
             rate=self.engine.samplerate,
         )
         self.engine.update(cab=cab)
+        gc.freeze()
         self.cab_name = str(path)
         return {
             "cab": self.cab_name,
@@ -878,6 +901,14 @@ def serve(stdin=None, stdout=None, server: "Server | None" = None) -> int:
     stdin = stdin or sys.stdin
     stdout = stdout or sys.stdout
     server = server or Server(engine_from_settings())
+    # The control thread builds library rows and parses JSON on the same GIL the audio
+    # callback needs. Python's 5 ms default switch interval is the whole callback budget
+    # here, so a busy reply could hold the callback off for a block and a half.
+    sys.setswitchinterval(0.0005)
+    if stdin is sys.stdin:
+        # Everything reachable now is permanent (engine, model, server). Freezing it keeps
+        # the collector from walking the whole model graph during a callback.
+        gc.freeze()
     for line in stdin:
         line = line.strip()
         if not line:

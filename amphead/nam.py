@@ -94,16 +94,30 @@ class _Layer:
         self._x1 = x1_w[:, :, 0]
         self.history_len = (self.kernel - 1) * self.dilation
         self.history: np.ndarray | None = None
+        # Reused each block so the callback does not allocate a fresh (history + block)
+        # buffer every callback. The shape is fixed for a given layer and block size.
+        self._ext: np.ndarray | None = None
 
     def reset(self) -> None:
         self.history = None
+
+    def prepare(self, frames: int) -> None:
+        """Size the reused history+block buffer before the audio thread needs it."""
+        if self.history_len:
+            self._ext = np.empty((self.conv_w.shape[0], self.history_len + frames),
+                                 dtype=np.float32)
 
     def process(self, x: np.ndarray, c: np.ndarray):
         ch, frames = x.shape
         if self.history_len:
             if self.history is None:
                 self.history = np.zeros((ch, self.history_len), dtype=np.float32)
-            ext = np.concatenate((self.history, x), axis=1)
+            width = self.history_len + frames
+            if self._ext is None or self._ext.shape != (ch, width):
+                self._ext = np.empty((ch, width), dtype=np.float32)
+            ext = self._ext
+            ext[:, :self.history_len] = self.history
+            ext[:, self.history_len:] = x
         else:
             ext = x
 
@@ -128,7 +142,7 @@ class _Layer:
         x += residual
 
         if self.history_len:
-            self.history = ext[:, -self.history_len:].copy()
+            np.copyto(self.history, ext[:, -self.history_len:])
         return x, a
 
 
@@ -181,16 +195,27 @@ class _A2Layer:
         self._act = _resolve_activation(activation)
         self.history_len = (self.kernel - 1) * self.dilation
         self.history: np.ndarray | None = None
+        self._ext: np.ndarray | None = None
 
     def reset(self, zeros: bool = True) -> None:
         self.history = None
+
+    def prepare(self, frames: int) -> None:
+        if self.history_len:
+            self._ext = np.empty((self.conv_w.shape[0], self.history_len + frames),
+                                 dtype=np.float32)
 
     def process(self, x: np.ndarray, c: np.ndarray):
         ch, frames = x.shape
         if self.history_len:
             if self.history is None:
                 self.history = np.zeros((ch, self.history_len), dtype=np.float32)
-            ext = np.concatenate((self.history, x), axis=1)
+            width = self.history_len + frames
+            if self._ext is None or self._ext.shape != (ch, width):
+                self._ext = np.empty((ch, width), dtype=np.float32)
+            ext = self._ext
+            ext[:, :self.history_len] = self.history
+            ext[:, self.history_len:] = x
         else:
             ext = x
 
@@ -219,7 +244,7 @@ class _A2Layer:
         x += residual
 
         if self.history_len:
-            self.history = ext[:, -self.history_len:].copy()
+            np.copyto(self.history, ext[:, -self.history_len:])
         return x, head
 
     def prime(self, x: np.ndarray):
@@ -375,9 +400,17 @@ class WaveNetA2:
             self.head_hist = np.zeros((head.shape[0], 0), dtype=np.float32)
         self._primed = True
 
-    def process(self, block: np.ndarray) -> np.ndarray:
+    def prime(self, frames: int = 256) -> "WaveNetA2":
+        """Build the bias-primed state before the audio callback asks for a block."""
         if not self._primed:
             self.reset()
+        for layer in self.layers:
+            layer.prepare(frames)
+        return self
+
+    def process(self, block: np.ndarray) -> np.ndarray:
+        if not self._primed:
+            self.prime(np.asarray(block).size)
         raw = np.asarray(block, dtype=np.float32).reshape(1, -1)
         c = raw
         x = _conv1x1(self.rechan_w, raw)
@@ -543,12 +576,41 @@ class WaveNet:
             arr.reset()
         self._primed = False
 
+    def prime(self, frames: int = 256) -> "WaveNet":
+        """Run the network over zeros so every layer has its real startup state.
+
+        The first live block used to do this work inside the audio callback, and the
+        layers before the last one started from zero history even though their own
+        biases make the reference's warm state non-zero. Both are load-time problems,
+        so they are paid here, off the audio thread and before the capture is published.
+
+        ``frames`` is the live block size: each layer's reused history buffer is sized
+        for it here, so the first callback does not allocate one per layer.
+        """
+        if not self._primed:
+            self.reset()
+            import numpy as np
+
+            warm = max(1, self.receptive_field)
+            self._run_block(np.zeros(warm, dtype=np.float32))
+            self._primed = True
+        for arr in self.arrays:
+            for layer in arr.layers:
+                layer.prepare(frames)
+        return self
+
     def process(self, block: np.ndarray) -> np.ndarray:
+        if not self._primed:
+            self.prime(np.asarray(block).size)
+        y = self._run_block(block)
+        self._primed = True
+        return y
+
+    def _run_block(self, block: np.ndarray) -> np.ndarray:
         x = np.asarray(block, dtype=np.float32).reshape(1, -1)
         c = x
         head = None
         for arr in self.arrays:
             x, head = arr.process(x, c, head)
         y = head[0] * self.head_scale
-        self._primed = True
         return np.ascontiguousarray(y, dtype=np.float32)

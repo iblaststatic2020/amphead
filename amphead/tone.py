@@ -94,18 +94,18 @@ class Biquad:
             return x
         b0, b1, b2, a1, a2 = self.coeffs
         z1, z2 = self.z1, self.z2
-        y = np.empty_like(x)
+        samples = x.tolist()
+        y = [0.0] * len(samples)
         # A python loop over 128 samples is ~20 us, an order of magnitude under the
         # block budget, and it keeps the state exact. Vectorising this would mean
         # lfilter (scipy) or an unrolled recurrence that is harder to trust.
-        for i in range(x.size):
-            xi = float(x[i])
+        for i, xi in enumerate(samples):
             yi = b0 * xi + z1
             z1 = b1 * xi - a1 * yi + z2
             z2 = b2 * xi - a2 * yi
             y[i] = yi
         self.z1, self.z2 = z1, z2
-        return y
+        return np.asarray(y, dtype=np.float32)
 
 
 class ToneStack:

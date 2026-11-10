@@ -1,5 +1,6 @@
 """The chain without a device: gain staging, clamps, and the safety floor."""
 
+import time
 import unittest
 
 try:
@@ -143,6 +144,38 @@ class ChainTest(unittest.TestCase):
         self.assertEqual(engine.chain.master_db, SAFE_MASTER_DB)
         self.assertTrue(np.all(engine.render(ramp()) == 0.0))
 
+    def test_panic_is_adopted_by_the_next_render_not_by_the_control_thread(self):
+        """Hard mute is the one move that cannot depend on a control-thread write.
+
+        The control thread asks; the audio thread answers. If panic wrote the gains
+        itself it would race a callback already holding the old chain, so the event
+        is set and the next block adopts the muted chain atomically.
+        """
+        engine = Engine(samplerate=44100, blocksize=128)
+        engine.update(armed=True, master_db=0.0, amp=FakeAmp(1.0))
+        engine.panic()
+        self.assertTrue(engine._gain_sync.is_set(),
+                        "panic must hand the gain reset to the audio thread")
+        y = engine._render(ramp(256).reshape(-1, 1), 256)
+        self.assertTrue(np.all(y == 0.0))
+        self.assertFalse(engine._gain_sync.is_set())
+        self.assertEqual(engine._gain_last, engine._linear_gains(engine.chain))
+
+    def test_a_park_that_hits_a_busy_lock_is_retried_not_lost(self):
+        """The quiet trigger must survive a capture load that owns the update lock."""
+        engine = Engine(samplerate=48000, blocksize=128)
+        engine.update(armed=True, master_db=0.0, amp=FakeAmp(1.0))
+        park = engine._park
+        park._last = park._clock() - (park.idle_seconds + 1)
+        with engine._lock:
+            engine._render(np.zeros((128, 1), dtype=np.float32), 128)
+            self.assertTrue(engine._park_pending, "the park should wait its turn")
+            self.assertEqual(engine.chain.master_db, 0.0)
+        engine._render(np.zeros((128, 1), dtype=np.float32), 128)
+        self.assertFalse(engine._park_pending)
+        self.assertEqual(engine.chain.master_db, SAFE_MASTER_DB)
+        self.assertTrue(engine._parked_by_idle)
+
     def test_arm_does_not_move_the_master_by_itself(self):
         engine = Engine()
         engine.update(armed=True)
@@ -164,6 +197,53 @@ class ChainTest(unittest.TestCase):
         engine.update(amp=FakeAmp(1.5))
         b = engine.render(x, 512)
         self.assertLess(float(np.max(np.abs(a - b))), 1e-5)
+
+
+    def test_render_refuses_to_share_the_live_chain(self):
+        """Offline render and the callback share gate, model, biquad and cab state."""
+        engine = Engine(blocksize=128)
+        engine._duplex = type("Live", (), {"active": True})()
+        with self.assertRaises(RuntimeError):
+            engine.render(ramp())
+
+
+class TimingTest(unittest.TestCase):
+    def test_late_counts_work_after_process_chain(self):
+        """A click-path stall is inside the callback even though the chain was fast."""
+        engine = Engine(samplerate=48000, blocksize=128)
+        engine.update(armed=False, metronome=True)
+
+        def slow_click(frames, chain):
+            time.sleep(0.004)
+            return None
+
+        engine._click_block = slow_click
+        indata = np.zeros((128, 2), dtype=np.float32)
+        outdata = np.zeros((128, 2), dtype=np.float32)
+        engine._on_duplex(indata, outdata, 128, None, None)
+        self.assertEqual(engine.counters["late"], 1)
+        self.assertGreaterEqual(engine.counters["peak_ms"], 4.0)
+        self.assertGreater(engine.counters["chain_ms"], 0.0)
+        self.assertEqual(engine.counters["blocks"], 1)
+
+
+class GainRampTest(unittest.TestCase):
+    def test_a_master_step_is_spread_over_one_block(self):
+        """A -6 dB to 0 dB move must not put a full-scale step in the waveform."""
+        engine = Engine(samplerate=44100, blocksize=128)
+        engine.update(armed=True, master_db=-6.0, amp=FakeAmp(1.0))
+        engine._sync_gains()
+        block = 128
+        t0 = np.arange(block, dtype=np.float32) / 44100.0
+        t1 = np.arange(block, block * 2, dtype=np.float32) / 44100.0
+        first = engine._render(0.3 * np.sin(2 * np.pi * 220 * t0)[:, None], block)
+        engine.update(master_db=0.0)
+        second = engine._render(0.3 * np.sin(2 * np.pi * 220 * t1)[:, None], block)
+        natural = 0.3 * 2 * np.pi * 220 / 44100
+        jump = abs(float(second[0]) - float(first[-1]))
+        self.assertLessEqual(jump, 1.1 * natural)
+        # At the seam the ramp still starts at -6 dB, not at the new 0 dB gain.
+        self.assertLess(abs(float(second[0])), 0.3 * 0.6)
 
 
 class FakeTake:

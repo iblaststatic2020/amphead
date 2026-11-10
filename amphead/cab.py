@@ -121,6 +121,8 @@ class Cab:
         self._partitions = 0
         self._ir_parts: np.ndarray | None = None
         self._ring: np.ndarray | None = None
+        self._hist: np.ndarray | None = None
+        self._hist_pos = 0
         self._pos = 0
         self._tail = np.zeros(0, dtype=np.float32)
 
@@ -204,7 +206,20 @@ class Cab:
         # the IR outruns the buffer, and inside an audio callback that is silence forever.
         padded[: min(self.length, room)] = self.ir[:room]
         self._ir_parts = np.fft.rfft(padded.reshape(parts, block), 2 * block, axis=1)
-        self._ring = np.zeros((parts, block + 1), dtype=np.complex128)
+        # Two copies of the ring let the callback read the last P spectra as one
+        # contiguous slice instead of gathering them with a modulo index array.
+        self._ring = np.zeros((2 * parts, block + 1), dtype=np.complex128)
+        self._frame = np.empty(2 * block, dtype=np.float32)
+        self._acc = np.empty(block + 1, dtype=np.complex128)
+        # One block of time-domain history per partition, plus one extra block: a
+        # ring spectrum is the transform of [previous block, this block], so the
+        # oldest window needs the block before it. A short block and a block size
+        # change both read it, because either one moves the grid the partitions
+        # were cut on.
+        self._hist = np.zeros((parts + 1) * block, dtype=np.float32)
+        self._hist_pos = 0
+        # Oldest partition first, to match that slice's order.
+        self._ir_parts_rev = self._ir_parts[::-1]
         self._block = block
         self._partitions = parts
         self._pos = 0
@@ -231,7 +246,50 @@ class Cab:
         if self._ring is not None:
             self._ring[:] = 0
         self._pos = 0
+        if self._hist is not None:
+            self._hist[:] = 0
+            self._hist_pos = 0
         self._tail = np.zeros(self._block or 0, dtype=np.float32)
+
+    def _push_hist(self, samples: np.ndarray) -> None:
+        """Append the real stream to the time-domain history, wrapping if needed."""
+        size = int(samples.size)
+        total = self._hist.size
+        pos = self._hist_pos
+        if pos + size <= total:
+            self._hist[pos:pos + size] = samples
+        else:
+            first = total - pos
+            self._hist[pos:] = samples[:first]
+            self._hist[:size - first] = samples[first:]
+        self._hist_pos = (pos + size) % total
+
+    def _hist_stream(self) -> np.ndarray:
+        """The history buffer in chronological order."""
+        pos = self._hist_pos
+        if pos == 0:
+            return self._hist.copy()
+        return np.concatenate((self._hist[pos:], self._hist[:pos]))
+
+    def _resegment_ring(self) -> None:
+        """Rebuild the ring spectra on the block grid the stream just moved to."""
+        block = self._block
+        parts = self._partitions
+        stream = self._hist_stream()
+        # The last P + 1 blocks of the real stream are needed: the oldest of them is
+        # only there to frame the one after it, because a ring spectrum is the
+        # transform of [previous block, this block], not of the block alone.
+        segments = stream.reshape(parts + 1, block)
+        real_ring = self._ring
+        self._ring = np.zeros_like(real_ring)
+        self._tail = np.zeros(block, dtype=np.float32)
+        self._pos = 0
+        out = None
+        for seg in segments:
+            out = self._run(seg)
+        real_ring[:] = self._ring
+        self._ring = real_ring
+        return out
 
     def process(self, block: np.ndarray) -> np.ndarray:
         x = np.asarray(block, dtype=np.float32).reshape(-1)
@@ -240,39 +298,56 @@ class Cab:
             return x
         if self._block is None:
             self._prepare(frames)
+            self._push_hist(x)
         elif frames > self._block:
-            # The block grew: rebuild the partition set, carrying the last full block of input
-            # over as the new frame's history so the seam stays continuous.
-            carry = self._tail
+            # The block grew: rebuild the partition set, then re-derive the ring from
+            # the real stream's history on the new grid. The old grid's spectra are
+            # worthless after the block size moves, and the carried tail alone is not
+            # enough for a cabinet that spans more than one partition.
+            old_stream = self._hist_stream()
             self._prepare(frames)
-            keep = min(carry.size, frames)
-            if keep:
-                # The carried history is the most recent block, so it belongs at the END of
-                # the new frame: the frame is [history, this block], and writing at offset 0
-                # shifts the convolution by frames - keep samples, which is a full scale
-                # step on the first block after a block size change.
-                self._tail[-keep:] = carry[-keep:]
+            seed = min(self._hist.size, old_stream.size)
+            if seed:
+                self._push_hist(old_stream[-seed:])
+            self._push_hist(x)
+            return self._resegment_ring()
         elif frames < self._block:
-            # A short last block is padded up to the block the filter is built for. Processing it
-            # at a different size would throw away the history the partitions are holding, and the
-            # tail of a cabinet is exactly what that history is for.
+            # A short last block is padded up to the block the filter is built for. The
+            # padded tail is what the output wants for those frames, but the history for
+            # the next block must be the last block of the REAL stream: leaving the pad
+            # in the tail puts block - frames zeros between two notes and clicks.
+            old_tail = self._tail.copy()
             padded = np.zeros(self._block, dtype=np.float32)
             padded[:frames] = x
-            return self._run(padded)[:frames]
+            y = self._run(padded)[:frames]
+            self._push_hist(x)
+            self._resegment_ring()
+            return y
+        else:
+            self._push_hist(x)
         return self._run(x)
 
     def _run(self, x: np.ndarray) -> np.ndarray:
         """One full block through the partitions: frame, transform, accumulate, inverse."""
         frames = self._block
-        frame = np.concatenate((self._tail, x))
+        frame = self._frame
+        frame[:frames] = self._tail
+        frame[frames:] = x
         spectrum = np.fft.rfft(frame, 2 * frames)
-        self._ring[self._pos] = spectrum
-        order = (self._pos - np.arange(self._partitions)) % self._partitions
-        acc = np.einsum("ij,ij->j", self._ring[order], self._ir_parts)
+        pos = self._pos
+        parts = self._partitions
+        # Write the current spectrum into both halves. The P spectra ending at this
+        # block are then one contiguous slice, oldest first, so no modulo gather and
+        # no temporary index array are needed.
+        self._ring[pos] = spectrum
+        self._ring[pos + parts] = spectrum
+        acc = self._acc
+        np.einsum("ij,ij->j", self._ring[pos + 1:pos + parts + 1],
+                  self._ir_parts_rev, out=acc)
         out = np.fft.irfft(acc, 2 * frames)
         y = out[frames:].astype(np.float32)
-        self._tail = np.asarray(x, dtype=np.float32).copy()
-        self._pos = (self._pos + 1) % self._partitions
+        np.copyto(self._tail, x)
+        self._pos = (pos + 1) % parts
         if self.gain != 1.0:
             y = y * self.gain
         return y
