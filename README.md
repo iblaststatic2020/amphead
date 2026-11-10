@@ -63,7 +63,7 @@ capture and cabinet named on it, the knobs in a row, a meter, and the files. It 
 | the plate | tone named from the two files on the chain, with rate, block size, round trip and `TUNE` under it |
 | files | capture and cabinet pickers, listing what is actually in the folders |
 | the knobs | `GATE`, `IN`, `BASS`, `MID`, `TREBLE`, `OUT`, `MASTER`, each labelled in place |
-| rigs | a chip per saved sound (press to load), a name field and `SAVE` |
+| rigs | a chip per saved sound (press the name to load, press `del` twice to remove), a name field and `SAVE` |
 
 Routes: `GET /state`, `GET /meter`, `GET /library`, `GET /input`, `POST /setup`, `/live`, `/teardown`,
 `/master`, `/gate`, `/tune`, `/record`, `/input_gain`, `/output_gain`, `/knob`, `/tweak`, `/input`, `/capture`,
@@ -194,6 +194,7 @@ the whole sound.
 amphead_rig action=save name=lead        # keep the sound on the chain right now
 amphead_rig action=list                  # what is saved, plus the line for each
 amphead_rig action=load name=lead        # put it back, knob by knob
+amphead_rig action=forget name=lead      # delete a saved sound (action=delete is the same)
 amphead_rig action=paste text="amphead:friend | capture=Thing;cab=Thing 4x12"
 ```
 

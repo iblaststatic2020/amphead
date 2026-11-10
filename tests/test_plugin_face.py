@@ -343,6 +343,14 @@ class TestTheRigsAreOnTheFace(unittest.TestCase):
         self.assertIn("value: rigName", source)
         self.assertIn("onChange: (event) => setRigName(event.target.value)", source)
 
+    def test_a_saved_sound_can_be_deleted_from_its_chip(self):
+        """A rig shelf that only grows is a filing cabinet with no bin. The delete press is on the
+        chip, and it arms once before it removes anything."""
+        source = face()
+        self.assertIn("act('/rig', { action: 'forget', name: row.name })", source)
+        self.assertIn("children: armed ? 'sure?' : 'del'", source)
+        self.assertIn("delete ${row.name}? press sure to remove it", source)
+
     def test_an_empty_shelf_says_what_to_do_rather_than_nothing(self):
         self.assertIn("none yet: dial a sound in and name it", face())
 

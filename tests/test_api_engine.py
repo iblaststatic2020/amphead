@@ -420,6 +420,14 @@ class RigTest(ApiTest):
         self.assertTrue(out["ok"], out)
         self.assertIn("kept the old capture", out["output"])
 
+    def test_a_saved_rig_can_be_deleted_by_name(self):
+        plugin_api.rig_action({"action": "save", "name": "lead"})
+        out = plugin_api.rig_action({"action": "delete", "name": "lead"})
+        self.assertTrue(out["ok"], out)
+        self.assertTrue(out["output"].startswith("FORGOT"), out["output"])
+        self.assertEqual([], out["rigs"])
+        self.assertEqual([], plugin_api.rigs_list()["rigs"])
+
     def test_forgetting_one_that_is_not_there_says_so(self):
         out = plugin_api.rig_action({"action": "forget", "name": "ghost"})
         self.assertFalse(out["ok"])

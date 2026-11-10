@@ -1434,6 +1434,7 @@ function AmpFace({ rest }) {
   const [busy, setBusy] = useState(false)
   const [said, setSaid] = useState('')
   const [rigName, setRigName] = useState('')
+  const [rigDelete, setRigDelete] = useState('')
   const [openPicker, setOpenPicker] = useState('')
   const clipped = useRef(false)
 
@@ -1498,6 +1499,7 @@ function AmpFace({ rest }) {
   async function act(path, body) {
     setBusy(true)
     setSaid('')
+    setRigDelete('')
     try {
       const out = await rest(path, { method: 'POST', body })
       setSaid(headline(out))
@@ -1926,23 +1928,60 @@ function AmpFace({ rest }) {
                 children: 'rigs'
               }),
               (cabinet.data && cabinet.data.rigs && cabinet.data.rigs.length)
-                ? cabinet.data.rigs.map((row) => jsx('button', {
-                    type: 'button',
-                    key: row.name,
-                    disabled: locked,
-                    title: `${row.summary}
+                ? cabinet.data.rigs.map((row) => {
+                    const armed = rigDelete === row.name
+                    return jsxs('span', {
+                      key: row.name,
+                      className: 'inline-flex items-stretch overflow-hidden rounded',
+                      style: {
+                        background: armed
+                          ? 'color-mix(in srgb, #e5533d 14%, transparent)'
+                          : 'color-mix(in srgb, var(--ui-accent) 12%, transparent)',
+                        border: armed
+                          ? '1px solid color-mix(in srgb, #e5533d 55%, transparent)'
+                          : '1px solid color-mix(in srgb, var(--ui-accent) 35%, transparent)'
+                      },
+                      children: [
+                        jsx('button', {
+                          type: 'button',
+                          disabled: locked,
+                          title: `${row.summary}
 
 ${row.line}`,
-                    onClick: () => act('/rig', { action: 'load', name: row.name }),
-                    className: 'rounded px-1.5 py-0.5 text-[0.5625rem] font-semibold outline-none',
-                    style: {
-                      background: 'color-mix(in srgb, var(--ui-accent) 12%, transparent)',
-                      border: '1px solid color-mix(in srgb, var(--ui-accent) 35%, transparent)',
-                      color: 'var(--ui-accent)',
-                      cursor: locked ? 'default' : 'pointer'
-                    },
-                    children: row.name
-                  }, row.name))
+                          onClick: () => act('/rig', { action: 'load', name: row.name }),
+                          className: 'px-1.5 py-0.5 text-[0.5625rem] font-semibold outline-none',
+                          style: {
+                            color: 'var(--ui-accent)',
+                            cursor: locked ? 'default' : 'pointer'
+                          },
+                          children: row.name
+                        }),
+                        jsx('button', {
+                          type: 'button',
+                          disabled: locked,
+                          'aria-label': armed ? `confirm delete ${row.name}` : `delete ${row.name}`,
+                          onClick: () => {
+                            if (!armed) {
+                              setRigDelete(row.name)
+                              setSaid(`delete ${row.name}? press sure to remove it`)
+                              return
+                            }
+                            setRigDelete('')
+                            act('/rig', { action: 'forget', name: row.name })
+                          },
+                          className: 'border-l px-1 py-0.5 text-[0.5rem] font-semibold uppercase tracking-[0.08em] outline-none',
+                          style: {
+                            borderColor: armed
+                              ? 'color-mix(in srgb, #e5533d 45%, transparent)'
+                              : 'color-mix(in srgb, var(--ui-accent) 25%, transparent)',
+                            color: armed ? '#e5533d' : MUTED.color,
+                            cursor: locked ? 'default' : 'pointer'
+                          },
+                          children: armed ? 'sure?' : 'del'
+                        })
+                      ]
+                    })
+                  })
                 : jsx('span', {
                     className: 'text-[0.5rem]',
                     style: MUTED,

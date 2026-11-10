@@ -174,6 +174,11 @@ class TheToolAnswersLikeAPlayerReads(unittest.TestCase):
         said = tools.handle_rig({"action": "load", "name": "nope"})
         self.assertTrue(said.startswith("NOT FOUND"), said)
 
+    def test_delete_is_the_same_verb_as_forget(self):
+        said = tools.handle_rig({"action": "delete", "name": "lead"})
+        self.assertIn("deleted=lead", said)
+        self.assertEqual([], self.cabinet.names())
+
     def test_pasting_junk_is_refused_in_words(self):
         said = tools.handle_rig({"action": "paste", "text": "lead please"})
         self.assertTrue(said.startswith("NOT LOADED"), said)

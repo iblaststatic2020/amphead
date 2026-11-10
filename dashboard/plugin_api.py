@@ -617,7 +617,7 @@ def rig_action(body: dict) -> dict[str, Any]:
     if action in ("list", "names"):
         return rigs_list()
 
-    if action == "forget":
+    if action in ("forget", "delete"):
         name = str(body.get("name") or "").strip()
         if not cabinet.forget(name):
             return {"output": f"NOT FOUND: no rig called {name or 'anything'}", "ok": False}

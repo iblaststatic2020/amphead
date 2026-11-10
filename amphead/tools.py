@@ -638,11 +638,11 @@ RIG_SCHEMA = _schema(
     "amphead_rig",
     "Saved sounds. action=list shows the named rigs on this machine; action=save keeps the "
     "sound loaded right now under a name (capture, cabinet, tone, both trims, gate); "
-    "action=load puts a saved one back; action=forget deletes one; action=paste loads a rig "
-    "line someone sent you (it starts with amphead:).",
-    {"action": {"type": "string", "enum": ["list", "save", "load", "forget", "paste"],
-                "description": "list (default), save, load, forget or paste."},
-     "name": {"type": "string", "description": "Rig name (save, load, forget)."},
+    "action=load puts a saved one back; action=forget (or delete) removes one; action=paste loads "
+    "a rig line someone sent you (it starts with amphead:).",
+    {"action": {"type": "string", "enum": ["list", "save", "load", "forget", "delete", "paste"],
+                "description": "list (default), save, load, forget/delete or paste."},
+     "name": {"type": "string", "description": "Rig name (save, load, forget/delete)."},
      "text": {"type": "string",
               "description": "A rig line to load (paste), as written by list or save."}},
     required=["action"],
@@ -780,10 +780,10 @@ def handle_rig(args: dict[str, Any], **_kw) -> str:
         return _fmt([(word.lower(), got["name"]), ("sound", rigs.summarise(got)),
                      ("line", rigs.encode(got))])
 
-    if action == "forget":
+    if action in ("forget", "delete"):
         if not cabinet.forget(name):
             return f"NOT FOUND: no rig called {name or 'anything'}"
-        return _fmt([("forgot", name), ("left", len(cabinet.names()))])
+        return _fmt([("deleted", name), ("left", len(cabinet.names()))])
 
     said = str(args.get("text") or "").strip()
     try:

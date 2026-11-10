@@ -194,6 +194,12 @@ export async function rest(path, options) {
                    output_gain_db: rig.output_gain_db || 0, gate_db: rig.gate_db || -80 })
       return { ok: true, output: `${had ? 'REPLACED' : 'SAVED'}: ${name}` }
     }
+    if (body.action === 'forget' || body.action === 'delete') {
+      const at = SAVED.findIndex((row) => row.name.toLowerCase() === String(body.name || '').toLowerCase())
+      if (at < 0) return { ok: false, output: `NOT FOUND: no rig called ${body.name || 'anything'}` }
+      const [gone] = SAVED.splice(at, 1)
+      return { ok: true, output: `FORGOT: ${gone.name} | left=${SAVED.length}` }
+    }
     const found = SAVED.find((row) => row.name.toLowerCase() === String(body.name || '').toLowerCase())
     if (!found) return { ok: false, output: `NOT FOUND: no rig called ${body.name || 'anything'}` }
     rig.capture = found.capture
