@@ -36,6 +36,10 @@ def _name(path: Any) -> str:
 #: The chain the engine runs, named the way a player reads a signal path.
 STAGES = ("Capture", "Tone", "Cabinet")
 
+#: Snapshot of the platform, so the taskkill-vs-signal choice can be tested without
+#: mutating os.name, which pathlib consults at Path() call time and would break.
+_ON_WINDOWS = os.name == "nt"
+
 
 class EngineNotInstalled(port.NoRig):
     """The engine's interpreter cannot import what it needs, so there is no engine."""
@@ -96,7 +100,7 @@ def reap_engines() -> list[int]:
     killed: list[int] = []
     for pid in _engine_pids():
         try:
-            if os.name == "nt":
+            if _ON_WINDOWS:
                 subprocess.run(["taskkill", "/F", "/PID", str(pid)],
                                capture_output=True, timeout=10)
             else:

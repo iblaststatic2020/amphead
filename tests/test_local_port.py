@@ -385,7 +385,7 @@ class ReapTest(unittest.TestCase):
         """
         client = local_port.EngineClient(python="unused")
         client.check_env = lambda: None
-        with mock.patch.object(os, "name", "nt"), \
+        with mock.patch.object(local_port, "_ON_WINDOWS", True), \
                 mock.patch("amphead.local_port._engine_pids", return_value=[111]), \
                 mock.patch("amphead.local_port.subprocess.run") as run, \
                 mock.patch("amphead.local_port.subprocess.Popen") as popen, \
@@ -400,7 +400,7 @@ class ReapTest(unittest.TestCase):
     def test_close_kills_every_engine_process_left_on_the_machine(self):
         r = rig()
         r.client.stop = lambda: True
-        with mock.patch.object(os, "name", "nt"), \
+        with mock.patch.object(local_port, "_ON_WINDOWS", True), \
                 mock.patch("amphead.local_port._engine_pids", return_value=[111, 222]), \
                 mock.patch("amphead.local_port.subprocess.run") as run:
             self.assertTrue(r.stop())
@@ -411,7 +411,7 @@ class ReapTest(unittest.TestCase):
     def test_a_live_process_from_an_earlier_rig_counts_as_closed(self):
         r = rig()
         r.client.stop = lambda: False
-        with mock.patch.object(os, "name", "nt"), \
+        with mock.patch.object(local_port, "_ON_WINDOWS", True), \
                 mock.patch("amphead.local_port._engine_pids", return_value=[333]), \
                 mock.patch("amphead.local_port.subprocess.run"):
             self.assertTrue(r.stop(), "a reaped process is a closed engine")
