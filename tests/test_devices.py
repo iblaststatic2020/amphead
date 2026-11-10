@@ -12,12 +12,9 @@ those branches is exercised on every CI OS, leaving only the literal
 The Windows device heuristics run on every OS by patching `sys.platform` to
 win32; the off-Windows default-pair branch is a dedicated pure test.
 """
-import sys
 import unittest
 from types import SimpleNamespace
 from unittest import mock
-
-import numpy as np
 
 from amphead.engine2 import Engine, choose_devices
 
@@ -140,7 +137,7 @@ class ChooseDevicesTest(unittest.TestCase):
 
 
 class StartDevicesTest(unittest.TestCase):
-    def _engine(self, **kw):
+    def _engine(self):
         e = Engine(samplerate=48000, blocksize=128)
         return e
 
