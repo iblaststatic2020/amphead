@@ -166,7 +166,7 @@ class InterpreterTest(unittest.TestCase):
             fake = root / "amphead" / "local_port.py"
             fake.parent.mkdir(parents=True)
             fake.write_text("", encoding="utf-8")
-            beside = root / ".engine" / "Scripts" / "python.exe"
+            beside = (root / ".engine" / "Scripts" / "python.exe").resolve()
             beside.parent.mkdir(parents=True)
             beside.write_text("", encoding="utf-8")
             with mock.patch.object(local_port, "__file__", str(fake)), \
@@ -385,7 +385,8 @@ class ReapTest(unittest.TestCase):
         """
         client = local_port.EngineClient(python="unused")
         client.check_env = lambda: None
-        with mock.patch("amphead.local_port._engine_pids", return_value=[111]), \
+        with mock.patch.object(os, "name", "nt"), \
+                mock.patch("amphead.local_port._engine_pids", return_value=[111]), \
                 mock.patch("amphead.local_port.subprocess.run") as run, \
                 mock.patch("amphead.local_port.subprocess.Popen") as popen, \
                 mock.patch.object(local_port.EngineClient, "_open_reader"), \
@@ -399,7 +400,8 @@ class ReapTest(unittest.TestCase):
     def test_close_kills_every_engine_process_left_on_the_machine(self):
         r = rig()
         r.client.stop = lambda: True
-        with mock.patch("amphead.local_port._engine_pids", return_value=[111, 222]), \
+        with mock.patch.object(os, "name", "nt"), \
+                mock.patch("amphead.local_port._engine_pids", return_value=[111, 222]), \
                 mock.patch("amphead.local_port.subprocess.run") as run:
             self.assertTrue(r.stop())
         kills = [call.args[0] for call in run.call_args_list if call.args]
@@ -409,7 +411,8 @@ class ReapTest(unittest.TestCase):
     def test_a_live_process_from_an_earlier_rig_counts_as_closed(self):
         r = rig()
         r.client.stop = lambda: False
-        with mock.patch("amphead.local_port._engine_pids", return_value=[333]), \
+        with mock.patch.object(os, "name", "nt"), \
+                mock.patch("amphead.local_port._engine_pids", return_value=[333]), \
                 mock.patch("amphead.local_port.subprocess.run"):
             self.assertTrue(r.stop(), "a reaped process is a closed engine")
 

@@ -45,7 +45,9 @@ class TestTheLibraryFollowsTheSettings(Rig):
         self.assertIn("v30", [c["name"] for c in library.listing()["cabs"]])
 
     def test_the_usual_folders_are_still_there_when_nothing_is_set(self):
-        listing = library.listing()
+        (self.root / "Documents" / "Guitar Amp Sims" / "NAM").mkdir(parents=True)
+        with mock.patch.object(Path, "home", return_value=self.root):
+            listing = library.listing()
         self.assertTrue(listing["capture_dirs"], "a fresh install must still offer a library")
 
 

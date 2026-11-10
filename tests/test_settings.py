@@ -90,6 +90,7 @@ class TestSave(TmpSettings):
 
 
 class TestFolders(TmpSettings):
+    @unittest.skipUnless(sys.platform == "win32", "Windows-style drive letters only exist on Windows")
     def test_the_file_is_enough(self):
         settings.save({"capture_dirs": [r"C:\a", r"D:\b"]})
         self.assertEqual([p.name for p in settings.folders("capture_dirs")], ["a", "b"])

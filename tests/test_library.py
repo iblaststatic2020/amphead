@@ -9,6 +9,8 @@ import os
 import pathlib
 import tempfile
 import unittest
+from pathlib import Path
+from unittest import mock
 
 from amphead import library
 
@@ -64,7 +66,9 @@ class ScanTest(unittest.TestCase):
 
     def test_a_missing_folder_is_not_an_error(self):
         """A folder that is not there is skipped, not raised: the usual ones still answer."""
-        with _env({"AMPHEAD_CAPTURE_DIR": str(self.room / "gone")}):
+        (self.room / "Documents" / "Guitar Amp Sims" / "NAM").mkdir(parents=True)
+        with _env({"AMPHEAD_CAPTURE_DIR": str(self.room / "gone")}), \
+                mock.patch.object(Path, "home", return_value=self.room):
             got = library.listing()
         self.assertNotIn(str(self.room / "gone"), got["capture_dirs"])
         self.assertTrue(got["capture_dirs"])
