@@ -185,10 +185,12 @@ treat the distance as a direction to move, not a verdict.
 
 ## Saved sounds
 
-A rig is eight fields: capture, cabinet, bass, mid, treble, input gain, output gain, gate. Names are
-stored, not paths, so a rig keeps working when the folders move; loading resolves each name against
-this machine's library and reports, stage by stage, anything it could not find rather than refusing
-the whole sound.
+A rig is eight fields: capture, cabinet, bass, mid, treble, input gain, output gain, gate. A rig
+saved on this machine also keeps the two file paths it was saved with. Loading tries those paths
+first while the files still exist, then falls back to resolving the names against this machine's
+library, so a capture imported from a folder outside the scanned library still loads after Setup.
+A pasted rig carries only names and stays portable. Loading reports, stage by stage, anything it
+could not find rather than refusing the whole sound.
 
 ```
 amphead_rig action=save name=lead        # keep the sound on the chain right now

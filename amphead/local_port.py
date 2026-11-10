@@ -213,6 +213,16 @@ class EngineClient:
         if self.running:
             return
         self.check_env()
+        # A client only knows about the process it started itself. After a gateway restart,
+        # a plugin reload, or a second rig in the same app, that memory is gone while the
+        # engine is still alive, still holding the interface, and still playing at its last
+        # master. Starting a second one made two engines: the pane drove a silent one while
+        # the orphan it could not see kept the speakers loud. Reap first, then start the one.
+        leftover = reap_engines()
+        if leftover:
+            self._stderr.put_nowait(
+                f"replaced {len(leftover)} engine process(es) left by an earlier session: "
+                + ", ".join(str(pid) for pid in leftover))
         self._proc = subprocess.Popen(
             [self.python, "-m", "amphead.engine_main"],
             cwd=str(Path(__file__).resolve().parent.parent),
@@ -830,17 +840,28 @@ class AmpHead2Rig:
         here. A name that does not resolve is not a failure: the rest of the rig still loads
         and the answer says which part was kept, because a moved capture file should cost the
         capture and nothing else.
+
+        A rig saved on this machine also carries the paths it was saved with. Those are tried
+        first when the file is still there, even when it sits outside the scanned folders, so
+        a capture that came from an import folder survives Setup. A pasted line has only names,
+        which is what makes it portable.
         """
         from . import rigs
 
         known = {"captures": [], "cabs": []}
-        if self.client.running:
-            try:
-                known = self.library()
-            except Exception:
-                known = {"captures": [], "cabs": []}
-        capture = rigs.resolve("capture", rig.get("capture", ""), known.get("captures", []))
-        cab = rigs.resolve("cab", rig.get("cab", ""), known.get("cabs", []))
+        try:
+            known = self.library()
+        except Exception:
+            known = {"captures": [], "cabs": []}
+
+        def find(kind: str) -> str | None:
+            spot = str(rig.get(f"{kind}_path") or "").strip()
+            if spot and Path(spot).is_file():
+                return spot
+            return rigs.resolve(kind, rig.get(kind, ""), known.get(f"{kind}s", []))
+
+        capture = find("capture")
+        cab = find("cab")
         fields = {key: rig[key] for key in
                   ("bass", "mid", "treble", "input_gain_db", "output_gain_db", "gate_db")
                   if key in rig}

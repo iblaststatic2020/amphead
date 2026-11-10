@@ -71,13 +71,20 @@ class ChainTest(unittest.TestCase):
         engine.update(amp=FakeAmp(), master_db=0.0)
         self.assertTrue(np.all(engine.render(ramp()) == 0.0))
 
-    def test_armed_at_safe_master_is_effectively_silent(self):
+    def test_armed_at_the_master_floor_is_true_silence(self):
         engine = Engine()
         engine.update(armed=True, amp=FakeAmp(), master_db=SAFE_MASTER_DB)
         y = engine.render(ramp())
-        # The safe floor is -60 dB, so the loudest thing that can come out is that
-        # quiet: audible only if you put your ear to the speaker, and never a shock.
-        self.assertLessEqual(gain_to_db(float(np.max(np.abs(y)))), SAFE_MASTER_DB + 0.1)
+        # -60 dB is the bottom of the fader, and the bottom has to be off. A fader that
+        # still passes -60 dB leaves a ghost note on a loud amp with the knob all the way down.
+        self.assertTrue(np.all(y == 0.0))
+
+    def test_master_just_above_the_floor_still_passes_signal(self):
+        engine = Engine()
+        engine.update(armed=True, amp=FakeAmp(), master_db=SAFE_MASTER_DB + 0.1)
+        y = engine.render(ramp())
+        self.assertGreater(float(np.max(np.abs(y))), 0.0,
+                           "only the exact floor is off; the rest of the fader still works")
 
     def test_gain_applies_in_the_documented_order(self):
         chain = Chain(armed=True, master_db=0.0, input_gain_db=6.0, output_gain_db=-6.0,

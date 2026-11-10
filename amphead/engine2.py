@@ -214,7 +214,14 @@ def process_chain(x, chain: Chain):
     if chain.cab is not None and chain.cab_on:
         y = chain.cab.process(y)
     y = y * db_to_gain(chain.output_gain_db)
-    y = y * db_to_gain(chain.master_db)
+    # The bottom of the master is silence, not -60 dB of signal. A fader at -60 still
+    # passes a quiet copy, which on a loud amp is exactly the ghost note a player hears
+    # after turning the master all the way down. Keep processing the chain (the cabinet
+    # and capture state must stay warm) and throw the block away at the floor.
+    if chain.master_db <= SILENT_DB:
+        y = np.zeros_like(y)
+    else:
+        y = y * db_to_gain(chain.master_db)
     y = np.nan_to_num(y, nan=0.0, posinf=0.0, neginf=0.0)
     np.clip(y, -1.0, 1.0, out=y)
     return y

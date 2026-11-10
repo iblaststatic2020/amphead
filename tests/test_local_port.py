@@ -335,8 +335,66 @@ class MenuTest(unittest.TestCase):
         self.assertEqual(saved["capture"], "C:/amps/Bugera 6262/Lead.nam")
 
 
+class ApplyRigTest(unittest.TestCase):
+    """Loading a saved sound must not depend on the engine being open."""
+
+    def down(self) -> local_port.AmpHead2Rig:
+        client = FakeClient()
+        client.running = False
+        return local_port.AmpHead2Rig(client=client)
+
+    def test_a_saved_path_loads_after_setup_even_outside_the_scanned_library(self):
+        room = pathlib.Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: __import__("shutil").rmtree(room, ignore_errors=True))
+        amp = room / "PR_6505.nam"
+        cab = room / "V30.wav"
+        amp.write_text("{}")
+        cab.write_bytes(b"RIFF")
+        saved = {}
+        r = self.down()
+        with mock.patch("amphead.lastchain.save", lambda **kw: saved.update(kw)), \
+                mock.patch.object(r, "library", return_value={"captures": [], "cabs": []}):
+            out = r.apply_rig({"capture": "PR_6505", "capture_path": str(amp),
+                               "cab": "V30", "cab_path": str(cab), "bass": 3.0})
+        self.assertTrue(out["pending"])
+        self.assertEqual(saved["capture"], str(amp))
+        self.assertEqual(saved["cab"], str(cab))
+
+    def test_a_name_loads_when_the_engine_is_parked_and_the_library_knows_it(self):
+        room = pathlib.Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: __import__("shutil").rmtree(room, ignore_errors=True))
+        amp = room / "Bugera.nam"
+        amp.write_text("{}")
+        saved = {}
+        r = self.down()
+        with mock.patch("amphead.lastchain.save", lambda **kw: saved.update(kw)), \
+                mock.patch.object(r, "library", return_value={
+                    "captures": [{"name": "Bugera", "path": str(amp)}], "cabs": []}):
+            r.apply_rig({"capture": "Bugera"})
+        self.assertEqual(saved["capture"], str(amp))
+
+
 class ReapTest(unittest.TestCase):
     """Close means the process is gone, including one this client never owned."""
+
+    def test_start_replaces_an_engine_left_by_an_earlier_session(self):
+        """A client with no process must not add a second engine beside an orphan.
+
+        The engine this client cannot see still holds the interface and still plays at
+        its last master, so SET UP used to look silent while the speakers were loud.
+        """
+        client = local_port.EngineClient(python="unused")
+        client.check_env = lambda: None
+        with mock.patch("amphead.local_port._engine_pids", return_value=[111]), \
+                mock.patch("amphead.local_port.subprocess.run") as run, \
+                mock.patch("amphead.local_port.subprocess.Popen") as popen, \
+                mock.patch.object(local_port.EngineClient, "_open_reader"), \
+                mock.patch("amphead.local_port.threading.Thread"):
+            popen.return_value.poll.return_value = None
+            client.start()
+        kills = [call.args[0] for call in run.call_args_list if call.args]
+        self.assertIn(["taskkill", "/F", "/PID", "111"], kills)
+        self.assertIsNotNone(client._proc, "start must still open one engine")
 
     def test_close_kills_every_engine_process_left_on_the_machine(self):
         r = rig()

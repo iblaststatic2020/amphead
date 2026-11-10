@@ -65,6 +65,21 @@ class TemporaryRigs(unittest.TestCase):
         self.assertEqual(self.cabinet.names(), [])
         self.assertIsNone(self.cabinet.get("lead"))
 
+    def test_the_paths_a_rig_was_saved_with_ride_along(self):
+        here = {"capture": "PR_6505", "capture_path": "C:/imports/PR_6505.nam",
+                "cab": "V30", "cab_path": "C:/imports/V30.wav"}
+        self.cabinet.save("lead", here)
+        got = self.cabinet.get("lead")
+        self.assertEqual(got["capture_path"], "C:/imports/PR_6505.nam")
+        self.assertEqual(got["cab_path"], "C:/imports/V30.wav")
+
+    def test_from_status_keeps_the_paths_beside_the_names(self):
+        got = rigs.from_status({"capture": "PR_6505", "capture_path": "C:/imports/PR_6505.nam",
+                                "cab": "V30", "cab_path": "C:/imports/V30.wav", "tone": {}})
+        self.assertEqual(got["capture"], "PR_6505")
+        self.assertEqual(got["capture_path"], "C:/imports/PR_6505.nam")
+        self.assertEqual(got["cab_path"], "C:/imports/V30.wav")
+
 
 class TheLineYouCanPaste(unittest.TestCase):
     def test_a_rig_encodes_readably_and_decodes_back_to_itself(self):
@@ -81,6 +96,13 @@ class TheLineYouCanPaste(unittest.TestCase):
         line = rigs.encode({"name": "lead", **RIG})
         self.assertTrue(line.startswith("amphead:lead |"))
         self.assertEqual(rigs.decode(line)["name"], "lead")
+
+    def test_a_pasted_line_does_not_carry_paths_from_this_machine(self):
+        line = rigs.encode({**RIG, "capture_path": "C:/imports/PR_6505.nam",
+                            "cab_path": "C:/imports/V30.wav"})
+        self.assertNotIn("capture_path", line)
+        self.assertNotIn("C:/imports", line)
+        self.assertNotIn("cab_path", rigs.decode(line))
 
     def test_short_keys_and_aliases_are_understood(self):
         got = rigs.decode("amphead: crunch | capture=Thing;cab=Cab;bass=2;in=-4;out=-2;gate=-60")

@@ -26,6 +26,11 @@ from . import limits, settings
 #: up when it loads, and arming is a choice about the moment, not about the tone.
 FIELDS = ("capture", "cab", "bass", "mid", "treble", "input_gain_db", "output_gain_db", "gate_db")
 
+#: Where the files lived when the rig was saved. They stay out of the shareable line because a
+#: path only works on the machine that wrote it, but they are the first thing a load tries: a
+#: capture imported from a folder outside the scanned library still loads after Setup.
+SPOTS = ("capture_path", "cab_path")
+
 #: The short names a shared line uses, so it stays readable in a chat window.
 SHORT = {
     "capture": "capture",
@@ -55,11 +60,17 @@ def _clean(name: str) -> str:
 
 
 def from_status(status: dict) -> dict:
-    """The eight fields, taken from a live status payload."""
+    """The eight fields, taken from a live status payload.
+
+    The two paths ride along when the rig is saved to this machine. They are not part of the
+    sound, but they are what makes a name that is not in the scanned library still load.
+    """
     tone = status.get("tone") or {}
     return {
         "capture": _clean(status.get("capture") or ""),
+        "capture_path": str(status.get("capture_path") or "").strip(),
         "cab": _clean(status.get("cab") or ""),
+        "cab_path": str(status.get("cab_path") or "").strip(),
         "bass": round(float(tone.get("bass", 0.0)), 2),
         "mid": round(float(tone.get("mid", 0.0)), 2),
         "treble": round(float(tone.get("treble", 0.0)), 2),
@@ -74,6 +85,9 @@ def tidy(raw: dict) -> dict:
     out: dict[str, Any] = {}
     if raw.get("name"):
         out["name"] = _clean(raw["name"])
+    for key in SPOTS:
+        if raw.get(key):
+            out[key] = str(raw[key]).strip()
     for key in FIELDS:
         if key not in raw:
             continue
