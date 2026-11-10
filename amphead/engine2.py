@@ -612,7 +612,7 @@ class Engine:
             finished_callback=self._device_closed,
         )
 
-    def start(self, _retry: bool = True) -> str:
+    def start(self, _retry: bool = True, _sd=None) -> str:
         """Open the device and report which mode took.
 
         Order is deliberate: duplex first, because a single stream cannot hold the
@@ -636,7 +636,12 @@ class Engine:
         # own: without it, a smaller block runs padded to the old, larger filter and looks
         # exactly as expensive as the size it is supposed to beat.
         self._chain.prime(self.blocksize)
-        import sounddevice as sd
+        if _sd is None:
+            import sounddevice as sd
+        else:
+            # Test seam only: `_sd` is a fake sounddevice so the whole device-decision
+            # path (skip the real `sd.Stream`, which is the one thing CI cannot run).
+            sd = _sd
 
         apis = sd.query_hostapis()
         devices = sd.query_devices()
@@ -757,7 +762,7 @@ class Engine:
                     and (dev_in, dev_out) != (self.input_device, self.output_device)):
                 self.input_device, self.output_device = dev_in, dev_out
                 self._last_error = None
-                return self.start(_retry=False)
+                return self.start(_retry=False, _sd=_sd)
         self._last_error = message
         raise RuntimeError(self._last_error)
 
