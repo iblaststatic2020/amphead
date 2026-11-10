@@ -340,6 +340,52 @@ class CabTest(unittest.TestCase):
         self.assertEqual(cab._block, 512)
         self.assertEqual(cab._partitions, 4)
 
+    def test_the_ring_sums_like_a_direct_convolution_in_float64(self):
+        """P2: the doubled ring changed the einsum's summation order.
+
+        The ring's slice is oldest-first while the modulo gather it replaced summed
+        newest-first, and the einsum accumulator is complex128, so the difference
+        lives in the last float32 bits. A float64 direct convolution is the
+        order-independent truth, and agreeing with it this tightly pins that the
+        ring reads the spectra it should, in an order that rounds to the same
+        float32 the original engine produced.
+        """
+        rng = np.random.default_rng(34)
+        ir = (rng.standard_normal(400) * 0.1).astype(np.float32)
+        x = (rng.standard_normal(1000) * 0.1).astype(np.float32)
+        got = render(Cab(ir, 48000, normalize=False), x, 128)
+        want = np.convolve(x.astype(np.float64), ir.astype(np.float64))[: x.size]
+        self.assertLess(float(np.max(np.abs(got - want.astype(np.float32)))), 2e-6)
+
+    def test_the_same_stream_renders_bit_identically_twice(self):
+        """Determinism: the ring's write position convention must not leak into the output."""
+        rng = np.random.default_rng(35)
+        ir = (rng.standard_normal(600) * 0.05).astype(np.float32)
+        x = (rng.standard_normal(1200) * 0.1).astype(np.float32)
+        first = render(Cab(ir, 48000, normalize=False), x, 256)
+        second = render(Cab(ir, 48000, normalize=False), x, 256)
+        self.assertTrue(bool(np.array_equal(first, second)))
+
+    def test_a_short_block_reuses_its_scratch_pad(self):
+        """P2: a short block used to allocate a padded buffer in the callback.
+
+        The pad is prepared with the transform and reused, so a short block must
+        not replace it with a fresh array (that allocation was the bug) and must
+        not leave the pad's stale tail in the history either.
+        """
+        rng = np.random.default_rng(36)
+        ir = (rng.standard_normal(300) * 0.05).astype(np.float32)
+        cab = Cab(ir, 48000, normalize=False)
+        cab.prime(128)
+        pad = cab._pad
+        self.assertIs(pad, cab._pad)
+        x = (rng.standard_normal(300) * 0.1).astype(np.float32)
+        got = np.concatenate([cab.process(x[:128]), cab.process(x[128:250]),
+                              cab.process(x[250:])])
+        want = np.convolve(x, ir)[: x.size]
+        self.assertLess(float(np.max(np.abs(got - want))), 1e-5)
+        self.assertIs(pad, cab._pad, "a short block reallocated the pad in the callback")
+
 
 if __name__ == "__main__":
     unittest.main()

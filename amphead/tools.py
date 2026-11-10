@@ -303,15 +303,45 @@ def handle_teardown(args: dict[str, Any], **_kw) -> str:
 
 
 def _pick(rows: list[dict], words: list[str]) -> dict | None:
-    """Best row by how many words it answers, then by how short its name is."""
+    """Best row by how many words it answers, then by how short its name is.
+
+    The whole phrase scores above any partial answer, so ``g6.5`` cannot settle
+    on ``g6.0`` just because both answer ``g6``.
+    """
+    phrase = "".join(words)
     best, best_score = None, 0
     for row in rows:
         name = str(row.get("name") or row.get("path") or "").lower()
+        flat = "".join(c for c in name if c.isalnum())
         score = sum(1 for w in words if w in name)
+        if phrase and phrase in flat:
+            score += len(words)
         if score > best_score or (score == best_score and score and best is not None
                                   and len(name) < len(str(best.get("name") or ""))):
             best, best_score = row, score
     return best
+
+
+def _given(text: str, rows: list[dict]) -> dict:
+    """A file the caller named by path, else the best row for their words.
+
+    An existing path wins outright: the words of a long path answer half the
+    library, and the shortest-name tie-break used to pull back a different
+    capture (G6.5 landing on G1.0).
+    """
+    raw = str(text).strip().strip('"')
+    path = Path(raw)
+    if path.is_file():
+        return {"name": path.stem, "path": str(path)}
+    stem = raw.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
+    for suffix in (".nam", ".wav"):
+        if stem.lower().endswith(suffix):
+            stem = stem[: -len(suffix)]
+    words = [w for w in "".join(c if c.isalnum() else " " for c in stem.lower()).split() if w]
+    got = _pick(rows, words)
+    if got:
+        return got
+    return {"name": f"{raw} (your words, not in the library)", "path": raw}
 
 
 def handle_tone(args: dict[str, Any], **_kw) -> str:
@@ -328,17 +358,13 @@ def handle_tone(args: dict[str, Any], **_kw) -> str:
 
     chosen_capture = None
     if args.get("capture"):
-        chosen_capture = _pick(captures, str(args["capture"]).lower().split())
-        chosen_capture = chosen_capture or {"name": f"{args['capture']} (your words, not in the "
-                                            f"library)", "path": str(args["capture"])}
+        chosen_capture = _given(str(args["capture"]), captures)
     elif words:
         chosen_capture = _pick(captures, words)
 
     chosen_cab = None
     if args.get("cab"):
-        chosen_cab = _pick(cabs, str(args["cab"]).lower().split())
-        chosen_cab = chosen_cab or {"name": f"{args['cab']} (your words, not in the library)",
-                                    "path": str(args["cab"])}
+        chosen_cab = _given(str(args["cab"]), cabs)
     elif words:
         chosen_cab = _pick(cabs, words)
 
@@ -374,6 +400,16 @@ def handle_tone(args: dict[str, Any], **_kw) -> str:
                        ("rate", (now.get("device") or {}).get("rate"))]))
     if knobs:
         lines.append("knobs: " + ", ".join(f"{k}={v:g}" for k, v in knobs.items()))
+    # A load through here replaces what the last aim described. Unless that aim
+    # named this very capture, its note is now a claim about a different amp and
+    # has to go, or the face keeps advertising a rig nobody is playing.
+    from . import lastchain
+
+    aimed = str(lastchain.load().get("aim") or "")
+    loaded = str(now.get("capture") or "")
+    if aimed and loaded and loaded not in aimed:
+        lastchain.clear("aim", "aim_confidence")
+        lines.append(f"aim note cleared: it described {aimed.split(':', 1)[0].replace('aimed at ', '')}")
     return "\n".join(lines)
 
 
@@ -880,7 +916,8 @@ def handle_aim(args: dict[str, Any], **_kw) -> str:
         return "\n".join(lines)
 
     if not RIG.running:
-        lastchain.save(aim=f"aimed at {label}: {cap_line}; {cab_line}", aim_confidence=confidence)
+        lastchain.save(aim=f"aimed at {label} (not loaded, engine off): {cap_line}; {cab_line}",
+                       aim_confidence="not loaded")
         return "\n".join(lines + ["not loaded: the engine is not running, call amphead_setup first"])
 
     try:
@@ -896,7 +933,8 @@ def handle_aim(args: dict[str, Any], **_kw) -> str:
             if args.get(name) is not None:
                 RIG.set_param(track=1, fx=1, param=name, value=float(args[name]), mode="auto")
     except port.RigError as exc:
-        lastchain.save(aim=f"aimed at {label}: {cap_line}; {cab_line}", aim_confidence=confidence)
+        lastchain.save(aim=f"aimed at {label} (not loaded: {exc}): {cap_line}; {cab_line}",
+                       aim_confidence="not loaded")
         return "\n".join(lines + [f"not loaded: {exc}"])
 
     now = RIG.state()

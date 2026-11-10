@@ -176,6 +176,36 @@ class ChainTest(unittest.TestCase):
         self.assertEqual(engine.chain.master_db, SAFE_MASTER_DB)
         self.assertTrue(engine._parked_by_idle)
 
+    def test_the_first_arm_fades_in_too(self):
+        """P2: the fade-in only ran after a fade-out on the same stream.
+
+        The very first arm of a session was a full-gain step in one block, the
+        exact click the fade exists to prevent. Every arm edge must fade.
+        """
+        engine = Engine(samplerate=44100, blocksize=256)
+        engine.update(armed=True, master_db=0.0, cab=FakeCab(1.0))
+        # A fresh stream has never been armed, so _was_armed is False already.
+        x = np.full((256, 1), 0.25, dtype=np.float32)
+        first = engine._render(x, 256)
+        self.assertEqual(float(first[0]), 0.0, "the arm edge must start at silence")
+        second = engine._render(x, 256)
+        self.assertGreater(float(second[0]), 0.05,
+                           "the settled block must not still be faded in")
+
+    def test_a_close_under_a_busy_lock_mutes_on_the_next_block(self):
+        """P2: a mute that cannot take the lock is retried on a later block, not dropped."""
+        engine = Engine(samplerate=48000, blocksize=128)
+        engine.update(armed=True, master_db=0.0, amp=FakeAmp(1.0))
+        with engine._lock:
+            self.assertFalse(engine._mute_chain())
+            self.assertTrue(engine._mute_pending, "the mute should wait its turn")
+            self.assertTrue(engine.chain.armed, "it must not write from a stale chain")
+        y = engine._render(np.zeros((128, 1), dtype=np.float32), 128)
+        self.assertTrue(np.all(y == 0.0))
+        self.assertEqual(engine.chain.master_db, SAFE_MASTER_DB)
+        self.assertFalse(engine._mute_pending)
+        self.assertFalse(engine.chain.armed)
+
     def test_arm_does_not_move_the_master_by_itself(self):
         engine = Engine()
         engine.update(armed=True)
@@ -225,6 +255,31 @@ class TimingTest(unittest.TestCase):
         self.assertGreaterEqual(engine.counters["peak_ms"], 4.0)
         self.assertGreater(engine.counters["chain_ms"], 0.0)
         self.assertEqual(engine.counters["blocks"], 1)
+
+    def test_start_late_uses_a_proportional_allowance(self):
+        """P2: a fixed 2 ms threshold false-positives on bursty hosts at big blocks.
+
+        At a 4096 sample block @ 48 kHz the period is ~85 ms, so a scheduler that
+        wakes tens of milliseconds behind the previous callback was flagged though
+        it was on time. The allowance is max(2 ms, 25% of the period), so only a
+        genuinely late block counts; worst_gap_ms keeps the actual deficit either way.
+        """
+        engine = Engine(samplerate=48000, blocksize=4096)
+        period_ms = 4096 / 48000 * 1000.0
+        allow_ms = max(2.0, 0.25 * period_ms)
+        self.assertGreater(allow_ms, 2.0, "the proportional allowance must dominate here")
+
+        # Woke 60 ms after the deadline: comfortably on time at this period (~85 ms).
+        engine._last_cb_start = time.perf_counter() - 0.06
+        engine._mark_start(4096)
+        self.assertEqual(engine._meter.start_late, 0)
+        self.assertEqual(engine._meter.worst_gap_ms, 0.0)
+
+        # Woke 30 ms *past* the deadline: genuinely late, and the deficit is tracked.
+        engine._last_cb_start = time.perf_counter() - (period_ms / 1000.0 + 0.03)
+        engine._mark_start(4096)
+        self.assertEqual(engine._meter.start_late, 1)
+        self.assertGreater(engine._meter.worst_gap_ms, allow_ms)
 
 
 class GainRampTest(unittest.TestCase):

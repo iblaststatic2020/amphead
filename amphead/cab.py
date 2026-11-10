@@ -207,10 +207,18 @@ class Cab:
         padded[: min(self.length, room)] = self.ir[:room]
         self._ir_parts = np.fft.rfft(padded.reshape(parts, block), 2 * block, axis=1)
         # Two copies of the ring let the callback read the last P spectra as one
-        # contiguous slice instead of gathering them with a modulo index array.
+        # contiguous slice instead of gathering them with a modulo index array,
+        # which allocated an index buffer and a copied spectrum block on every
+        # block. The second copy costs about twice the memory: a five second IR
+        # at 256 frames is ~8 MB of ring, and the MAX_PARTITIONS cap bounds it
+        # at ~34 MB. That is the price of the allocation-free read; do not halve
+        # it without going back to the gather.
         self._ring = np.zeros((2 * parts, block + 1), dtype=np.complex128)
         self._frame = np.empty(2 * block, dtype=np.float32)
         self._acc = np.empty(block + 1, dtype=np.complex128)
+        # Scratch for padding a short block up to the filter's block, allocated
+        # once here so a short last block does not allocate in the callback.
+        self._pad = np.zeros(block, dtype=np.float32)
         # One block of time-domain history per partition, plus one extra block: a
         # ring spectrum is the transform of [previous block, this block], so the
         # oldest window needs the block before it. A short block and a block size
@@ -218,8 +226,6 @@ class Cab:
         # were cut on.
         self._hist = np.zeros((parts + 1) * block, dtype=np.float32)
         self._hist_pos = 0
-        # Oldest partition first, to match that slice's order.
-        self._ir_parts_rev = self._ir_parts[::-1]
         self._block = block
         self._partitions = parts
         self._pos = 0
@@ -316,10 +322,10 @@ class Cab:
             # padded tail is what the output wants for those frames, but the history for
             # the next block must be the last block of the REAL stream: leaving the pad
             # in the tail puts block - frames zeros between two notes and clicks.
-            old_tail = self._tail.copy()
-            padded = np.zeros(self._block, dtype=np.float32)
-            padded[:frames] = x
-            y = self._run(padded)[:frames]
+            pad = self._pad
+            pad[:frames] = x
+            pad[frames:] = 0.0
+            y = self._run(pad)[:frames]
             self._push_hist(x)
             self._resegment_ring()
             return y
@@ -334,20 +340,22 @@ class Cab:
         frame[:frames] = self._tail
         frame[frames:] = x
         spectrum = np.fft.rfft(frame, 2 * frames)
-        pos = self._pos
         parts = self._partitions
-        # Write the current spectrum into both halves. The P spectra ending at this
-        # block are then one contiguous slice, oldest first, so no modulo gather and
-        # no temporary index array are needed.
+        # Decrement the write position FIRST, then write both copies: the P
+        # spectra ending at this block are then one contiguous slice, NEWEST
+        # first, which is the order the modulo gather summed in before the ring
+        # was doubled. The order is load-bearing, not a style choice: einsum's
+        # accumulation is order-sensitive and the float32 cast afterwards keeps
+        # any difference, so a re-ordered sum is a changed cabinet sound.
+        pos = (self._pos - 1) % parts
         self._ring[pos] = spectrum
         self._ring[pos + parts] = spectrum
         acc = self._acc
-        np.einsum("ij,ij->j", self._ring[pos + 1:pos + parts + 1],
-                  self._ir_parts_rev, out=acc)
+        np.einsum("ij,ij->j", self._ring[pos:pos + parts], self._ir_parts, out=acc)
         out = np.fft.irfft(acc, 2 * frames)
         y = out[frames:].astype(np.float32)
         np.copyto(self._tail, x)
-        self._pos = (pos + 1) % parts
+        self._pos = pos
         if self.gain != 1.0:
             y = y * self.gain
         return y

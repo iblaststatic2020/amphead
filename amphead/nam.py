@@ -201,9 +201,16 @@ class _A2Layer:
         self.history = None
 
     def prepare(self, frames: int) -> None:
+        # _ext holds [history, block] per INPUT channel, and `process` re-checks
+        # the shape against x. conv_w is (bottleneck, ch, kernel): its first
+        # dimension is the conv's output width, which is the channel count only
+        # when the layer neither narrows nor widens, so sizing from it left
+        # `process` rejecting the buffer and reallocating on the first live
+        # block. The input channel count is conv_w.shape[1].
         if self.history_len:
-            self._ext = np.empty((self.conv_w.shape[0], self.history_len + frames),
-                                 dtype=np.float32)
+            self._ext = np.empty(
+                (self.conv_w.shape[1], self.history_len + frames),
+                dtype=np.float32)
 
     def process(self, x: np.ndarray, c: np.ndarray):
         ch, frames = x.shape

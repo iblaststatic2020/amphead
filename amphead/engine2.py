@@ -189,14 +189,22 @@ class Meter:
     # A callback that took longer than its block is already a miss even when the driver
     # never complains: on kernel streaming a gap is silent until someone hears it.
     late: int = 0
-    #: What the last callback cost, and the worst one since the counters were reset. The
-    #: median says whether the chain fits on average; the peak says whether it ever did
-    #: not, which is the difference between "looks fine" and "the amp hiccupped".
+    #: What the last FULL callback cost (status counts, chain, meters, take push,
+    #: click) and the worst one since the counters were reset. The whole callback
+    #: is the honest deadline figure: the device does not care which part of the
+    #: block overran. These used to cover the chain only, which read kinder than
+    #: the deadline the device actually enforces; `chain_ms` below is the amp's
+    #: share, kept apart so a slow click is not mistaken for amp cost.
     work_ms: float = 0.0
     #: Just the chain call, kept apart from the full callback so a slow click or a
     #: meter write cannot be mistaken for amp cost.
     chain_ms: float = 0.0
     peak_ms: float = 0.0
+    #: The worst start-to-start gap beyond one block period, in ms. `start_late`
+    #: below counts gaps past an allowance; this carries the actual number, so a
+    #: bursty host (WASAPI shared delivers callbacks in clumps) shows up as one
+    #: big gap rather than as a pile of unexplained "late" counts.
+    worst_gap_ms: float = 0.0
     #: Callbacks whose start was later than the previous start plus one block period. A
     #: work figure that fits inside the block can still be a miss if Python did not hand
     #: the callback the GIL until the deadline had already gone by.
@@ -299,7 +307,9 @@ class Engine:
         # over one block instead of stepping, which is a tick on a loud amp.
         self._gain_last = self._linear_gains(self._chain)
         self._was_armed = self._chain.armed
-        self._arm_fade = False
+        # float64 scratch the meter reuses so the RMS reduction runs in float64
+        # (deterministic, BLAS-independent) without allocating on a live block.
+        self._rms_buf = None
         # Samples since the click grid was last reset. The callback advances it, and
         # start_take resets it so a take always begins on beat one.
         self._click_t = 0.0
@@ -324,8 +334,12 @@ class Engine:
         # A park that could not take the lock yet. The audio thread retries it on later
         # blocks instead of losing the one-shot quiet trigger to a busy control thread.
         self._park_pending = False
+        # A mute (callback failure) that could not take the lock yet. Same retry-on-a-
+        # later-block contract as the park above, for the same reason: the callback
+        # must not block, and must not write the chain from a stale copy either.
+        self._mute_pending = False
         # A gain-state reset the control thread asked for (panic). The callback owns
-        # `_gain_last`, `_was_armed` and `_arm_fade`, so it performs the swap itself.
+        # `_gain_last` and `_was_armed`, so it performs the swap itself.
         self._gain_sync = threading.Event()
         self._last_cb_start: float | None = None
         # The take in progress, if any. A block is queued and a writer thread does the disk work,
@@ -434,7 +448,6 @@ class Engine:
         """Adopt the current chain's gains without a ramp, for a fresh stream."""
         self._gain_last = self._linear_gains(self._chain)
         self._was_armed = self._chain.armed
-        self._arm_fade = False
 
     def _gain_ramps(self, frames: int, chain: Chain) -> dict:
         """One-block ramps for any gain that moved since the last callback."""
@@ -449,6 +462,20 @@ class Engine:
                 self._gain_last[name] = value
         return ramps
 
+    def _prime_stage(self, obj) -> None:
+        """Warm a stage's block-sized buffers before the callback can see it.
+
+        Both the cabinet and the capture load with layer/partition buffers sized
+        for one block. Priming here keeps the receptive-field warm-up and the
+        per-layer allocations out of the first callback, where the player would
+        hear them as a dropout on the first note. Every stage that can come in
+        through `update()` goes through the same check so none can regress on its
+        own.
+        """
+        prime = getattr(obj, "prime", None)
+        if callable(prime):
+            prime(self.blocksize)
+
     def update(self, **kwargs) -> Chain:
         """Swap the whole chain atomically. Anything the callback sees is complete."""
         cab = kwargs.get("cab")
@@ -457,9 +484,12 @@ class Engine:
             # inside the first block turns loading a long IR into a dropout at the exact
             # moment the player expects to hear the cabinet, and leaves the old bank in
             # place when the block size shrinks.
-            prime = getattr(cab, "prime", None)
-            if callable(prime):
-                prime(self.blocksize)
+            self._prime_stage(cab)
+        amp = kwargs.get("amp")
+        if amp is not None:
+            # The capture has the same first-block problem as the cabinet: its layer
+            # history buffers are sized for one block (see _prime_stage).
+            self._prime_stage(amp)
         with self._lock:
             self._chain = replace(self._chain, **kwargs)
             # A player reaching for the master or the switch is the end of the silence.
@@ -485,6 +515,7 @@ class Engine:
         self._meter.blocks = self._meter.underflows = self._meter.overflows = 0
         self._meter.late = 0
         self._meter.start_late = 0
+        self._meter.worst_gap_ms = 0.0
         self._meter.work_ms = self._meter.peak_ms = self._meter.chain_ms = 0.0
         self._last_cb_start = None
         # `_last_error` is not kept here either: a successful open below is a clean slate.
@@ -500,6 +531,7 @@ class Engine:
                 "work_ms": round(self._meter.work_ms, 2),
                 "chain_ms": round(self._meter.chain_ms, 2),
                 "peak_ms": round(self._meter.peak_ms, 2),
+                "worst_gap_ms": round(self._meter.worst_gap_ms, 2),
                 # Failures inside the callback, which are otherwise invisible: the stream is
                 # still open and the pane still says LIVE, but the output has been silence.
                 "callback_errors": self._cb_errors}
@@ -813,7 +845,16 @@ class Engine:
         now = time.perf_counter()
         if self._last_cb_start is not None and frames:
             period_ms = 1000.0 * frames / float(self.samplerate or 1)
-            if (now - self._last_cb_start) * 1000.0 - period_ms > 2.0:
+            gap_ms = (now - self._last_cb_start) * 1000.0 - period_ms
+            if gap_ms > self._meter.worst_gap_ms:
+                self._meter.worst_gap_ms = gap_ms
+            # A fixed 2 ms read every host the same way, but WASAPI shared delivers
+            # callbacks in clumps, so a healthy burst on a big block counted as late.
+            # The allowance is a quarter of the period, floored at 2 ms: small blocks
+            # keep the strict reading the soak was tuned for, big blocks get
+            # proportional slack, and `worst_gap_ms` carries the actual number
+            # either way, so a real problem is still visible in the counters.
+            if gap_ms > max(2.0, 0.25 * period_ms):
                 self._meter.start_late += 1
         self._last_cb_start = now
         return now
@@ -938,17 +979,23 @@ class Engine:
             chain = self._park_chain(chain)
         elif self._park_pending and not chain.armed:
             self._park_pending = False
+        if self._mute_pending:
+            # A failure wanted the chain muted but a control-thread load held the
+            # update lock at the time. Same non-blocking shot a park gets, retried
+            # on a later block: an unlocked write from a stale chain here would
+            # throw away the capture or cabinet the lock holder is installing.
+            if self._mute_chain():
+                chain = self._chain
         self._meter.stamp = time.time()
 
         if self._gain_sync.is_set():
             # A control thread (panic) asked for a gain reset. The callback owns
-            # `_gain_last` and the arm/disarm fade, so it reads the current chain
-            # itself instead of letting the control thread write mid-block.
+            # `_gain_last` and `_was_armed`, so it reads the current chain itself
+            # instead of letting the control thread write mid-block.
             self._gain_sync.clear()
             chain = self._chain
             self._gain_last = self._linear_gains(chain)
             self._was_armed = chain.armed
-            self._arm_fade = False
 
         # The chain runs while parked or disarmed too. Skipping it freezes the cabinet's ring
         # buffer, the model's layer histories and the biquad state, so the first block after
@@ -960,23 +1007,36 @@ class Engine:
         y = process_chain(x, chain, ramps)
         self._meter.chain_ms = (time.perf_counter() - chain_started) * 1000.0
         if not chain.armed:
-            # Fade the last block out instead of cutting it, and fade the first block
-            # back in. A hard arm/disarm is a step from full gain to zero, which is a
-            # click on any amp loud enough to be worth parking.
+            # Fade the last block out instead of cutting it. A hard disarm is a step from
+            # full gain to zero, which is a click on any amp loud enough to be worth parking.
             if self._was_armed:
                 y = y * np.linspace(1.0, 0.0, frames, dtype=np.float32)
-                self._arm_fade = True
             else:
                 # A take that is running keeps the time it was promised: every block still lands
                 # in the file, as silence. Dropping them makes a wav shorter than the performance,
                 # with a jump where the gap was, while the state still says recording.
                 y = np.zeros(frames, dtype=np.float32)
-        elif self._arm_fade:
+        elif not self._was_armed:
+            # Fade in on EVERY arm edge: a re-arm after a disarm, or the first arm
+            # after a panic mute. Only fading in after a fade-out on the same
+            # stream left the first arm of a session starting at full gain, which
+            # is exactly the click the fade exists to prevent.
             y = y * np.linspace(0.0, 1.0, frames, dtype=np.float32)
-            self._arm_fade = False
         self._was_armed = chain.armed
         self._meter.peak_out = float(np.max(np.abs(y))) if y.size else 0.0
-        self._meter.rms_out = float(np.sqrt(np.dot(y, y) / y.size)) if y.size else 0.0
+        # Summed in float64: a float32 np.dot takes the BLAS order and precision of
+        # whatever build is installed, so the meter's last digits moved with the
+        # BLAS. The meter is a read, not the signal path, but a meter that changes
+        # when nothing else did is a false alarm. The squares accumulate into the
+        # reused float64 scratch, so this stays allocation-free on live blocks: the
+        # only safe allocation is a resize, which happens at most once (the first
+        # block after a block-size change).
+        if y.size:
+            buf = self._rms_buf
+            if buf is None or buf.size < y.size:
+                self._rms_buf = buf = np.empty(y.size, dtype=np.float64)
+            np.multiply(y, y, out=buf[:y.size])
+            self._meter.rms_out = math.sqrt(float(np.sum(buf[:y.size])) / y.size)
         if self._capturing:
             self._capture.append(y.copy())
         take = self._take
@@ -1001,14 +1061,28 @@ class Engine:
         except Exception as exc:                      # never let the callback raise
             self._fail_callback(exc)
             outdata[:] = 0.0
+            # A failed block still consumed its slot. Counting only successes hid
+            # the very worst callbacks, the ones that raised, from the meter.
+            self._note_timing(started, frames)
             return
         self._note_timing(started, frames)
 
     def _process_block(self, indata, frames: int) -> None:
-        """The two-stream path: render, then hand the block over the queue."""
+        """The two-stream path: render, then hand the block over the queue.
+
+        Failures are handled here rather than left to `_on_in` so the timing of a
+        block that raised is still noted: the worst block is exactly the one that
+        died, and leaving it out of the meter read kinder than the deadline.
+        """
         started = self._mark_start(frames)
-        y = self._render(indata, frames)
-        self._write_out(y)
+        try:
+            y = self._render(indata, frames)
+            self._write_out(y)
+        except Exception as exc:                      # never let the callback raise
+            self._fail_callback(exc)
+            self._blank_out(frames)
+            self._note_timing(started, frames)
+            return
         self._note_timing(started, frames)
 
     def _write_out(self, y) -> None:
@@ -1032,7 +1106,38 @@ class Engine:
             return
         self._last_error = "the audio device closed the stream (unplugged, asleep, or taken over)"
         self._parked_by_idle = False
-        self._chain = replace(self._chain, armed=False, master_db=SAFE_MASTER_DB)
+        # This runs on PortAudio's thread, not the audio callback, so it is allowed
+        # to block on the update lock: the mute must not throw away a capture or
+        # cabinet a control thread is halfway through installing.
+        self._mute_chain(block=True)
+
+    def _mute_chain(self, block: bool = False) -> bool:
+        """Disarm and floor the master without racing a control-thread load.
+
+        The muted chain is `armed=False, master_db=SAFE_MASTER_DB`, which is the
+        one construction this class needs, so building it lives here and nowhere
+        else. With ``block=True`` (a device close on PortAudio's thread, which may
+        wait) it takes the lock the ordinary way. With ``block=False`` (the audio
+        callback, which cannot wait) it takes one non-blocking shot and leaves a
+        `_mute_pending` flag for the next block if a load holds it. Returns True
+        once the muted chain is in place.
+        """
+        if not block and not self._lock.acquire(blocking=False):
+            self._mute_pending = True
+            return False
+        try:
+            if block:
+                with self._lock:
+                    self._chain = replace(self._chain, armed=False,
+                                          master_db=SAFE_MASTER_DB)
+            else:
+                self._chain = replace(self._chain, armed=False,
+                                      master_db=SAFE_MASTER_DB)
+        finally:
+            if not block:
+                self._lock.release()
+        self._mute_pending = False
+        return True
 
     def _fail_callback(self, exc: BaseException) -> None:
         """Record a callback failure and make the silence visible.
@@ -1044,10 +1149,7 @@ class Engine:
         """
         self._cb_errors += 1
         self._last_error = f"{type(exc).__name__}: {exc}"
-        try:
-            self._chain = replace(self._chain, armed=False, master_db=SAFE_MASTER_DB)
-        except Exception:
-            pass
+        self._mute_chain()
 
     def _blank_out(self, frames: int) -> None:
         import numpy as np

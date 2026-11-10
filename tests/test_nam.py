@@ -229,6 +229,46 @@ class NamTest(unittest.TestCase):
         x = np.array([0.0, 0.1, -0.2, 0.05], dtype=np.float32)
         self.assertTrue(np.allclose(stream(model, x, 2), np.tanh(x), atol=1e-6))
 
+    def test_a2_prime_sizes_the_ext_buffer_for_the_input_channels(self):
+        """P2: A2's prepare sized _ext from the conv's output width.
+
+        conv_w is (bottleneck, ch, kernel), so a layer whose bottleneck differs
+        from its channel count primed a buffer with the wrong shape, `process`
+        rejected it, and the first live block allocated in the callback.
+        """
+        from amphead.nam import _A2Layer
+
+        rng = np.random.default_rng(41)
+        ch, bottleneck, kernel, dilation = 2, 4, 3, 2
+        layer = _A2Layer(
+            (rng.standard_normal((bottleneck, ch, kernel)) * 0.1).astype(np.float32),
+            np.zeros(bottleneck, dtype=np.float32),
+            (rng.standard_normal((bottleneck, ch, 1)) * 0.1).astype(np.float32),
+            (rng.standard_normal((ch, bottleneck, 1)) * 0.1).astype(np.float32),
+            np.zeros(ch, dtype=np.float32),
+            None, None, "Tanh", dilation,
+        )
+        layer.reset()
+        layer.prepare(128)
+        self.assertEqual(layer._ext.shape, (ch, layer.history_len + 128))
+        kept = layer._ext
+        layer.process(np.zeros((ch, 128), dtype=np.float32),
+                      np.zeros((1, 128), dtype=np.float32))
+        self.assertIs(kept, layer._ext,
+                      "process rejected the primed buffer and reallocated in the block")
+
+    def test_a2_prime_leaves_nothing_to_allocate_on_the_first_block(self):
+        """P2: the A2 prime path, end to end, must cover every layer's scratch."""
+        model = WaveNet.load(A2_NAM)
+        model.reset()
+        model.prime(128)
+        kept = [layer._ext for layer in model.layers if layer.history_len]
+        data = np.loadtxt(A2_REF)
+        model.process(data[:, 0].astype(np.float32)[:128])
+        after = [layer._ext for layer in model.layers if layer.history_len]
+        self.assertTrue(all(a is b for a, b in zip(kept, after)),
+                        "the first block reallocated a buffer the prime should have sized")
+
 
 if __name__ == "__main__":
     unittest.main()

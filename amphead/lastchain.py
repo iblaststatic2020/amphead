@@ -31,6 +31,17 @@ def save(**kw) -> None:
         pass
 
 
+def clear(*keys) -> None:
+    """Forget fields that are no longer true, e.g. an aim a later load replaced."""
+    state = load()
+    for key in keys:
+        state.pop(key, None)
+    try:
+        STATE.write_text(json.dumps(state, indent=2), encoding="utf-8")
+    except OSError:
+        pass
+
+
 def usable(path) -> str | None:
     """The remembered path, but only if the file is still there."""
     if not path:

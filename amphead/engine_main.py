@@ -14,13 +14,40 @@ Run it with the interpreter that has numpy and sounddevice:
 from __future__ import annotations
 
 import argparse
+import copy
 import gc
 import json
+import os
 import sys
 import threading
 import time
 import traceback
 from pathlib import Path
+
+# One BLAS thread per process, set before anything below can import numpy: the
+# arrays here are one block wide, so a threaded BLAS spends more time
+# synchronising than computing and can wake cores that then compete with the
+# audio callback for memory bandwidth. EngineClient's launch path already sets
+# these for the subprocess it spawns; this covers every other way in
+# (``python -m amphead.engine_main`` and imports from tests and scripts).
+# setdefault, so an operator who chose a thread count keeps it.
+for _blas_var in ("OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS", "OMP_NUM_THREADS",
+                  "NUMEXPR_NUM_THREADS", "VECLIB_MAXIMUM_THREADS"):
+    os.environ.setdefault(_blas_var, "1")
+
+
+def _freeze_heap() -> None:
+    """Make the live object graph permanent for the callback, without freezing garbage.
+
+    freeze() moves everything that is unreachable RIGHT NOW into the permanent set;
+    whatever a load left uncollected would then be collected-never, i.e. a leak, so
+    collect() has to run first. Every site that pins a heap (capture, cab, serve)
+    does the same two calls; keep them in one place so no future pin can forget the
+    collect and leak.
+    """
+    gc.collect()
+    gc.freeze()
+
 
 from . import faults
 from . import record as recording
@@ -244,13 +271,19 @@ class Server:
         # The pane asks for this every time it opens, and a 2,000-file walk is a long
         # pure-Python stretch on the same GIL the callback needs. Two seconds is short
         # enough that a file copied into the folder still shows up on the next open.
+        # The cache key includes the settings' folders, because the settings file can
+        # be edited while the engine runs and a stale walk would keep offering rigs
+        # from a folder the player just moved away. The cached value is a deep copy
+        # on the way out, because callers mutate these rows (mark the loaded capture,
+        # sort in place) and the cache would otherwise carry their edits forward.
         now = time.monotonic()
         cached = getattr(self, "_library_cache", None)
-        key = (self.capture_name, self.cab_name)
+        key = (self.capture_name, self.cab_name,
+               tuple(settings.folders("capture_dirs")), tuple(settings.folders("cab_dirs")))
         if cached and cached[0] > now and cached[1] == key:
-            return cached[2]
+            return copy.deepcopy(cached[2])
         found = library.listing(self.capture_name, self.cab_name)
-        self._library_cache = (now + 2.0, key, found)
+        self._library_cache = (now + 2.0, key, copy.deepcopy(found))
         return found
 
     def start(self, **kw) -> dict:
@@ -381,7 +414,7 @@ class Server:
         # The capture graph is now permanent. Freezing it keeps the collector from
         # walking 20 layers of lists during a callback; refcounts still free it when
         # the next capture replaces it.
-        gc.freeze()
+        _freeze_heap()
         self.capture_name = str(path)
         said = {"capture": self.capture_name, "receptive_field": model.receptive_field,
                 "samplerate": self.engine.samplerate}
@@ -441,7 +474,7 @@ class Server:
             rate=self.engine.samplerate,
         )
         self.engine.update(cab=cab)
-        gc.freeze()
+        _freeze_heap()
         self.cab_name = str(path)
         return {
             "cab": self.cab_name,
@@ -579,9 +612,26 @@ class Server:
         }
 
     def render(self, source: str, target: str, block: int | None = None) -> dict:
-        """Offline render through the live chain. Same code as the callback."""
+        """Offline render through the live chain. Same code as the callback.
+
+        Refused up front, with the reason in the message, because the pane sends
+        `render` whenever the player asks for it: an error from deep inside about
+        a stream the player cannot see reads like a bug, not an instruction.
+        The refusal must come before the wav is read, so a live rig answers
+        instantly instead of after reading the file.
+        """
         import numpy as np
         import wave
+
+        if self.engine.running:
+            raise RuntimeError(
+                "the amp is live, and a render runs this same chain and this same "
+                "model state, so they cannot share it; stop the amp, render, and "
+                "start it again")
+        if self.is_tuning():
+            raise RuntimeError(
+                "a tune is measuring the device right now and owns it; render "
+                "after the tune finishes or is cancelled")
 
         with wave.open(source, "rb") as wav:
             channels = wav.getnchannels()
@@ -901,14 +951,17 @@ def serve(stdin=None, stdout=None, server: "Server | None" = None) -> int:
     stdin = stdin or sys.stdin
     stdout = stdout or sys.stdout
     server = server or Server(engine_from_settings())
-    # The control thread builds library rows and parses JSON on the same GIL the audio
-    # callback needs. Python's 5 ms default switch interval is the whole callback budget
-    # here, so a busy reply could hold the callback off for a block and a half.
-    sys.setswitchinterval(0.0005)
     if stdin is sys.stdin:
-        # Everything reachable now is permanent (engine, model, server). Freezing it keeps
-        # the collector from walking the whole model graph during a callback.
-        gc.freeze()
+        # The control thread builds library rows and parses JSON on the same GIL the
+        # audio callback needs. Python's 5 ms default switch interval is the whole
+        # callback budget here, so a busy reply could hold the callback off for a
+        # block and a half. Only the real engine process sets it: tests drive serve()
+        # with pipes, and a process-wide setting made there follows the test runner
+        # into whatever it does next.
+        sys.setswitchinterval(0.0005)
+        # Everything reachable now is permanent (engine, model, server). Freezing it
+        # keeps the collector from walking the whole model graph during a callback.
+        _freeze_heap()
     for line in stdin:
         line = line.strip()
         if not line:
