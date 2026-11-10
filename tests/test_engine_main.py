@@ -162,6 +162,68 @@ class VerbTest(unittest.TestCase):
                 self.server.tune(live=True)
         self.assertEqual(self.server.engine.blocksize, before)
 
+    def test_a_measure_only_tune_leaves_the_block_size_where_it_was(self):
+        """A sweep is a look, not a change. The parked size has to survive it."""
+        self.server.engine.blocksize = 512
+        rows = [{"blocksize": 256, "block_ms": 5.3, "render_ms": 1.0,
+                 "headroom_ms": 4.3, "realtime": 0.19, "fits": True}]
+        with mock.patch("amphead.engine_main.tune.measure", return_value=rows):
+            got = self.server.tune(live=False, apply=False)
+        self.assertEqual(self.server.engine.blocksize, 512)
+        self.assertEqual(got["blocksize"], 512)
+        self.assertFalse(got["changed"])
+
+    def test_an_explicit_size_that_fails_is_not_saved(self):
+        """Asking for a size is permission to test it, not permission to ship a failure."""
+        self.server.engine.blocksize = 256
+        bad = {"blocksize": 128, "block_ms": 2.9, "seconds": 6, "blocks": 40,
+               "underflows": 4, "overflows": 0, "late": 0, "work_ms": 2.0,
+               "peak_ms": 3.0, "mode": "wdm-ks-exclusive", "ok": False}
+        with mock.patch("amphead.engine_main.tune.soak", return_value=bad), \
+                mock.patch("amphead.engine_main.settings.save") as save:
+            got = self.server.tune(live=True, blocksize=128)
+        self.assertIsNone(got["picked"])
+        self.assertEqual(self.server.engine.blocksize, 256)
+        save.assert_not_called()
+
+    def test_an_offline_tune_never_saves_even_when_apply_is_true(self):
+        """A stopwatch result is not a device measurement, whatever the caller asks."""
+        self.server.engine.blocksize = 512
+        rows = [{"blocksize": 256, "block_ms": 5.3, "render_ms": 1.0,
+                 "headroom_ms": 4.3, "realtime": 0.19, "fits": True}]
+        with mock.patch("amphead.engine_main.tune.measure", return_value=rows), \
+                mock.patch("amphead.engine_main.settings.save") as save:
+            got = self.server.tune(live=False, apply=True)
+        self.assertEqual(self.server.engine.blocksize, 512)
+        self.assertFalse(got["changed"])
+        save.assert_not_called()
+
+    def test_a_long_check_that_drops_blocks_does_not_save_that_size(self):
+        """The short soak can pass a size the longer check then fails.
+
+        Saving the short-soak answer would leave the next start choppier than the one
+        before the tune, which is the opposite of what the button promises.
+        """
+        self.server.engine.blocksize = 256
+        rows = [
+            {"blocksize": 256, "block_ms": 5.3, "seconds": 2, "blocks": 40,
+             "underflows": 0, "overflows": 0, "late": 0, "work_ms": 2.0,
+             "peak_ms": 3.0, "mode": "wdm-ks-exclusive", "ok": True},
+            {"blocksize": 512, "block_ms": 10.7, "seconds": 2, "blocks": 40,
+             "underflows": 0, "overflows": 0, "late": 0, "work_ms": 2.0,
+             "peak_ms": 3.0, "mode": "wdm-ks-exclusive", "ok": True},
+        ]
+        bad = {"blocksize": 256, "block_ms": 5.3, "seconds": 12, "blocks": 40,
+               "underflows": 3, "overflows": 0, "late": 0, "work_ms": 2.0,
+               "peak_ms": 3.0, "mode": "wdm-ks-exclusive", "ok": False}
+        with mock.patch("amphead.engine_main.tune.soak_all", return_value=rows), \
+                mock.patch("amphead.engine_main.tune.soak", return_value=bad), \
+                mock.patch("amphead.engine_main.settings.save") as save:
+            got = self.server.tune(live=True, seconds=1.0)
+        self.assertIsNone(got["picked"])
+        self.assertEqual(self.server.engine.blocksize, 256)
+        save.assert_not_called()
+
     def test_a_tune_locks_the_chain_but_not_status(self):
         self.server._tuning["running"] = True
         refused = self.server.handle({"cmd": "load_capture", "path": "C:/nowhere/lead.nam"})

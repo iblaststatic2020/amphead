@@ -24,6 +24,16 @@ FLOOR_DB, CEIL_DB = GATE
 # chord or a held note does not chatter.
 HOLD_MS = 40.0
 CLOSE_MS = 90.0
+#: Envelope follower times. They are in milliseconds, not blocks, so the gate sounds the
+#: same whether the device opened at 128 frames or 1024.
+ATTACK_MS = 0.2
+ENV_RELEASE_MS = 5.0
+
+
+def _coeff(ms: float, rate: int) -> float:
+    """One-pole coefficient for a time constant in milliseconds."""
+    return 1.0 - pow(2.718281828459045, -1000.0 / (max(ms, 0.001) * rate))
+
 
 
 def _gain(db: float) -> float:
@@ -36,9 +46,14 @@ class Gate:
     def __init__(self, threshold_db: float = FLOOR_DB, rate: int = 44100) -> None:
         self.rate = int(rate)
         self.threshold_db = float(threshold_db)
-        self._open = 0.0          # gain at the start of the current block
-        self._hold = 0            # blocks left to keep the gate open after the last loud one
-        self._hold_blocks = max(1, int(round(HOLD_MS * self.rate / 1000.0 / 256.0)))
+        self._open = 0.0          # gain at the end of the current block
+        self._env = 0.0           # peak envelope, independent of the block size
+        self._latched = False     # gate state after hysteresis
+        self._hold = 0            # samples left to keep the gate open after the last loud one
+        self._hold_samples = max(1, int(round(HOLD_MS * self.rate / 1000.0)))
+        self._attack = _coeff(ATTACK_MS, self.rate)
+        self._env_release = _coeff(ENV_RELEASE_MS, self.rate)
+        self._close_step = 1.0 / max(1.0, CLOSE_MS * self.rate / 1000.0)
 
     @property
     def threshold(self) -> float:
@@ -58,28 +73,53 @@ class Gate:
         x = np.asarray(block, dtype=np.float32).reshape(-1)
         if self.off or x.size == 0:
             self._open = 1.0
+            self._env = 0.0
+            self._latched = False
+            self._hold = 0
             return x
 
-        level = float(np.max(np.abs(x)))
-        # 6 dB of hysteresis: a note decaying across the threshold must not flutter it.
-        loud = level >= self.threshold if self._open < 0.5 else level >= self.threshold * 0.5
-        if loud:
-            self._hold = self._hold_blocks
-            target = 1.0
-        elif self._hold > 0:
-            self._hold -= 1
-            target = 1.0
-        else:
-            target = 0.0
+        # Peak envelope, one sample at a time: a per-block peak made the gate open and
+        # close on the loudest sample in whatever block size the device happened to use,
+        # which is audible as chatter when hiss sits near the threshold.
+        env = self._env
+        attack = self._attack
+        release = self._env_release
+        latched = self._latched
+        hold = self._hold
+        gain = self._open
+        open_thr = self.threshold
+        close_thr = open_thr * 0.5
+        hold_samples = self._hold_samples
+        close_step = self._close_step
+        out = np.empty_like(x)
+        for i in range(x.size):
+            sample = float(x[i])
+            level = abs(sample)
+            env += (attack if level > env else release) * (level - env)
 
-        block_ms = 1000.0 * x.size / float(self.rate)
-        # Open at once: a pick attack is shorter than a block, and a gate that fades up eats
-        # it. Close a slice at a time so a decaying note fades rather than clicks.
-        if target >= self._open:
-            gain_now = 1.0
-        else:
-            gain_now = max(target, self._open - block_ms / max(CLOSE_MS, block_ms))
-        start = self._open
-        self._open = float(min(1.0, max(0.0, gain_now)))
-        ramp = np.linspace(start, self._open, x.size, dtype=np.float32)
-        return x * ramp
+            if env >= open_thr:
+                latched = True
+                hold = hold_samples
+            elif latched:
+                if env < close_thr:
+                    if hold > 0:
+                        hold -= 1
+                    else:
+                        latched = False
+                else:
+                    hold = hold_samples
+
+            # Open instantly (a pick is shorter than a block); close over CLOSE_MS with
+            # a per-sample ramp so the release is not a block-sized step.
+            if latched:
+                gain = 1.0
+            elif gain > 0.0:
+                gain = max(0.0, gain - close_step)
+
+            out[i] = sample * gain
+
+        self._env = env
+        self._latched = latched
+        self._hold = hold
+        self._open = float(gain)
+        return out

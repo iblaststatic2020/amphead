@@ -585,7 +585,7 @@ class Server:
             "peak_out": float(np.max(np.abs(pcm)) / 32768.0) if pcm.size else 0.0,
         }
 
-    def tune(self, blocksize: int | None = None, apply: bool = True,
+    def tune(self, blocksize: int | None = None, apply: bool | None = None,
              live: bool = True, seconds: float = 6.0,
              progress=None, cancel=None) -> dict:
         """Find the quickest block size this rig can actually feed, and reopen on it.
@@ -613,6 +613,12 @@ class Server:
                 progress(phase)
 
         step("starting")
+        # An offline sweep is a stopwatch, not a device measurement, so it must not save
+        # the size it guessed. Only a live soak earns the right to change the setting.
+        if apply is None:
+            apply = bool(live)
+        if not live:
+            apply = False
         was_running = self.engine.running
         was_blocksize = self.engine.blocksize
         armed = self.engine.chain.armed
@@ -620,25 +626,52 @@ class Server:
             self.engine.stop()
         rows: list[dict] = []
         live_error: Exception | None = None
+        applied = False
         try:
             if live:
                 try:
-                    rows = tune.soak_all(self.engine, seconds=seconds, progress=say)
-                    picked = int(blocksize) if blocksize else tune.choose_soak(rows)
+                    if blocksize:
+                        # An explicit size is a request to measure that size, even when it
+                        # is below the safe floor the automatic sweep starts at. It is not
+                        # permission to save a size the soak just refused.
+                        asked = int(blocksize)
+                        rows = [tune.soak(self.engine, asked, seconds=seconds)]
+                        if rows[0]["ok"]:
+                            picked = asked
+                        else:
+                            picked = None
+                            words = tune.soak_verdict(rows, asked)
+                    else:
+                        rows = tune.soak_all(self.engine, seconds=seconds, progress=say)
+                        picked = tune.choose_soak(rows)
                     # A six second pass is still a snapshot. Whatever it picked gets a longer
                     # run before the amp is left at that size, and if the longer run drops
                     # blocks the next size up is tried instead.
+                    confirmed = True
                     if not blocksize and picked:
+                        confirmed = False
                         for _ in range(2):
                             step(f"checking {picked} frames")
                             confirm = tune.soak(self.engine, picked, seconds=max(10.0, seconds * 2))
                             if confirm["ok"]:
+                                confirmed = True
                                 break
                             bigger = [r for r in rows if r["blocksize"] > picked and r["ok"]]
                             if not bigger:
                                 break
                             picked = int(min(bigger, key=lambda r: r["blocksize"])["blocksize"])
-                    words = tune.soak_verdict(rows, picked)
+                        if not confirmed:
+                            # The short soak passed this size, the long one did not, and
+                            # there is no larger clean size to fall back to. Saving it
+                            # would make the next start choppier than the one before the
+                            # tune; leave the engine's size alone and say so.
+                            picked = None
+                            words = ("the device dropped blocks in the long check; "
+                                     "the block size was left unchanged")
+                        else:
+                            words = tune.soak_verdict(rows, picked)
+                    elif not blocksize:
+                        words = tune.soak_verdict(rows, picked)
                 except TuneCancelled:
                     raise
                 except Exception as exc:
@@ -656,7 +689,6 @@ class Server:
                 rows = tune.measure(self.engine.chain, self.engine.samplerate)
                 picked = int(blocksize) if blocksize else tune.choose(rows)
                 words = tune.verdict(rows, picked)
-            changed = picked is not None and picked != was_blocksize
             if apply and picked:
                 step(f"saving {picked} frames")
                 self.engine.blocksize = int(picked)
@@ -666,7 +698,13 @@ class Server:
                     settings.save({"audio": {"blocksize": int(picked)}})
                 except Exception:
                     pass
+                applied = True
+            changed = applied and picked != was_blocksize
         finally:
+            # A failed, cancelled or measure-only tune must not leave the amp at a size
+            # nobody chose. Restore the size it arrived with unless this tune saved one.
+            if not applied:
+                self.engine.blocksize = was_blocksize
             # Only reopen what was open. Measuring a parked amp must not switch it on.
             if was_running:
                 self.engine.start()

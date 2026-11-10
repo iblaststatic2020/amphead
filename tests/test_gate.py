@@ -42,7 +42,28 @@ class TheGateClosesOnHiss(unittest.TestCase):
     def test_hiss_below_the_threshold_is_closed(self):
         gate = Gate(threshold_db=-40.0)
         out = run(gate, 0.001, 40)
-        self.assertLessEqual(float(np.max(np.abs(out))), 0.001)
+        self.assertEqual(gate._open, 0.0)
+        self.assertEqual(float(np.max(np.abs(out))), 0.0)
+
+    def test_a_quiet_block_from_cold_does_not_open_the_gate(self):
+        gate = Gate(threshold_db=-40.0)
+        out = gate.process(block(0.001))
+        self.assertEqual(gate._open, 0.0)
+        self.assertEqual(float(np.max(np.abs(out))), 0.0)
+
+    def test_closed_hiss_does_not_pump_back_open(self):
+        """The gate's own output must not be the input: a closed gate on live hiss that
+        keeps re-opening every release is an 11 Hz tremolo, not silence."""
+        gate = Gate(threshold_db=-40.0)
+        run(gate, 0.5, 1)                      # a note opens it
+        levels = []
+        for _ in range(300):
+            out = gate.process(block(0.001))   # fresh quiet input every block
+            levels.append(float(np.max(np.abs(out))))
+        self.assertEqual(gate._open, 0.0)
+        self.assertEqual(levels[-1], 0.0)
+        # And it stayed shut, not just happened to be shut at the end.
+        self.assertEqual(max(levels[-100:]), 0.0)
 
     def test_a_loud_block_opens_it_and_passes_the_guitar(self):
         gate = Gate(threshold_db=-40.0)
@@ -52,9 +73,9 @@ class TheGateClosesOnHiss(unittest.TestCase):
     def test_it_closes_slowly_rather_than_clicking(self):
         gate = Gate(threshold_db=-40.0)
         run(gate, 0.5, 1)                 # open
-        run(gate, 0.001, 8)               # past the hold, the fade has started
+        run(gate, 0.001, 12)              # past the hold, the fade has started
         run(gate, 0.001, 1)
-        # One block is one slice of the release, not a step to zero: a gate that jumps
+        # One sample is one slice of the release, not a step to zero: a gate that jumps
         # straight down turns a decaying chord into a click.
         self.assertGreater(gate._open, 0.5)
         self.assertLess(gate._open, 0.95)

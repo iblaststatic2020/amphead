@@ -228,7 +228,9 @@ def soak_verdict(rows: list[dict], picked: int | None, floor: int = SAFE_FLOOR) 
     if picked is None:
         why = next((r.get("error") for r in rows if r.get("error")), "")
         return "the device would not open at any block size" + (f": {why}" if why else "")
-    row = next(r for r in rows if r["blocksize"] == picked)
+    row = next((r for r in rows if r["blocksize"] == picked), None)
+    if row is None:
+        return f"{picked} frames, no live measurement for that size"
     bad = row["underflows"] + row["overflows"] + row.get("late", 0)
     if row["ok"]:
         smaller = [r for r in rows if r["ok"] and r["blocksize"] < picked]
