@@ -45,6 +45,14 @@ Accept the dependency prompt if Hermes asks: numpy and sounddevice come with the
 engine runs in the interpreter Hermes installed them into. There is no second Python to set up, no
 bootstrap script and no path to type.
 
+From a source checkout the same install works directly, and the regression suite is fully headless,
+so it runs on any machine with no audio device and no network:
+
+```
+pip install -e .
+python -m unittest discover -s tests
+```
+
 It needs Hermes 0.22.0 or newer and Python 3.12 or newer, because the plugin runs on the interpreter
 Hermes builds for itself. After the restart the installer asks for, open the AmpHead pane, press
 SET UP, and pick a `.nam` capture and a `.wav` cabinet. `amphead_setup` says which piece is missing
